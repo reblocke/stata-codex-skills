@@ -1,0 +1,35 @@
+slug: outreg2
+skill: packages
+section: Tables and Reporting
+title: 'outreg2: Quick Regression Tables in Stata'
+trigger: Use when the user asks about outreg2 or a related community-package workflow.
+commands:
+- outreg2
+source_topics:
+- outreg2
+syntax_patterns: []
+gotchas:
+- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
+  code.
+workflows:
+- Confirm the package and any dependencies are installed on the active adopath before writing code that
+  uses it.
+- Pair the package command with a small reproducible example before folding it into a larger do-file.
+validation_case: Run a small batch-mode example that exercises outreg2 and inspect the resulting log.
+related_refs:
+- tables-reporting
+- estout
+install_commands:
+- ssc install outreg2, replace
+smoke_test: 'sysuse auto, clear
+
+  reg price mpg weight
+
+  outreg2 using outreg2_smoke.doc, replace'
+provenance:
+  local_help_topics:
+  - outreg2
+  local_help_files: []
+  upstream_files:
+  - plugins/stata/skills/stata/packages/outreg2.md
+  upstream_only: true

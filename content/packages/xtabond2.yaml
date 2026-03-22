@@ -1,0 +1,33 @@
+slug: xtabond2
+skill: packages
+section: Estimation Packages
+title: 'xtabond2: Dynamic Panel GMM Estimation'
+trigger: Use when the user asks about xtabond2 or a related community-package workflow.
+commands:
+- xtabond2
+source_topics:
+- xtabond2
+syntax_patterns: []
+gotchas:
+- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
+  code.
+workflows:
+- Confirm the package and any dependencies are installed on the active adopath before writing code that
+  uses it.
+- Pair the package command with a small reproducible example before folding it into a larger do-file.
+validation_case: Run a small batch-mode example that exercises xtabond2 and inspect the resulting log.
+related_refs:
+- panel-data
+- gmm-estimation
+install_commands:
+- ssc install xtabond2, replace
+smoke_test: 'webuse abdata, clear
+
+  xtabond2 n L.n w k, gmm(L.n, lag(2 .)) iv(w k) nolevel robust'
+provenance:
+  local_help_topics:
+  - xtabond2
+  local_help_files: []
+  upstream_files:
+  - plugins/stata/skills/stata/packages/xtabond2.md
+  upstream_only: true

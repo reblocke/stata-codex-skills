@@ -1,0 +1,31 @@
+slug: difference-in-differences
+skill: core
+section: Causal Inference
+title: Difference-in-Differences Analysis in Stata
+trigger: Use when the user needs built-in Stata help with difference-in-differences analysis in stata.
+commands: &id001
+- didregress
+- xtdidregress
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Difference-in-Differences Analysis in Stata, then tailor
+  the syntax to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises didregress and inspect the resulting log.
+related_refs:
+- panel-data
+- treatment-effects
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - didregress
+  - xtdidregress
+  local_help_files:
+  - ado/base/d/didregress.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/difference-in-differences.md
+  upstream_only: false

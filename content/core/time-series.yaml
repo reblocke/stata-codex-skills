@@ -1,0 +1,38 @@
+slug: time-series
+skill: core
+section: Statistics and Econometrics
+title: Time Series Analysis in Stata
+trigger: Use when the user needs built-in Stata help with time series analysis in stata.
+commands: &id001
+- tsset
+- arima
+- var
+- irf
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Time Series Analysis in Stata, then tailor the syntax
+  to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises tsset and inspect the resulting log.
+related_refs:
+- panel-data
+- graphics
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - tsset
+  - arima
+  - var
+  - irf
+  local_help_files:
+  - ado/base/t/tsset.sthlp
+  - ado/base/a/arima.sthlp
+  - ado/base/v/var.sthlp
+  - ado/base/i/irf.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/time-series.md
+  upstream_only: false

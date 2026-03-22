@@ -1,0 +1,87 @@
+slug: graphics
+skill: core
+section: Output and Workflow
+title: Graphics in Stata
+trigger: Use when the user needs built-in Stata help with graphics in stata.
+commands: &id001
+- graph
+- twoway
+- histogram
+- scatter
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Graphics in Stata, then tailor the syntax to the current
+  dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises graph and inspect the resulting log.
+related_refs:
+- tables-reporting
+- descriptive-statistics
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - graph
+  - twoway
+  - histogram
+  - scatter
+  local_help_files:
+  - ado/base/g/graph.sthlp
+  - ado/base/g/gr7twoway.sthlp
+  - ado/base/g/graph_twoway.sthlp
+  - ado/base/p/power_twoway.sthlp
+  - ado/base/s/scheme_graph_twoway.sthlp
+  - ado/base/s/svy_tabulate_twoway.sthlp
+  - ado/base/t/table_twoway.sthlp
+  - ado/base/t/tabulate_twoway.sthlp
+  - ado/base/t/twoway__function_gen.sthlp
+  - ado/base/t/twoway__histogram_gen.sthlp
+  - ado/base/t/twoway__kdensity_gen.sthlp
+  - ado/base/t/twoway_area.sthlp
+  - ado/base/t/twoway_bar.sthlp
+  - ado/base/t/twoway_connected.sthlp
+  - ado/base/t/twoway_contour.sthlp
+  - ado/base/t/twoway_contourline.sthlp
+  - ado/base/t/twoway_dot.sthlp
+  - ado/base/t/twoway_dropline.sthlp
+  - ado/base/t/twoway_fpfit.sthlp
+  - ado/base/t/twoway_fpfitci.sthlp
+  - ado/base/t/twoway_function.sthlp
+  - ado/base/t/twoway_histogram.sthlp
+  - ado/base/t/twoway_kdensity.sthlp
+  - ado/base/t/twoway_lfit.sthlp
+  - ado/base/t/twoway_lfitci.sthlp
+  - ado/base/t/twoway_lowess.sthlp
+  - ado/base/t/twoway_lpoly.sthlp
+  - ado/base/t/twoway_lpolyci.sthlp
+  - ado/base/t/twoway_mata.sthlp
+  - ado/base/t/twoway_mband.sthlp
+  - ado/base/t/twoway_mspline.sthlp
+  - ado/base/t/twoway_options.sthlp
+  - ado/base/t/twoway_pcarrow.sthlp
+  - ado/base/t/twoway_pcarrowi.sthlp
+  - ado/base/t/twoway_pccapsym.sthlp
+  - ado/base/t/twoway_pci.sthlp
+  - ado/base/t/twoway_pcscatter.sthlp
+  - ado/base/t/twoway_pcspike.sthlp
+  - ado/base/t/twoway_qfit.sthlp
+  - ado/base/t/twoway_qfitci.sthlp
+  - ado/base/t/twoway_rarea.sthlp
+  - ado/base/t/twoway_rbar.sthlp
+  - ado/base/t/twoway_rcap.sthlp
+  - ado/base/t/twoway_rcapsym.sthlp
+  - ado/base/t/twoway_rconnected.sthlp
+  - ado/base/t/twoway_rline.sthlp
+  - ado/base/t/twoway_rscatter.sthlp
+  - ado/base/t/twoway_rspike.sthlp
+  - ado/base/t/twoway_scatteri.sthlp
+  - ado/base/t/twoway_spike.sthlp
+  - ado/base/t/twoway_sunflower.sthlp
+  - ado/base/h/histogram.sthlp
+  - ado/base/s/scatter.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/graphics.md
+  upstream_only: false

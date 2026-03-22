@@ -1,0 +1,39 @@
+slug: packaging_and_help
+skill: plugins
+section: Packaging and Distribution
+title: Stata Package Structure and Distribution
+trigger: Use when the task needs stata package structure and distribution for a Stata plugin project.
+commands:
+- .pkg
+- .toc
+- .sthlp
+- net install
+source_topics:
+- net
+- ssc
+- plugin
+syntax_patterns: []
+gotchas:
+- A plugin crash terminates the Stata session, so treat every memory access and return code as high risk.
+workflows:
+- Plan the interface and the validation path before writing plugin code or wrapper ado-files.
+- Use batch-mode Stata logs and compiler output together when debugging plugin failures.
+validation_case: Build a tiny package directory with plugin binary, ado, and sthlp, then install it from
+  a local folder.
+related_refs:
+- plugin-sdk-basics
+- testing_strategy
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - net
+  - ssc
+  - plugin
+  local_help_files:
+  - ado/base/n/net.sthlp
+  - ado/base/s/ssc.sthlp
+  - ado/base/p/plugin.sthlp
+  upstream_files:
+  - plugins/stata-c-plugins/skills/stata-c-plugins/references/packaging_and_help.md
+  upstream_only: true

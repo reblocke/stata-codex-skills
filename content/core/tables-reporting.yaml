@@ -1,0 +1,90 @@
+slug: tables-reporting
+skill: core
+section: Output and Workflow
+title: 'Stata Tables and Reporting: Publication-Ready Output'
+trigger: 'Use when the user needs built-in Stata help with stata tables and reporting: publication-ready
+  output.'
+commands: &id001
+- etable
+- collect
+- table
+- putexcel
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- 'Start with the official help topics attached to Stata Tables and Reporting: Publication-Ready Output,
+  then tailor the syntax to the current dataset.'
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises etable and inspect the resulting log.
+related_refs:
+- graphics
+- workflow-best-practices
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - etable
+  - collect
+  - table
+  - putexcel
+  local_help_files:
+  - ado/base/e/etable.sthlp
+  - ado/base/a/appendix_for_collect_style_cell.sthlp
+  - ado/base/c/collect_addtags.sthlp
+  - ado/base/c/collect_clear.sthlp
+  - ado/base/c/collect_combine.sthlp
+  - ado/base/c/collect_composite.sthlp
+  - ado/base/c/collect_copy.sthlp
+  - ado/base/c/collect_create.sthlp
+  - ado/base/c/collect_dims.sthlp
+  - ado/base/c/collect_dir.sthlp
+  - ado/base/c/collect_drop.sthlp
+  - ado/base/c/collect_export.sthlp
+  - ado/base/c/collect_get.sthlp
+  - ado/base/c/collect_label.sthlp
+  - ado/base/c/collect_layout.sthlp
+  - ado/base/c/collect_levelsof.sthlp
+  - ado/base/c/collect_notes.sthlp
+  - ado/base/c/collect_preview.sthlp
+  - ado/base/c/collect_query.sthlp
+  - ado/base/c/collect_recode.sthlp
+  - ado/base/c/collect_remap.sthlp
+  - ado/base/c/collect_rename.sthlp
+  - ado/base/c/collect_save.sthlp
+  - ado/base/c/collect_set.sthlp
+  - ado/base/c/collect_stars.sthlp
+  - ado/base/c/collect_style__cons.sthlp
+  - ado/base/c/collect_style_autolevels.sthlp
+  - ado/base/c/collect_style_cell.sthlp
+  - ado/base/c/collect_style_clear.sthlp
+  - ado/base/c/collect_style_column.sthlp
+  - ado/base/c/collect_style_header.sthlp
+  - ado/base/c/collect_style_html.sthlp
+  - ado/base/c/collect_style_notes.sthlp
+  - ado/base/c/collect_style_putdocx.sthlp
+  - ado/base/c/collect_style_putpdf.sthlp
+  - ado/base/c/collect_style_row.sthlp
+  - ado/base/c/collect_style_save.sthlp
+  - ado/base/c/collect_style_showbase.sthlp
+  - ado/base/c/collect_style_showempty.sthlp
+  - ado/base/c/collect_style_showomit.sthlp
+  - ado/base/c/collect_style_table.sthlp
+  - ado/base/c/collect_style_tex.sthlp
+  - ado/base/c/collect_style_title.sthlp
+  - ado/base/c/collect_style_use.sthlp
+  - ado/base/c/collect_title.sthlp
+  - ado/base/c/collect_use.sthlp
+  - ado/base/j/j_collect_tags.sthlp
+  - ado/base/p/putdocx_collect.sthlp
+  - ado/base/p/putpdf_collect.sthlp
+  - ado/base/s/set_collect_double.sthlp
+  - ado/base/s/set_collect_label.sthlp
+  - ado/base/s/set_collect_style.sthlp
+  - ado/base/s/set_collect_warn.sthlp
+  - ado/base/t/table.sthlp
+  - ado/base/p/putexcel.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/tables-reporting.md
+  upstream_only: false

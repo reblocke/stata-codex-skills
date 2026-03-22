@@ -1,0 +1,38 @@
+slug: diagnostics
+skill: packages
+section: Graphics and Diagnostics
+title: Diagnostic Packages for Stata
+trigger: Use when the user asks about estat vif or a related community-package workflow.
+commands:
+- estat vif
+- ovtest
+- linktest
+- rvfplot
+source_topics:
+- regress_postestimation
+syntax_patterns: []
+gotchas:
+- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
+  code.
+workflows:
+- Confirm the package and any dependencies are installed on the active adopath before writing code that
+  uses it.
+- Pair the package command with a small reproducible example before folding it into a larger do-file.
+validation_case: Run a small batch-mode example that exercises estat vif and inspect the resulting log.
+related_refs:
+- linear-regression
+- graphics
+install_commands: []
+smoke_test: 'sysuse auto, clear
+
+  reg price mpg weight
+
+  estat vif'
+provenance:
+  local_help_topics:
+  - regress_postestimation
+  local_help_files:
+  - ado/base/r/regress_postestimation.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/packages/diagnostics.md
+  upstream_only: false

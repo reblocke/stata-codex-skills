@@ -1,0 +1,32 @@
+slug: missing-data-handling
+skill: core
+section: Statistics and Econometrics
+title: Missing Data Handling in Stata
+trigger: Use when the user needs built-in Stata help with missing data handling in stata.
+commands: &id001
+- mi
+- misstable
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Missing Data Handling in Stata, then tailor the syntax
+  to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises mi and inspect the resulting log.
+related_refs:
+- data-management
+- survey-data-analysis
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - mi
+  - misstable
+  local_help_files:
+  - ado/base/m/mi.sthlp
+  - ado/base/m/misstable.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/missing-data-handling.md
+  upstream_only: false

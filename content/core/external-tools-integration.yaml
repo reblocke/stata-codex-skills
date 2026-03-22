@@ -1,0 +1,34 @@
+slug: external-tools-integration
+skill: core
+section: Output and Workflow
+title: External Tools Integration
+trigger: Use when the user needs built-in Stata help with external tools integration.
+commands: &id001
+- python
+- shell
+- java_plugin
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to External Tools Integration, then tailor the syntax to
+  the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises python and inspect the resulting log.
+related_refs:
+- workflow-best-practices
+- programming-basics
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - python
+  - shell
+  - java_plugin
+  local_help_files:
+  - ado/base/s/shell.sthlp
+  - ado/base/j/java_plugin.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/external-tools-integration.md
+  upstream_only: false

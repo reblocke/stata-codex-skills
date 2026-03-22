@@ -1,0 +1,35 @@
+slug: survival-analysis
+skill: core
+section: Advanced Methods
+title: Survival Analysis in Stata
+trigger: Use when the user needs built-in Stata help with survival analysis in stata.
+commands: &id001
+- stset
+- stcox
+- sts
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Survival Analysis in Stata, then tailor the syntax to
+  the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises stset and inspect the resulting log.
+related_refs:
+- limited-dependent-variables
+- maximum-likelihood
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - stset
+  - stcox
+  - sts
+  local_help_files:
+  - ado/base/s/stset.sthlp
+  - ado/base/s/stcox.sthlp
+  - ado/base/s/sts.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/survival-analysis.md
+  upstream_only: false

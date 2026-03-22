@@ -1,0 +1,48 @@
+slug: event-study
+skill: packages
+section: Graphics and Diagnostics
+title: Event Study Packages in Stata
+trigger: Use when the user asks about eventstudyinteract or a related community-package workflow.
+commands:
+- eventstudyinteract
+source_topics:
+- eventstudyinteract
+syntax_patterns: []
+gotchas:
+- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
+  code.
+workflows:
+- Confirm the package and any dependencies are installed on the active adopath before writing code that
+  uses it.
+- Pair the package command with a small reproducible example before folding it into a larger do-file.
+validation_case: Run a small batch-mode example that exercises eventstudyinteract and inspect the resulting
+  log.
+related_refs:
+- difference-in-differences
+- graphics
+install_commands:
+- ssc install eventstudyinteract, replace
+smoke_test: 'clear
+
+  set obs 80
+
+  gen id = ceil(_n/4)
+
+  gen t = mod(_n-1,4)
+
+  gen g = cond(id <= 10, 2, 0)
+
+  gen treated = g > 0
+
+  gen rel = t - g
+
+  gen y = rnormal() + 2*(treated & t>=g)
+
+  eventstudyinteract y treated rel, cohort(g) control_cohort(0)'
+provenance:
+  local_help_topics:
+  - eventstudyinteract
+  local_help_files: []
+  upstream_files:
+  - plugins/stata/skills/stata/packages/event-study.md
+  upstream_only: true

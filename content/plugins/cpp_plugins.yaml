@@ -1,0 +1,32 @@
+slug: cpp_plugins
+skill: plugins
+section: C++ Wrapping
+title: C++ Plugins for Stata
+trigger: Use when the task needs c++ plugins for stata for a Stata plugin project.
+commands:
+- extern "C"
+- stata_call
+- SF_vdata
+- SF_vstore
+source_topics:
+- plugin
+syntax_patterns: []
+gotchas:
+- A plugin crash terminates the Stata session, so treat every memory access and return code as high risk.
+workflows:
+- Plan the interface and the validation path before writing plugin code or wrapper ado-files.
+- Use batch-mode Stata logs and compiler output together when debugging plugin failures.
+validation_case: Wrap a small C++ routine behind stata_call and confirm it returns 0 in batch mode.
+related_refs:
+- plugin-sdk-basics
+- performance_patterns
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - plugin
+  local_help_files:
+  - ado/base/p/plugin.sthlp
+  upstream_files:
+  - plugins/stata-c-plugins/skills/stata-c-plugins/references/cpp_plugins.md
+  upstream_only: true

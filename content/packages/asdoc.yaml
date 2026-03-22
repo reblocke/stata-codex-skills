@@ -1,0 +1,34 @@
+slug: asdoc
+skill: packages
+section: Tables and Reporting
+title: 'asdoc: Automatic Document Creation in Stata'
+trigger: Use when the user asks about asdoc or a related community-package workflow.
+commands:
+- asdoc
+source_topics:
+- asdoc
+syntax_patterns: []
+gotchas:
+- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
+  code.
+workflows:
+- Confirm the package and any dependencies are installed on the active adopath before writing code that
+  uses it.
+- Pair the package command with a small reproducible example before folding it into a larger do-file.
+validation_case: Run a small batch-mode example that exercises asdoc and inspect the resulting log.
+related_refs:
+- estout
+- outreg2
+- tables-reporting
+install_commands:
+- ssc install asdoc, replace
+smoke_test: 'sysuse auto, clear
+
+  asdoc summarize price mpg, replace'
+provenance:
+  local_help_topics:
+  - asdoc
+  local_help_files: []
+  upstream_files:
+  - plugins/stata/skills/stata/packages/asdoc.md
+  upstream_only: true

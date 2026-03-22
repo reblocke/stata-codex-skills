@@ -1,0 +1,40 @@
+slug: basics-getting-started
+skill: core
+section: Data Operations
+title: 'Stata Basics: Getting Started Guide'
+trigger: 'Use when the user needs built-in Stata help with stata basics: getting started guide.'
+commands: &id001
+- use
+- save
+- describe
+- browse
+- sysuse
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- 'Start with the official help topics attached to Stata Basics: Getting Started Guide, then tailor the
+  syntax to the current dataset.'
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises use and inspect the resulting log.
+related_refs:
+- data-management
+- workflow-best-practices
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - use
+  - save
+  - describe
+  - browse
+  - sysuse
+  local_help_files:
+  - ado/base/u/use.sthlp
+  - ado/base/s/save.sthlp
+  - ado/base/d/describe.sthlp
+  - ado/base/s/sysuse.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/basics-getting-started.md
+  upstream_only: false

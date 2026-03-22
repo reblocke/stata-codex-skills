@@ -1,0 +1,38 @@
+slug: advanced-programming
+skill: core
+section: Programming and Mata
+title: Advanced Stata Programming
+trigger: Use when the user needs built-in Stata help with advanced stata programming.
+commands: &id001
+- program
+- syntax
+- return
+- ereturn
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Advanced Stata Programming, then tailor the syntax to
+  the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises program and inspect the resulting log.
+related_refs:
+- programming-basics
+- workflow-best-practices
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - program
+  - syntax
+  - return
+  - ereturn
+  local_help_files:
+  - ado/base/p/program.sthlp
+  - ado/base/s/syntax.sthlp
+  - ado/base/r/return.sthlp
+  - ado/base/e/ereturn.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/advanced-programming.md
+  upstream_only: false

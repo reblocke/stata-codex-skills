@@ -1,0 +1,443 @@
+skill: package
+generated_at: '2026-03-22T16:34:30.646715+00:00'
+upstream_repo: https://github.com/dylantmoore/stata-skill.git
+entry_count: 20
+entries:
+- slug: asdoc
+  title: 'asdoc: Automatic Document Creation in Stata'
+  section: Tables and Reporting
+  trigger: Use when the user asks about asdoc or a related community-package workflow.
+  commands:
+  - asdoc
+  source_topics:
+  - asdoc
+  upstream_relpath: plugins/stata/skills/stata/packages/asdoc.md
+  related_refs:
+  - estout
+  - outreg2
+  - tables-reporting
+  validation_case: Run a small batch-mode example that exercises asdoc and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install asdoc, replace
+  smoke_test: 'sysuse auto, clear
+
+    asdoc summarize price mpg, replace'
+- slug: binsreg
+  title: 'BINSREG: Binscatter Estimation and Inference'
+  section: Estimation Packages
+  trigger: Use when the user asks about binsreg or a related community-package workflow.
+  commands:
+  - binsreg
+  source_topics:
+  - binsreg
+  upstream_relpath: plugins/stata/skills/stata/packages/binsreg.md
+  related_refs:
+  - graphics
+  - nonparametric-methods
+  validation_case: Run a small batch-mode example that exercises binsreg and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install binsreg, replace
+  smoke_test: 'sysuse auto, clear
+
+    binsreg price mpg'
+- slug: coefplot
+  title: 'Coefplot: Visualizing Regression Coefficients'
+  section: Graphics and Diagnostics
+  trigger: Use when the user asks about coefplot or a related community-package workflow.
+  commands:
+  - coefplot
+  source_topics:
+  - coefplot
+  upstream_relpath: plugins/stata/skills/stata/packages/coefplot.md
+  related_refs:
+  - graphics
+  - linear-regression
+  validation_case: Run a small batch-mode example that exercises coefplot and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install coefplot, replace
+  smoke_test: 'sysuse auto, clear
+
+    reg price mpg weight
+
+    coefplot'
+- slug: data-manipulation
+  title: Data Manipulation Packages in Stata
+  section: Data and Workflow Utilities
+  trigger: Use when the user asks about gcollapse or a related community-package workflow.
+  commands:
+  - gcollapse
+  - gegen
+  - greshape
+  source_topics:
+  - gtools
+  upstream_relpath: plugins/stata/skills/stata/packages/data-manipulation.md
+  related_refs:
+  - data-management
+  - workflow-best-practices
+  validation_case: Run a small batch-mode example that exercises gcollapse and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install gtools, replace
+  smoke_test: 'sysuse auto, clear
+
+    gcollapse (mean) price mpg, by(foreign)'
+- slug: diagnostics
+  title: Diagnostic Packages for Stata
+  section: Graphics and Diagnostics
+  trigger: Use when the user asks about estat vif or a related community-package workflow.
+  commands:
+  - estat vif
+  - ovtest
+  - linktest
+  - rvfplot
+  source_topics:
+  - regress_postestimation
+  upstream_relpath: plugins/stata/skills/stata/packages/diagnostics.md
+  related_refs:
+  - linear-regression
+  - graphics
+  validation_case: Run a small batch-mode example that exercises estat vif and inspect the resulting log.
+  allow_upstream_only: false
+  install_commands: []
+  smoke_test: 'sysuse auto, clear
+
+    reg price mpg weight
+
+    estat vif'
+- slug: did
+  title: Modern Difference-in-Differences Packages in Stata
+  section: Estimation Packages
+  trigger: Use when the user asks about csdid or a related community-package workflow.
+  commands:
+  - csdid
+  source_topics:
+  - csdid
+  upstream_relpath: plugins/stata/skills/stata/packages/did.md
+  related_refs:
+  - difference-in-differences
+  - treatment-effects
+  validation_case: Run a small batch-mode example that exercises csdid and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install csdid, replace
+  smoke_test: 'clear
+
+    set obs 80
+
+    gen id = ceil(_n/4)
+
+    gen t = mod(_n-1,4)
+
+    gen gvar = cond(id <= 10, 2, 0)
+
+    gen y = rnormal() + 2*(gvar>0 & t>=gvar)
+
+    csdid y, ivar(id) time(t) gvar(gvar) notyet'
+- slug: estout
+  title: 'estout/esttab: Publication-Quality Tables in Stata'
+  section: Tables and Reporting
+  trigger: Use when the user asks about eststo or a related community-package workflow.
+  commands:
+  - eststo
+  - esttab
+  - estout
+  source_topics:
+  - estout
+  upstream_relpath: plugins/stata/skills/stata/packages/estout.md
+  related_refs:
+  - tables-reporting
+  - outreg2
+  validation_case: Run a small batch-mode example that exercises eststo and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install estout, replace
+  smoke_test: 'sysuse auto, clear
+
+    eststo clear
+
+    eststo: reg price mpg weight
+
+    esttab'
+- slug: event-study
+  title: Event Study Packages in Stata
+  section: Graphics and Diagnostics
+  trigger: Use when the user asks about eventstudyinteract or a related community-package workflow.
+  commands:
+  - eventstudyinteract
+  source_topics:
+  - eventstudyinteract
+  upstream_relpath: plugins/stata/skills/stata/packages/event-study.md
+  related_refs:
+  - difference-in-differences
+  - graphics
+  validation_case: Run a small batch-mode example that exercises eventstudyinteract and inspect the resulting
+    log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install eventstudyinteract, replace
+  smoke_test: 'clear
+
+    set obs 80
+
+    gen id = ceil(_n/4)
+
+    gen t = mod(_n-1,4)
+
+    gen g = cond(id <= 10, 2, 0)
+
+    gen treated = g > 0
+
+    gen rel = t - g
+
+    gen y = rnormal() + 2*(treated & t>=g)
+
+    eventstudyinteract y treated rel, cohort(g) control_cohort(0)'
+- slug: graph-schemes
+  title: 'Graph Schemes: Professional Visualization Design'
+  section: Graphics and Diagnostics
+  trigger: Use when the user asks about grstyle or a related community-package workflow.
+  commands:
+  - grstyle
+  - set scheme
+  source_topics:
+  - grstyle
+  upstream_relpath: plugins/stata/skills/stata/packages/graph-schemes.md
+  related_refs:
+  - graphics
+  - tables-reporting
+  validation_case: Run a small batch-mode example that exercises grstyle and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install grstyle, replace
+  smoke_test: grstyle init
+- slug: ivreg2
+  title: 'Instrumental Variables Packages: ivreg2 and ivreghdfe'
+  section: Estimation Packages
+  trigger: Use when the user asks about ivreg2 or a related community-package workflow.
+  commands:
+  - ivreg2
+  source_topics:
+  - ivreg2
+  upstream_relpath: plugins/stata/skills/stata/packages/ivreg2.md
+  related_refs:
+  - linear-regression
+  - gmm-estimation
+  validation_case: Run a small batch-mode example that exercises ivreg2 and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install ivreg2, replace
+  smoke_test: 'sysuse auto, clear
+
+    gen z = turn + trunk
+
+    ivreg2 price weight (mpg = z)'
+- slug: nprobust
+  title: 'nprobust: Nonparametric Kernel-Based Estimation and Robust Bias-Corrected Inference'
+  section: Estimation Packages
+  trigger: Use when the user asks about nprobust or a related community-package workflow.
+  commands:
+  - nprobust
+  source_topics:
+  - nprobust
+  upstream_relpath: plugins/stata/skills/stata/packages/nprobust.md
+  related_refs:
+  - nonparametric-methods
+  - graphics
+  validation_case: Run a small batch-mode example that exercises nprobust and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install nprobust, replace
+  smoke_test: 'sysuse auto, clear
+
+    nprobust price mpg'
+- slug: outreg2
+  title: 'outreg2: Quick Regression Tables in Stata'
+  section: Tables and Reporting
+  trigger: Use when the user asks about outreg2 or a related community-package workflow.
+  commands:
+  - outreg2
+  source_topics:
+  - outreg2
+  upstream_relpath: plugins/stata/skills/stata/packages/outreg2.md
+  related_refs:
+  - tables-reporting
+  - estout
+  validation_case: Run a small batch-mode example that exercises outreg2 and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install outreg2, replace
+  smoke_test: 'sysuse auto, clear
+
+    reg price mpg weight
+
+    outreg2 using outreg2_smoke.doc, replace'
+- slug: package-management
+  title: Stata Package Management Guide
+  section: Data and Workflow Utilities
+  trigger: Use when the user asks about search or a related community-package workflow.
+  commands:
+  - search
+  - ssc install
+  - net install
+  - adoupdate
+  source_topics:
+  - search
+  - ssc
+  - net
+  - adoupdate
+  upstream_relpath: plugins/stata/skills/stata/packages/package-management.md
+  related_refs:
+  - workflow-best-practices
+  - external-tools-integration
+  validation_case: Run a small batch-mode example that exercises search and inspect the resulting log.
+  allow_upstream_only: false
+  install_commands: []
+  smoke_test: search reghdfe
+- slug: psmatch2
+  title: 'psmatch2: Propensity Score Matching'
+  section: Estimation Packages
+  trigger: Use when the user asks about psmatch2 or a related community-package workflow.
+  commands:
+  - psmatch2
+  source_topics:
+  - psmatch2
+  upstream_relpath: plugins/stata/skills/stata/packages/psmatch2.md
+  related_refs:
+  - matching-methods
+  - treatment-effects
+  validation_case: Run a small batch-mode example that exercises psmatch2 and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install psmatch2, replace
+  smoke_test: 'sysuse auto, clear
+
+    gen treat = foreign
+
+    psmatch2 treat mpg weight, outcome(price) neighbor(1)'
+- slug: rdrobust
+  title: 'rdrobust Suite: Regression Discontinuity Design Analysis'
+  section: Estimation Packages
+  trigger: Use when the user asks about rdrobust or a related community-package workflow.
+  commands:
+  - rdrobust
+  source_topics:
+  - rdrobust
+  upstream_relpath: plugins/stata/skills/stata/packages/rdrobust.md
+  related_refs:
+  - regression-discontinuity
+  - graphics
+  validation_case: Run a small batch-mode example that exercises rdrobust and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install rdrobust, replace
+  smoke_test: 'clear
+
+    set obs 200
+
+    gen x = _n - 100
+
+    gen y = x + 2*(x>=0) + rnormal()
+
+    rdrobust y x'
+- slug: reghdfe
+  title: 'reghdfe: High-Dimensional Fixed Effects Regression'
+  section: Estimation Packages
+  trigger: Use when the user asks about reghdfe or a related community-package workflow.
+  commands:
+  - reghdfe
+  - ivreghdfe
+  source_topics:
+  - reghdfe
+  - ivreghdfe
+  upstream_relpath: plugins/stata/skills/stata/packages/reghdfe.md
+  related_refs:
+  - linear-regression
+  - panel-data
+  - ivreg2
+  validation_case: Run a small batch-mode example that exercises reghdfe and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install ftools, replace
+  - ssc install reghdfe, replace
+  smoke_test: 'webuse nlswork, clear
+
+    reghdfe ln_wage tenure ttl_exp, absorb(idcode year)'
+- slug: synth
+  title: Synthetic Control Methods with synth
+  section: Estimation Packages
+  trigger: Use when the user asks about synth or a related community-package workflow.
+  commands:
+  - synth
+  source_topics:
+  - synth
+  upstream_relpath: plugins/stata/skills/stata/packages/synth.md
+  related_refs:
+  - treatment-effects
+  - graphics
+  validation_case: Run a small batch-mode example that exercises synth and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install synth, replace
+  smoke_test: 'webuse synth_smoking, clear
+
+    synth cigsale beer lnincome retprice age15to24, trunit(3) trperiod(1989)'
+- slug: tabout
+  title: 'tabout: Publication-Quality Cross-Tabulations and Summary Tables'
+  section: Tables and Reporting
+  trigger: Use when the user asks about tabout or a related community-package workflow.
+  commands:
+  - tabout
+  source_topics:
+  - tabout
+  upstream_relpath: plugins/stata/skills/stata/packages/tabout.md
+  related_refs:
+  - tables-reporting
+  - graphics
+  validation_case: Run a small batch-mode example that exercises tabout and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install tabout, replace
+  smoke_test: 'sysuse auto, clear
+
+    tabout foreign using tabout_smoke.txt, c(mean price) replace'
+- slug: winsor
+  title: 'Winsorizing in Stata: winsor and winsor2'
+  section: Data and Workflow Utilities
+  trigger: Use when the user asks about winsor2 or a related community-package workflow.
+  commands:
+  - winsor2
+  source_topics:
+  - winsor2
+  upstream_relpath: plugins/stata/skills/stata/packages/winsor.md
+  related_refs:
+  - data-management
+  - workflow-best-practices
+  validation_case: Run a small batch-mode example that exercises winsor2 and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install winsor2, replace
+  smoke_test: 'sysuse auto, clear
+
+    winsor2 price, replace cuts(1 99)'
+- slug: xtabond2
+  title: 'xtabond2: Dynamic Panel GMM Estimation'
+  section: Estimation Packages
+  trigger: Use when the user asks about xtabond2 or a related community-package workflow.
+  commands:
+  - xtabond2
+  source_topics:
+  - xtabond2
+  upstream_relpath: plugins/stata/skills/stata/packages/xtabond2.md
+  related_refs:
+  - panel-data
+  - gmm-estimation
+  validation_case: Run a small batch-mode example that exercises xtabond2 and inspect the resulting log.
+  allow_upstream_only: true
+  install_commands:
+  - ssc install xtabond2, replace
+  smoke_test: 'webuse abdata, clear
+
+    xtabond2 n L.n w k, gmm(L.n, lag(2 .)) iv(w k) nolevel robust'

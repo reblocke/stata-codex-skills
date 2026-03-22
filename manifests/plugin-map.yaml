@@ -1,0 +1,108 @@
+skill: plugin
+generated_at: '2026-03-22T16:34:30.679010+00:00'
+upstream_repo: https://github.com/dylantmoore/stata-skill.git
+entry_count: 6
+entries:
+- title: Plugin SDK Basics
+  commands:
+  - program ..., plugin
+  - plugin
+  source_topics:
+  - plugin
+  upstream_relpath: null
+  related_refs:
+  - cpp_plugins
+  - packaging_and_help
+  validation_case: Compile a minimal plugin and load it with program ..., plugin using(path/to/plugin).
+  allow_upstream_only: false
+  slug: plugin-sdk-basics
+  section: SDK and Entry Points
+  trigger: Use when the task needs plugin sdk basics for a Stata plugin project.
+- slug: cpp_plugins
+  title: C++ Plugins for Stata
+  section: C++ Wrapping
+  trigger: Use when the task needs c++ plugins for stata for a Stata plugin project.
+  commands:
+  - extern "C"
+  - stata_call
+  - SF_vdata
+  - SF_vstore
+  source_topics:
+  - plugin
+  upstream_relpath: plugins/stata-c-plugins/skills/stata-c-plugins/references/cpp_plugins.md
+  related_refs:
+  - plugin-sdk-basics
+  - performance_patterns
+  validation_case: Wrap a small C++ routine behind stata_call and confirm it returns 0 in batch mode.
+  allow_upstream_only: true
+- slug: packaging_and_help
+  title: Stata Package Structure and Distribution
+  section: Packaging and Distribution
+  trigger: Use when the task needs stata package structure and distribution for a Stata plugin project.
+  commands:
+  - .pkg
+  - .toc
+  - .sthlp
+  - net install
+  source_topics:
+  - net
+  - ssc
+  - plugin
+  upstream_relpath: plugins/stata-c-plugins/skills/stata-c-plugins/references/packaging_and_help.md
+  related_refs:
+  - plugin-sdk-basics
+  - testing_strategy
+  validation_case: Build a tiny package directory with plugin binary, ado, and sthlp, then install it
+    from a local folder.
+  allow_upstream_only: true
+- slug: performance_patterns
+  title: C Plugin Performance Patterns
+  section: Performance Patterns
+  trigger: Use when the task needs c plugin performance patterns for a Stata plugin project.
+  commands:
+  - pthreads
+  - presort
+  - buffer reuse
+  source_topics:
+  - plugin
+  upstream_relpath: plugins/stata-c-plugins/skills/stata-c-plugins/references/performance_patterns.md
+  related_refs:
+  - cpp_plugins
+  - testing_strategy
+  validation_case: Compare a simple plugin baseline against a version that reduces repeated passes over
+    the data.
+  allow_upstream_only: true
+- slug: testing_strategy
+  title: Testing Strategy for Translated Stata Packages
+  section: Testing and Validation
+  trigger: Use when the task needs testing strategy for translated stata packages for a Stata plugin project.
+  commands:
+  - batch smoke tests
+  - correlation checks
+  - return codes
+  source_topics:
+  - plugin
+  - runtest
+  upstream_relpath: plugins/stata-c-plugins/skills/stata-c-plugins/references/testing_strategy.md
+  related_refs:
+  - plugin-sdk-basics
+  - translation_workflow
+  validation_case: Run plugin smoke tests in batch mode and fail the test if the log contains r() errors.
+  allow_upstream_only: true
+- slug: translation_workflow
+  title: Translating Python/R Packages into Stata
+  section: Translation Workflow
+  trigger: Use when the task needs translating python/r packages into stata for a Stata plugin project.
+  commands:
+  - inventory
+  - wrap existing backend
+  - fidelity audit
+  source_topics:
+  - plugin
+  upstream_relpath: plugins/stata-c-plugins/skills/stata-c-plugins/references/translation_workflow.md
+  related_refs:
+  - cpp_plugins
+  - testing_strategy
+  validation_case: Start from an existing Python or R package and document the translation plan before
+    coding.
+  allow_upstream_only: true

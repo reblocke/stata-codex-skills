@@ -1,0 +1,31 @@
+---
+name: "{{ skill.name }}"
+description: "{{ skill.description }}"
+---
+
+# {{ skill.heading }}
+
+{{ skill.summary }}
+
+## Working Rules
+{% for rule in skill.rules %}
+- {{ rule }}
+{% endfor %}
+
+{% if skill.critical_gotchas %}
+## Critical Gotchas
+{% for item in skill.critical_gotchas %}
+- **{{ item.title }}**: {{ item.body }}
+{% endfor %}
+{% endif %}
+
+## Routing Table
+{% for section in sections %}
+### {{ section.name }}
+| File | When to load |
+|------|--------------|
+{% for entry in section.entries %}
+| `{{ entry.route_path }}` | {{ entry.trigger }} |
+{% endfor %}
+
+{% endfor %}

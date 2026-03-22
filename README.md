@@ -1,0 +1,245 @@
+# stata-codex-skills
+
+`stata-codex-skills` is a local build repo for Codex skills that help with Stata work.
+
+It does three things:
+
+1. Pulls topic coverage and routing hints from the upstream [`dylantmoore/stata-skill`](https://github.com/dylantmoore/stata-skill) repository.
+2. Harvests local Stata help files from `/Applications/Stata/ado/base` and normalizes them into a reusable local reference cache.
+3. Renders three Codex-native skills and publishes them into `~/.codex/skills`.
+
+The repo is designed to be a distillation pipeline, not a mirror. Upstream material is used for inventory and gap-finding. Local `.sthlp` files are the primary raw source. Final skill content is generated from structured YAML in `content/`, not edited by hand in the generated skill folders.
+
+## What gets built
+
+This repo builds three skills:
+
+- `stata-core`: built-in Stata commands, do-files, data management, estimation, graphics, workflow, and Mata
+- `stata-packages`: community-contributed packages such as `reghdfe`, `rdrobust`, `estout`, `synth`, and `xtabond2`
+- `stata-c-plugins`: Stata C and C++ plugin development, packaging, and validation
+
+Current content inventory:
+
+- 37 core references in `content/core/`
+- 20 package references in `content/packages/`
+- 6 plugin references in `content/plugins/`
+
+Generated skills are written to `build/generated/` and published into:
+
+- `~/.codex/skills/stata-core`
+- `~/.codex/skills/stata-packages`
+- `~/.codex/skills/stata-c-plugins`
+
+## Design principles
+
+- Treat the YAML files under `content/` as the source of truth.
+- Do not hand-edit generated `SKILL.md` files or generated reference pages.
+- Keep provenance explicit. Each content file records which local help topics and upstream files it was distilled from.
+- Prefer local Stata help over upstream prose whenever equivalent coverage exists.
+- Use isolated validation directories and temporary Stata `PLUS` paths so validation does not pollute your normal Stata environment.
+
+## Repository layout
+
+```text
+stata-codex-skills/
+├── content/
+│   ├── core/          # editable YAML source for built-in Stata topics
+│   ├── packages/      # editable YAML source for community packages
+│   └── plugins/       # editable YAML source for plugin workflows
+├── manifests/         # generated topic/package/plugin maps
+├── templates/         # Jinja templates for SKILL.md and reference pages
+├── scripts/           # fetch, harvest, scaffold, render, lint, publish, validate
+├── tests/             # Stata smoke tests and prompt-trigger examples
+├── raw/               # harvested upstream repo + normalized Stata help (gitignored)
+└── build/             # generated skill folders before publish (gitignored)
+```
+
+Also note:
+
+- `raw/`, `build/`, `tests/tmp/`, and common validation artifacts such as `*.log` are gitignored.
+- The repo currently assumes a local Stata install under `/Applications/Stata`.
+
+## Requirements
+
+- macOS with a local Stata install in `/Applications/Stata`
+- A working Python 3.11+ with `PyYAML` and `Jinja2`
+- Network access for:
+  - cloning or refreshing the upstream GitHub repo
+  - downloading plugin SDK sample files from `stata.com`
+  - installing community packages during validation
+
+On this machine, the default `python3` did not have the required packages, so the `Makefile` is pinned to:
+
+```bash
+/opt/anaconda3/bin/python3
+```
+
+If your preferred Python already has the dependencies, override it when running `make`, for example:
+
+```bash
+make PYTHON=$(which python3) all
+```
+
+## Quick start
+
+Build the manifests, harvest local help, scaffold content, render the skills, and lint the result:
+
+```bash
+cd ~/src/stata-codex-skills
+make all
+```
+
+Publish the generated skills into Codex:
+
+```bash
+make publish
+```
+
+Run the validation suite:
+
+```bash
+make validate
+```
+
+Useful targeted validation commands:
+
+```bash
+/opt/anaconda3/bin/python3 scripts/validate_skill_pack.py --skip-plugin
+/opt/anaconda3/bin/python3 scripts/validate_skill_pack.py --skip-packages
+/opt/anaconda3/bin/python3 scripts/validate_skill_pack.py --skip-packages --skip-plugin
+/opt/anaconda3/bin/python3 scripts/validate_skill_pack.py --package-limit 5
+```
+
+## Typical workflow
+
+When you update the repo, the normal order is:
+
+1. `make fetch`
+2. `make harvest`
+3. `make scaffold`
+4. Edit the YAML files in `content/`
+5. `make render`
+6. `make lint`
+7. `make publish`
+8. `make validate`
+
+Use `make all` as a shortcut for steps 1 through 6.
+
+## What each script does
+
+- `scripts/fetch_upstream.py`: clones or refreshes the upstream repo and rebuilds the manifest files
+- `scripts/harvest_stata_help.py`: copies matching local `.sthlp` files and writes normalized Markdown under `raw/stata-help/normalized/`
+- `scripts/scaffold_content.py`: creates or refreshes YAML stubs for topics defined in the manifests
+- `scripts/render_skills.py`: renders the three generated skill folders from the YAML content and Jinja templates
+- `scripts/lint_skill_pack.py`: validates YAML structure, provenance, generated routing, and frontmatter
+- `scripts/publish_local.py`: copies generated skill folders into `~/.codex/skills`
+- `scripts/validate_skill_pack.py`: runs static lint, Stata smoke tests, package install tests, and plugin compilation tests
+
+## Validation model
+
+Validation has three layers:
+
+1. Static linting
+   - checks required YAML fields
+   - checks provenance
+   - checks generated files and routing integrity
+
+2. Runtime Stata smoke tests
+   - `stata-core`: built-in commands and batch execution
+   - `stata-packages`: install each package into a temporary `PLUS` directory and run a minimal example
+   - `stata-c-plugins`: compile a plugin and invoke it from batch-mode Stata
+
+3. Prompt-level trigger checks
+   - example prompts are stored in `tests/prompts/`
+
+The batch runner watches for a `VALIDATION COMPLETE` marker in the generated Stata log. This is necessary because local `StataBE` on this machine does not reliably exit on its own in `-b do` mode, even when the do-file ends with `exit, clear`.
+
+## Current status as of March 22, 2026
+
+### Static and core validation
+
+- Static lint: pass
+- `stata-core` smoke test: pass
+
+### Full package sweep
+
+The full 20-package sweep was run. Result:
+
+- 14 packages passed
+- 6 packages failed
+
+Packages that passed:
+
+- `asdoc`
+- `coefplot`
+- `data-manipulation`
+- `diagnostics`
+- `did`
+- `estout`
+- `graph-schemes`
+- `outreg2`
+- `package-management`
+- `psmatch2`
+- `rdrobust`
+- `tabout`
+- `winsor`
+- `xtabond2`
+
+Package failures and current interpretation:
+
+- `binsreg`: `ssc install binsreg, replace` failed because SSC did not have a `binsreg` entry
+- `nprobust`: `ssc install nprobust, replace` failed because SSC did not have an `nprobust` entry
+- `ivreg2`: installed, but the smoke test failed because `ranktest` was not installed
+- `reghdfe`: installed, but the runtime now requires the `require` package as an additional dependency
+- `event-study`: `eventstudyinteract` installed, but the smoke test stalled when the estimator ran
+- `synth`: installed, but the smoke test stalled immediately after `webuse synth_smoking, clear`
+
+The current package metadata in `scripts/seed_data.py` still needs dependency and source updates for at least `ivreg2`, `reghdfe`, `binsreg`, and `nprobust`.
+
+### Plugin validation
+
+Plugin validation is implemented, but it does not currently pass on this machine.
+
+What was verified:
+
+- the validator can download `stplugin.h`, `stplugin.c`, and the official `hello.c` sample from `stata.com`
+- the plugin compiles successfully with `clang`
+- Stata can define the plugin-backed program with `program ..., plugin using("...")`
+
+Where it fails:
+
+- execution hangs at the first plugin call itself
+- this happens with the official `hello.c` sample and with a no-op plugin
+- the hang reproduces with `arm64` and universal plugin bundles
+
+That strongly suggests the current blocker is the local Stata/macOS plugin runtime boundary, not the example plugin logic.
+
+Manual plugin repro files used during debugging were written under `tests/tmp/plugin-manual/` and are gitignored.
+
+## Known caveats
+
+- The repo currently targets a macOS Stata install under `/Applications/Stata`.
+- Package install sources change over time. Some package validation failures are probably metadata drift, not skill-content problems.
+- Plugin execution under local batch-mode `StataBE` is not yet reliable on this machine.
+- Validation artifacts such as `.log`, `.doc`, and `.txt` files are left in the repo root when tests run. They are ignored by git, but they are still local clutter.
+
+## Next recommended fixes
+
+The highest-value follow-up changes are:
+
+1. Update package install metadata for packages that are no longer installed from SSC or that need extra dependencies.
+2. Tighten the `event-study` and `synth` smoke tests so they fail fast instead of stalling.
+3. Investigate the plugin runtime hang at the macOS loader boundary before relying on `stata-c-plugins` runtime validation.
+
+## Generated outputs to inspect
+
+After rendering and publishing, the most important files to inspect are:
+
+- `build/generated/stata-core/SKILL.md`
+- `build/generated/stata-packages/SKILL.md`
+- `build/generated/stata-c-plugins/SKILL.md`
+- `~/.codex/skills/stata-core/SKILL.md`
+- `~/.codex/skills/stata-packages/SKILL.md`
+- `~/.codex/skills/stata-c-plugins/SKILL.md`
+
+If you want to update the knowledge, edit the YAML in `content/`, not the generated files.

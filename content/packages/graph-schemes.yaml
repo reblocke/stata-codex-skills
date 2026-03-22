@@ -1,0 +1,32 @@
+slug: graph-schemes
+skill: packages
+section: Graphics and Diagnostics
+title: 'Graph Schemes: Professional Visualization Design'
+trigger: Use when the user asks about grstyle or a related community-package workflow.
+commands:
+- grstyle
+- set scheme
+source_topics:
+- grstyle
+syntax_patterns: []
+gotchas:
+- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
+  code.
+workflows:
+- Confirm the package and any dependencies are installed on the active adopath before writing code that
+  uses it.
+- Pair the package command with a small reproducible example before folding it into a larger do-file.
+validation_case: Run a small batch-mode example that exercises grstyle and inspect the resulting log.
+related_refs:
+- graphics
+- tables-reporting
+install_commands:
+- ssc install grstyle, replace
+smoke_test: grstyle init
+provenance:
+  local_help_topics:
+  - grstyle
+  local_help_files: []
+  upstream_files:
+  - plugins/stata/skills/stata/packages/graph-schemes.md
+  upstream_only: true

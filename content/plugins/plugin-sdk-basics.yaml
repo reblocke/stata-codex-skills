@@ -1,0 +1,29 @@
+slug: plugin-sdk-basics
+skill: plugins
+section: SDK and Entry Points
+title: Plugin SDK Basics
+trigger: Use when the task needs plugin sdk basics for a Stata plugin project.
+commands:
+- program ..., plugin
+- plugin
+source_topics:
+- plugin
+syntax_patterns: []
+gotchas:
+- A plugin crash terminates the Stata session, so treat every memory access and return code as high risk.
+workflows:
+- Plan the interface and the validation path before writing plugin code or wrapper ado-files.
+- Use batch-mode Stata logs and compiler output together when debugging plugin failures.
+validation_case: Compile a minimal plugin and load it with program ..., plugin using(path/to/plugin).
+related_refs:
+- cpp_plugins
+- packaging_and_help
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - plugin
+  local_help_files:
+  - ado/base/p/plugin.sthlp
+  upstream_files: []
+  upstream_only: false

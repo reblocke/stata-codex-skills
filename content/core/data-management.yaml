@@ -1,0 +1,49 @@
+slug: data-management
+skill: core
+section: Data Operations
+title: Data Management in Stata
+trigger: Use when the user needs built-in Stata help with data management in stata.
+commands: &id001
+- generate
+- replace
+- merge
+- append
+- reshape
+- collapse
+- egen
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Data Management in Stata, then tailor the syntax to
+  the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises generate and inspect the resulting log.
+related_refs:
+- variables-operators
+- workflow-best-practices
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - generate
+  - replace
+  - merge
+  - append
+  - reshape
+  - collapse
+  - egen
+  local_help_files:
+  - ado/base/g/generate.sthlp
+  - ado/base/f/f_regexreplace.sthlp
+  - ado/base/f/f_regexreplaceall.sthlp
+  - ado/base/m/mi_replace0.sthlp
+  - ado/base/m/merge.sthlp
+  - ado/base/a/append.sthlp
+  - ado/base/r/reshape.sthlp
+  - ado/base/c/collapse.sthlp
+  - ado/base/e/egen.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/data-management.md
+  upstream_only: false

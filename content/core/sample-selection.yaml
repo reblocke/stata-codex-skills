@@ -1,0 +1,32 @@
+slug: sample-selection
+skill: core
+section: Causal Inference
+title: Sample Selection Models in Stata
+trigger: Use when the user needs built-in Stata help with sample selection models in stata.
+commands: &id001
+- heckman
+- heckprobit
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Sample Selection Models in Stata, then tailor the syntax
+  to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises heckman and inspect the resulting log.
+related_refs:
+- limited-dependent-variables
+- treatment-effects
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - heckman
+  - heckprobit
+  local_help_files:
+  - ado/base/h/heckman.sthlp
+  - ado/base/h/heckprobit.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/sample-selection.md
+  upstream_only: false

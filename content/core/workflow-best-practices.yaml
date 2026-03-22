@@ -1,0 +1,37 @@
+slug: workflow-best-practices
+skill: core
+section: Output and Workflow
+title: Stata Workflow Best Practices
+trigger: Use when the user needs built-in Stata help with stata workflow best practices.
+commands: &id001
+- log
+- version
+- pwd
+- cd
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Stata Workflow Best Practices, then tailor the syntax
+  to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises log and inspect the resulting log.
+related_refs:
+- basics-getting-started
+- programming-basics
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - log
+  - version
+  - pwd
+  - cd
+  local_help_files:
+  - ado/base/l/log.sthlp
+  - ado/base/v/version.sthlp
+  - ado/base/c/cd.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/workflow-best-practices.md
+  upstream_only: false

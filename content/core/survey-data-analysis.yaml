@@ -1,0 +1,32 @@
+slug: survey-data-analysis
+skill: core
+section: Statistics and Econometrics
+title: Survey Data Analysis in Stata
+trigger: Use when the user needs built-in Stata help with survey data analysis in stata.
+commands: &id001
+- svyset
+- svy
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Survey Data Analysis in Stata, then tailor the syntax
+  to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises svyset and inspect the resulting log.
+related_refs:
+- descriptive-statistics
+- missing-data-handling
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - svyset
+  - svy
+  local_help_files:
+  - ado/base/s/svyset.sthlp
+  - ado/base/s/svy.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/survey-data-analysis.md
+  upstream_only: false

@@ -1,0 +1,32 @@
+slug: spatial-analysis
+skill: core
+section: Advanced Methods
+title: Spatial Analysis in Stata
+trigger: Use when the user needs built-in Stata help with spatial analysis in stata.
+commands: &id001
+- spmatrix
+- spregress
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Spatial Analysis in Stata, then tailor the syntax to
+  the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises spmatrix and inspect the resulting log.
+related_refs:
+- graphics
+- data-management
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - spmatrix
+  - spregress
+  local_help_files:
+  - ado/base/s/spmatrix.sthlp
+  - ado/base/s/spregress.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/spatial-analysis.md
+  upstream_only: false

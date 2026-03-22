@@ -1,0 +1,29 @@
+slug: maximum-likelihood
+skill: core
+section: Statistics and Econometrics
+title: Maximum Likelihood Estimation in Stata
+trigger: Use when the user needs built-in Stata help with maximum likelihood estimation in stata.
+commands: &id001
+- ml
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Maximum Likelihood Estimation in Stata, then tailor
+  the syntax to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises ml and inspect the resulting log.
+related_refs:
+- gmm-estimation
+- limited-dependent-variables
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - ml
+  local_help_files:
+  - ado/base/m/ml.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/maximum-likelihood.md
+  upstream_only: false

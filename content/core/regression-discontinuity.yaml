@@ -1,0 +1,70 @@
+slug: regression-discontinuity
+skill: core
+section: Causal Inference
+title: Regression Discontinuity Design in Stata
+trigger: Use when the user needs built-in Stata help with regression discontinuity design in stata.
+commands: &id001
+- rd
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Regression Discontinuity Design in Stata, then tailor
+  the syntax to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises rd and inspect the resulting log.
+related_refs:
+- treatment-effects
+- difference-in-differences
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - rd
+  local_help_files:
+  - ado/base/a/aorder.sthlp
+  - ado/base/c/churdle.sthlp
+  - ado/base/c/churdle_postestimation.sthlp
+  - ado/base/c/ciwidth_onevar_dlg.sthlp
+  - ado/base/c/cluster_dendrogram.sthlp
+  - ado/base/c/cluster_dlg.sthlp
+  - ado/base/c/contents_stat_ordinal.sthlp
+  - ado/base/c/contour_dlg.sthlp
+  - ado/base/d/discard.sthlp
+  - ado/base/e/estat_coordinates.sthlp
+  - ado/base/e/estat_grdistances.sthlp
+  - ado/base/f/f_byteorder.sthlp
+  - ado/base/f/f_hadamard.sthlp
+  - ado/base/f/f_strdup.sthlp
+  - ado/base/f/f_ustrword.sthlp
+  - ado/base/f/f_word.sthlp
+  - ado/base/f/f_wordbreaklocale.sthlp
+  - ado/base/g/gsem_fvstandard.sthlp
+  - ado/base/i/import_haverdirect.sthlp
+  - ado/base/k/keyboard.sthlp
+  - ado/base/l/legend_order.sthlp
+  - ado/base/m/m2_reswords.sthlp
+  - ado/base/m/m4_standard.sthlp
+  - ado/base/m/mf_byteorder.sthlp
+  - ado/base/m/mf_gschurd.sthlp
+  - ado/base/m/mf_invorder.sthlp
+  - ado/base/m/mf_qrd.sthlp
+  - ado/base/m/mf_rdirichlet.sthlp
+  - ado/base/m/mf_schurd.sthlp
+  - ado/base/m/mf_strdup.sthlp
+  - ado/base/m/mf_ustrword.sthlp
+  - ado/base/m/mvreg_db_order.sthlp
+  - ado/base/o/order.sthlp
+  - ado/base/p/power_onevar_dlg.sthlp
+  - ado/base/p/power_pairedpr_dlg.sthlp
+  - ado/base/p/power_twovar_dlg.sthlp
+  - ado/base/p/prdocumented.sthlp
+  - ado/base/r/reswords.sthlp
+  - ado/base/s/scalar_dlg.sthlp
+  - ado/base/s/spmatrix_userdefined.sthlp
+  - ado/base/s/stpower_dlg.sthlp
+  - ado/base/v/varkeyboard.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/regression-discontinuity.md
+  upstream_only: true

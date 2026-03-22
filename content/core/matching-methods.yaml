@@ -1,0 +1,32 @@
+slug: matching-methods
+skill: core
+section: Causal Inference
+title: Matching Methods in Stata
+trigger: Use when the user needs built-in Stata help with matching methods in stata.
+commands: &id001
+- teffects
+- tebalance
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Matching Methods in Stata, then tailor the syntax to
+  the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises teffects and inspect the resulting log.
+related_refs:
+- treatment-effects
+- difference-in-differences
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - teffects
+  - tebalance
+  local_help_files:
+  - ado/base/t/teffects.sthlp
+  - ado/base/t/tebalance.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/matching-methods.md
+  upstream_only: false

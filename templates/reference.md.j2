@@ -1,0 +1,66 @@
+# {{ entry.title }}
+
+## When to use
+{{ entry.trigger }}
+
+{% if entry.install_commands %}
+## Installation
+```stata
+{% for line in entry.install_commands %}
+{{ line }}
+{% endfor %}
+```
+{% endif %}
+
+{% if entry.commands %}
+## Key commands and topics
+{% for command in entry.commands %}
+- `{{ command }}`
+{% endfor %}
+{% endif %}
+
+{% if entry.syntax_patterns %}
+## Syntax patterns
+```stata
+{% for line in entry.syntax_patterns %}
+{{ line }}
+{% endfor %}
+```
+{% endif %}
+
+{% if entry.gotchas %}
+## Common gotchas
+{% for item in entry.gotchas %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+
+{% if entry.workflows %}
+## Workflow notes
+{% for item in entry.workflows %}
+- {{ item }}
+{% endfor %}
+{% endif %}
+
+{% if entry.smoke_test %}
+## Smoke test
+```stata
+{{ entry.smoke_test }}
+```
+{% endif %}
+
+## Validation case
+{{ entry.validation_case }}
+
+{% if entry.related_refs %}
+## Related references
+{% for item in entry.related_refs %}
+- `{{ item }}`
+{% endfor %}
+{% endif %}
+
+## Provenance
+- Local help topics: {% if entry.provenance.local_help_topics %}{{ entry.provenance.local_help_topics | join(", ") }}{% else %}none{% endif %}
+- Harvested local help files: {% if entry.provenance.local_help_files %}{{ entry.provenance.local_help_files | join(", ") }}{% else %}none{% endif %}
+- Upstream inventory files: {% if entry.provenance.upstream_files %}{{ entry.provenance.upstream_files | join(", ") }}{% else %}none{% endif %}
+- Upstream-only source allowed: {{ "yes" if entry.provenance.upstream_only else "no" }}

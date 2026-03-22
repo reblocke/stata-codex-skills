@@ -1,0 +1,31 @@
+slug: mata-programming
+skill: core
+section: Programming and Mata
+title: Mata Programming
+trigger: Use when the user needs built-in Stata help with mata programming.
+commands: &id001
+- mata
+- m2_functions
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Mata Programming, then tailor the syntax to the current
+  dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises mata and inspect the resulting log.
+related_refs:
+- mata-introduction
+- advanced-programming
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - mata
+  - m2_functions
+  local_help_files:
+  - ado/base/m/mata.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/mata-programming.md
+  upstream_only: false

@@ -1,0 +1,32 @@
+slug: mata-matrix-operations
+skill: core
+section: Programming and Mata
+title: Mata Matrix Operations
+trigger: Use when the user needs built-in Stata help with mata matrix operations.
+commands: &id001
+- matrix
+- mata
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Mata Matrix Operations, then tailor the syntax to the
+  current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises matrix and inspect the resulting log.
+related_refs:
+- mata-introduction
+- mata-programming
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - matrix
+  - mata
+  local_help_files:
+  - ado/base/m/matrix.sthlp
+  - ado/base/m/mata.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/mata-matrix-operations.md
+  upstream_only: true

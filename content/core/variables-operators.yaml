@@ -1,0 +1,38 @@
+slug: variables-operators
+skill: core
+section: Data Operations
+title: Variables and Operators in Stata
+trigger: Use when the user needs built-in Stata help with variables and operators in stata.
+commands: &id001
+- datatypes
+- missing
+- if
+- functions
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Variables and Operators in Stata, then tailor the syntax
+  to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises datatypes and inspect the resulting log.
+related_refs:
+- data-management
+- mathematical-functions
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - datatypes
+  - missing
+  - if
+  - functions
+  local_help_files:
+  - ado/base/d/data_types.sthlp
+  - ado/base/m/missing.sthlp
+  - ado/base/i/if.sthlp
+  - ado/base/f/functions.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/variables-operators.md
+  upstream_only: false

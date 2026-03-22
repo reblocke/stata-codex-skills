@@ -1,0 +1,567 @@
+skill: topic
+generated_at: '2026-03-22T16:34:30.615730+00:00'
+upstream_repo: https://github.com/dylantmoore/stata-skill.git
+entry_count: 37
+entries:
+- slug: advanced-programming
+  title: Advanced Stata Programming
+  section: Programming and Mata
+  trigger: Use when the user needs built-in Stata help with advanced stata programming.
+  commands: &id001
+  - program
+  - syntax
+  - return
+  - ereturn
+  source_topics: *id001
+  upstream_relpath: plugins/stata/skills/stata/references/advanced-programming.md
+  related_refs:
+  - programming-basics
+  - workflow-best-practices
+  validation_case: Run a small batch-mode example that exercises program and inspect the resulting log.
+  allow_upstream_only: false
+- slug: basics-getting-started
+  title: 'Stata Basics: Getting Started Guide'
+  section: Data Operations
+  trigger: 'Use when the user needs built-in Stata help with stata basics: getting started guide.'
+  commands: &id002
+  - use
+  - save
+  - describe
+  - browse
+  - sysuse
+  source_topics: *id002
+  upstream_relpath: plugins/stata/skills/stata/references/basics-getting-started.md
+  related_refs:
+  - data-management
+  - workflow-best-practices
+  validation_case: Run a small batch-mode example that exercises use and inspect the resulting log.
+  allow_upstream_only: false
+- slug: bootstrap-simulation
+  title: Bootstrap and Simulation Methods in Stata
+  section: Statistics and Econometrics
+  trigger: Use when the user needs built-in Stata help with bootstrap and simulation methods in stata.
+  commands: &id003
+  - bootstrap
+  - simulate
+  - permute
+  source_topics: *id003
+  upstream_relpath: plugins/stata/skills/stata/references/bootstrap-simulation.md
+  related_refs:
+  - linear-regression
+  - maximum-likelihood
+  validation_case: Run a small batch-mode example that exercises bootstrap and inspect the resulting log.
+  allow_upstream_only: false
+- slug: data-import-export
+  title: Data Import and Export
+  section: Data Operations
+  trigger: Use when the user needs built-in Stata help with data import and export.
+  commands: &id004
+  - import
+  - import_delimited
+  - import_excel
+  - export
+  source_topics: *id004
+  upstream_relpath: plugins/stata/skills/stata/references/data-import-export.md
+  related_refs:
+  - basics-getting-started
+  - data-management
+  validation_case: Run a small batch-mode example that exercises import and inspect the resulting log.
+  allow_upstream_only: false
+- slug: data-management
+  title: Data Management in Stata
+  section: Data Operations
+  trigger: Use when the user needs built-in Stata help with data management in stata.
+  commands: &id005
+  - generate
+  - replace
+  - merge
+  - append
+  - reshape
+  - collapse
+  - egen
+  source_topics: *id005
+  upstream_relpath: plugins/stata/skills/stata/references/data-management.md
+  related_refs:
+  - variables-operators
+  - workflow-best-practices
+  validation_case: Run a small batch-mode example that exercises generate and inspect the resulting log.
+  allow_upstream_only: false
+- slug: date-time-functions
+  title: Date and Time Functions in Stata
+  section: Data Operations
+  trigger: Use when the user needs built-in Stata help with date and time functions in stata.
+  commands: &id006
+  - datetime
+  - datetime_translation
+  - format
+  source_topics: *id006
+  upstream_relpath: plugins/stata/skills/stata/references/date-time-functions.md
+  related_refs:
+  - data-management
+  - string-functions
+  validation_case: Run a small batch-mode example that exercises datetime and inspect the resulting log.
+  allow_upstream_only: false
+- slug: descriptive-statistics
+  title: Descriptive Statistics in Stata
+  section: Statistics and Econometrics
+  trigger: Use when the user needs built-in Stata help with descriptive statistics in stata.
+  commands: &id007
+  - summarize
+  - tabulate
+  - tabstat
+  - codebook
+  - correlate
+  source_topics: *id007
+  upstream_relpath: plugins/stata/skills/stata/references/descriptive-statistics.md
+  related_refs:
+  - linear-regression
+  - survey-data-analysis
+  validation_case: Run a small batch-mode example that exercises summarize and inspect the resulting log.
+  allow_upstream_only: false
+- slug: difference-in-differences
+  title: Difference-in-Differences Analysis in Stata
+  section: Causal Inference
+  trigger: Use when the user needs built-in Stata help with difference-in-differences analysis in stata.
+  commands: &id008
+  - didregress
+  - xtdidregress
+  source_topics: *id008
+  upstream_relpath: plugins/stata/skills/stata/references/difference-in-differences.md
+  related_refs:
+  - panel-data
+  - treatment-effects
+  validation_case: Run a small batch-mode example that exercises didregress and inspect the resulting
+    log.
+  allow_upstream_only: false
+- slug: external-tools-integration
+  title: External Tools Integration
+  section: Output and Workflow
+  trigger: Use when the user needs built-in Stata help with external tools integration.
+  commands: &id009
+  - python
+  - shell
+  - java_plugin
+  source_topics: *id009
+  upstream_relpath: plugins/stata/skills/stata/references/external-tools-integration.md
+  related_refs:
+  - workflow-best-practices
+  - programming-basics
+  validation_case: Run a small batch-mode example that exercises python and inspect the resulting log.
+  allow_upstream_only: false
+- slug: gmm-estimation
+  title: GMM Estimation in Stata
+  section: Statistics and Econometrics
+  trigger: Use when the user needs built-in Stata help with gmm estimation in stata.
+  commands: &id010
+  - gmm
+  source_topics: *id010
+  upstream_relpath: plugins/stata/skills/stata/references/gmm-estimation.md
+  related_refs:
+  - maximum-likelihood
+  - linear-regression
+  validation_case: Run a small batch-mode example that exercises gmm and inspect the resulting log.
+  allow_upstream_only: false
+- slug: graphics
+  title: Graphics in Stata
+  section: Output and Workflow
+  trigger: Use when the user needs built-in Stata help with graphics in stata.
+  commands: &id011
+  - graph
+  - twoway
+  - histogram
+  - scatter
+  source_topics: *id011
+  upstream_relpath: plugins/stata/skills/stata/references/graphics.md
+  related_refs:
+  - tables-reporting
+  - descriptive-statistics
+  validation_case: Run a small batch-mode example that exercises graph and inspect the resulting log.
+  allow_upstream_only: false
+- slug: limited-dependent-variables
+  title: Limited Dependent Variable Models in Stata
+  section: Statistics and Econometrics
+  trigger: Use when the user needs built-in Stata help with limited dependent variable models in stata.
+  commands: &id012
+  - logit
+  - probit
+  - mlogit
+  - ologit
+  - poisson
+  - nbreg
+  - tobit
+  source_topics: *id012
+  upstream_relpath: plugins/stata/skills/stata/references/limited-dependent-variables.md
+  related_refs:
+  - linear-regression
+  - maximum-likelihood
+  validation_case: Run a small batch-mode example that exercises logit and inspect the resulting log.
+  allow_upstream_only: false
+- slug: linear-regression
+  title: Linear Regression in Stata
+  section: Statistics and Econometrics
+  trigger: Use when the user needs built-in Stata help with linear regression in stata.
+  commands: &id013
+  - regress
+  - ivregress
+  - margins
+  - predict
+  source_topics: *id013
+  upstream_relpath: plugins/stata/skills/stata/references/linear-regression.md
+  related_refs:
+  - descriptive-statistics
+  - limited-dependent-variables
+  validation_case: Run a small batch-mode example that exercises regress and inspect the resulting log.
+  allow_upstream_only: false
+- slug: machine-learning
+  title: Machine Learning in Stata
+  section: Advanced Methods
+  trigger: Use when the user needs built-in Stata help with machine learning in stata.
+  commands: &id014
+  - lasso
+  - elasticnet
+  - dsregress
+  source_topics: *id014
+  upstream_relpath: plugins/stata/skills/stata/references/machine-learning.md
+  related_refs:
+  - programming-basics
+  - workflow-best-practices
+  validation_case: Run a small batch-mode example that exercises lasso and inspect the resulting log.
+  allow_upstream_only: false
+- slug: mata-data-access
+  title: Mata-Stata Data Access Interface
+  section: Programming and Mata
+  trigger: Use when the user needs built-in Stata help with mata-stata data access interface.
+  commands: &id015
+  - mf_st_data
+  - mf_st_store
+  source_topics: *id015
+  upstream_relpath: plugins/stata/skills/stata/references/mata-data-access.md
+  related_refs:
+  - mata-introduction
+  - mata-programming
+  validation_case: Run a small batch-mode example that exercises mf_st_data and inspect the resulting
+    log.
+  allow_upstream_only: true
+- slug: mata-introduction
+  title: Mata Introduction
+  section: Programming and Mata
+  trigger: Use when the user needs built-in Stata help with mata introduction.
+  commands: &id016
+  - mata
+  source_topics: *id016
+  upstream_relpath: plugins/stata/skills/stata/references/mata-introduction.md
+  related_refs:
+  - mata-programming
+  - mata-matrix-operations
+  validation_case: Run a small batch-mode example that exercises mata and inspect the resulting log.
+  allow_upstream_only: false
+- slug: mata-matrix-operations
+  title: Mata Matrix Operations
+  section: Programming and Mata
+  trigger: Use when the user needs built-in Stata help with mata matrix operations.
+  commands: &id017
+  - matrix
+  - mata
+  source_topics: *id017
+  upstream_relpath: plugins/stata/skills/stata/references/mata-matrix-operations.md
+  related_refs:
+  - mata-introduction
+  - mata-programming
+  validation_case: Run a small batch-mode example that exercises matrix and inspect the resulting log.
+  allow_upstream_only: true
+- slug: mata-programming
+  title: Mata Programming
+  section: Programming and Mata
+  trigger: Use when the user needs built-in Stata help with mata programming.
+  commands: &id018
+  - mata
+  - m2_functions
+  source_topics: *id018
+  upstream_relpath: plugins/stata/skills/stata/references/mata-programming.md
+  related_refs:
+  - mata-introduction
+  - advanced-programming
+  validation_case: Run a small batch-mode example that exercises mata and inspect the resulting log.
+  allow_upstream_only: false
+- slug: matching-methods
+  title: Matching Methods in Stata
+  section: Causal Inference
+  trigger: Use when the user needs built-in Stata help with matching methods in stata.
+  commands: &id019
+  - teffects
+  - tebalance
+  source_topics: *id019
+  upstream_relpath: plugins/stata/skills/stata/references/matching-methods.md
+  related_refs:
+  - treatment-effects
+  - difference-in-differences
+  validation_case: Run a small batch-mode example that exercises teffects and inspect the resulting log.
+  allow_upstream_only: false
+- slug: mathematical-functions
+  title: Mathematical and Statistical Functions in Stata
+  section: Data Operations
+  trigger: Use when the user needs built-in Stata help with mathematical and statistical functions in
+    stata.
+  commands: &id020
+  - functions
+  - random_number_functions
+  source_topics: *id020
+  upstream_relpath: plugins/stata/skills/stata/references/mathematical-functions.md
+  related_refs:
+  - variables-operators
+  - date-time-functions
+  validation_case: Run a small batch-mode example that exercises functions and inspect the resulting log.
+  allow_upstream_only: false
+- slug: maximum-likelihood
+  title: Maximum Likelihood Estimation in Stata
+  section: Statistics and Econometrics
+  trigger: Use when the user needs built-in Stata help with maximum likelihood estimation in stata.
+  commands: &id021
+  - ml
+  source_topics: *id021
+  upstream_relpath: plugins/stata/skills/stata/references/maximum-likelihood.md
+  related_refs:
+  - gmm-estimation
+  - limited-dependent-variables
+  validation_case: Run a small batch-mode example that exercises ml and inspect the resulting log.
+  allow_upstream_only: false
+- slug: missing-data-handling
+  title: Missing Data Handling in Stata
+  section: Statistics and Econometrics
+  trigger: Use when the user needs built-in Stata help with missing data handling in stata.
+  commands: &id022
+  - mi
+  - misstable
+  source_topics: *id022
+  upstream_relpath: plugins/stata/skills/stata/references/missing-data-handling.md
+  related_refs:
+  - data-management
+  - survey-data-analysis
+  validation_case: Run a small batch-mode example that exercises mi and inspect the resulting log.
+  allow_upstream_only: false
+- slug: nonparametric-methods
+  title: Nonparametric Methods in Stata
+  section: Advanced Methods
+  trigger: Use when the user needs built-in Stata help with nonparametric methods in stata.
+  commands: &id023
+  - npregress
+  - lowess
+  source_topics: *id023
+  upstream_relpath: plugins/stata/skills/stata/references/nonparametric-methods.md
+  related_refs:
+  - graphics
+  - machine-learning
+  validation_case: Run a small batch-mode example that exercises npregress and inspect the resulting log.
+  allow_upstream_only: false
+- slug: panel-data
+  title: Panel Data Analysis in Stata
+  section: Statistics and Econometrics
+  trigger: Use when the user needs built-in Stata help with panel data analysis in stata.
+  commands: &id024
+  - xtset
+  - xtreg
+  - xt
+  source_topics: *id024
+  upstream_relpath: plugins/stata/skills/stata/references/panel-data.md
+  related_refs:
+  - linear-regression
+  - difference-in-differences
+  validation_case: Run a small batch-mode example that exercises xtset and inspect the resulting log.
+  allow_upstream_only: false
+- slug: programming-basics
+  title: Stata Programming Basics
+  section: Programming and Mata
+  trigger: Use when the user needs built-in Stata help with stata programming basics.
+  commands: &id025
+  - foreach
+  - forvalues
+  - macro
+  - do
+  source_topics: *id025
+  upstream_relpath: plugins/stata/skills/stata/references/programming-basics.md
+  related_refs:
+  - advanced-programming
+  - workflow-best-practices
+  validation_case: Run a small batch-mode example that exercises foreach and inspect the resulting log.
+  allow_upstream_only: false
+- slug: regression-discontinuity
+  title: Regression Discontinuity Design in Stata
+  section: Causal Inference
+  trigger: Use when the user needs built-in Stata help with regression discontinuity design in stata.
+  commands: &id026
+  - rd
+  source_topics: *id026
+  upstream_relpath: plugins/stata/skills/stata/references/regression-discontinuity.md
+  related_refs:
+  - treatment-effects
+  - difference-in-differences
+  validation_case: Run a small batch-mode example that exercises rd and inspect the resulting log.
+  allow_upstream_only: true
+- slug: sample-selection
+  title: Sample Selection Models in Stata
+  section: Causal Inference
+  trigger: Use when the user needs built-in Stata help with sample selection models in stata.
+  commands: &id027
+  - heckman
+  - heckprobit
+  source_topics: *id027
+  upstream_relpath: plugins/stata/skills/stata/references/sample-selection.md
+  related_refs:
+  - limited-dependent-variables
+  - treatment-effects
+  validation_case: Run a small batch-mode example that exercises heckman and inspect the resulting log.
+  allow_upstream_only: false
+- slug: sem-factor-analysis
+  title: Structural Equation Modeling and Factor Analysis in Stata
+  section: Advanced Methods
+  trigger: Use when the user needs built-in Stata help with structural equation modeling and factor analysis
+    in stata.
+  commands: &id028
+  - sem
+  - gsem
+  - factor
+  source_topics: *id028
+  upstream_relpath: plugins/stata/skills/stata/references/sem-factor-analysis.md
+  related_refs:
+  - maximum-likelihood
+  - descriptive-statistics
+  validation_case: Run a small batch-mode example that exercises sem and inspect the resulting log.
+  allow_upstream_only: false
+- slug: spatial-analysis
+  title: Spatial Analysis in Stata
+  section: Advanced Methods
+  trigger: Use when the user needs built-in Stata help with spatial analysis in stata.
+  commands: &id029
+  - spmatrix
+  - spregress
+  source_topics: *id029
+  upstream_relpath: plugins/stata/skills/stata/references/spatial-analysis.md
+  related_refs:
+  - graphics
+  - data-management
+  validation_case: Run a small batch-mode example that exercises spmatrix and inspect the resulting log.
+  allow_upstream_only: false
+- slug: string-functions
+  title: String Functions in Stata
+  section: Data Operations
+  trigger: Use when the user needs built-in Stata help with string functions in stata.
+  commands: &id030
+  - string_functions
+  - split
+  - regexm
+  - ustrlen
+  source_topics: *id030
+  upstream_relpath: plugins/stata/skills/stata/references/string-functions.md
+  related_refs:
+  - data-management
+  - date-time-functions
+  validation_case: Run a small batch-mode example that exercises string_functions and inspect the resulting
+    log.
+  allow_upstream_only: false
+- slug: survey-data-analysis
+  title: Survey Data Analysis in Stata
+  section: Statistics and Econometrics
+  trigger: Use when the user needs built-in Stata help with survey data analysis in stata.
+  commands: &id031
+  - svyset
+  - svy
+  source_topics: *id031
+  upstream_relpath: plugins/stata/skills/stata/references/survey-data-analysis.md
+  related_refs:
+  - descriptive-statistics
+  - missing-data-handling
+  validation_case: Run a small batch-mode example that exercises svyset and inspect the resulting log.
+  allow_upstream_only: false
+- slug: survival-analysis
+  title: Survival Analysis in Stata
+  section: Advanced Methods
+  trigger: Use when the user needs built-in Stata help with survival analysis in stata.
+  commands: &id032
+  - stset
+  - stcox
+  - sts
+  source_topics: *id032
+  upstream_relpath: plugins/stata/skills/stata/references/survival-analysis.md
+  related_refs:
+  - limited-dependent-variables
+  - maximum-likelihood
+  validation_case: Run a small batch-mode example that exercises stset and inspect the resulting log.
+  allow_upstream_only: false
+- slug: tables-reporting
+  title: 'Stata Tables and Reporting: Publication-Ready Output'
+  section: Output and Workflow
+  trigger: 'Use when the user needs built-in Stata help with stata tables and reporting: publication-ready
+    output.'
+  commands: &id033
+  - etable
+  - collect
+  - table
+  - putexcel
+  source_topics: *id033
+  upstream_relpath: plugins/stata/skills/stata/references/tables-reporting.md
+  related_refs:
+  - graphics
+  - workflow-best-practices
+  validation_case: Run a small batch-mode example that exercises etable and inspect the resulting log.
+  allow_upstream_only: false
+- slug: time-series
+  title: Time Series Analysis in Stata
+  section: Statistics and Econometrics
+  trigger: Use when the user needs built-in Stata help with time series analysis in stata.
+  commands: &id034
+  - tsset
+  - arima
+  - var
+  - irf
+  source_topics: *id034
+  upstream_relpath: plugins/stata/skills/stata/references/time-series.md
+  related_refs:
+  - panel-data
+  - graphics
+  validation_case: Run a small batch-mode example that exercises tsset and inspect the resulting log.
+  allow_upstream_only: false
+- slug: treatment-effects
+  title: Treatment Effects and Causal Inference
+  section: Causal Inference
+  trigger: Use when the user needs built-in Stata help with treatment effects and causal inference.
+  commands: &id035
+  - teffects
+  source_topics: *id035
+  upstream_relpath: plugins/stata/skills/stata/references/treatment-effects.md
+  related_refs:
+  - matching-methods
+  - difference-in-differences
+  validation_case: Run a small batch-mode example that exercises teffects and inspect the resulting log.
+  allow_upstream_only: false
+- slug: variables-operators
+  title: Variables and Operators in Stata
+  section: Data Operations
+  trigger: Use when the user needs built-in Stata help with variables and operators in stata.
+  commands: &id036
+  - datatypes
+  - missing
+  - if
+  - functions
+  source_topics: *id036
+  upstream_relpath: plugins/stata/skills/stata/references/variables-operators.md
+  related_refs:
+  - data-management
+  - mathematical-functions
+  validation_case: Run a small batch-mode example that exercises datatypes and inspect the resulting log.
+  allow_upstream_only: false
+- slug: workflow-best-practices
+  title: Stata Workflow Best Practices
+  section: Output and Workflow
+  trigger: Use when the user needs built-in Stata help with stata workflow best practices.
+  commands: &id037
+  - log
+  - version
+  - pwd
+  - cd
+  source_topics: *id037
+  upstream_relpath: plugins/stata/skills/stata/references/workflow-best-practices.md
+  related_refs:
+  - basics-getting-started
+  - programming-basics
+  validation_case: Run a small batch-mode example that exercises log and inspect the resulting log.
+  allow_upstream_only: false

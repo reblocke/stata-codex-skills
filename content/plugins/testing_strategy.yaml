@@ -1,0 +1,34 @@
+slug: testing_strategy
+skill: plugins
+section: Testing and Validation
+title: Testing Strategy for Translated Stata Packages
+trigger: Use when the task needs testing strategy for translated stata packages for a Stata plugin project.
+commands:
+- batch smoke tests
+- correlation checks
+- return codes
+source_topics:
+- plugin
+- runtest
+syntax_patterns: []
+gotchas:
+- A plugin crash terminates the Stata session, so treat every memory access and return code as high risk.
+workflows:
+- Plan the interface and the validation path before writing plugin code or wrapper ado-files.
+- Use batch-mode Stata logs and compiler output together when debugging plugin failures.
+validation_case: Run plugin smoke tests in batch mode and fail the test if the log contains r() errors.
+related_refs:
+- plugin-sdk-basics
+- translation_workflow
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - plugin
+  - runtest
+  local_help_files:
+  - ado/base/p/plugin.sthlp
+  - ado/base/r/runtest.sthlp
+  upstream_files:
+  - plugins/stata-c-plugins/skills/stata-c-plugins/references/testing_strategy.md
+  upstream_only: true

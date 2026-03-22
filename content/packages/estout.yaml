@@ -1,0 +1,39 @@
+slug: estout
+skill: packages
+section: Tables and Reporting
+title: 'estout/esttab: Publication-Quality Tables in Stata'
+trigger: Use when the user asks about eststo or a related community-package workflow.
+commands:
+- eststo
+- esttab
+- estout
+source_topics:
+- estout
+syntax_patterns: []
+gotchas:
+- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
+  code.
+workflows:
+- Confirm the package and any dependencies are installed on the active adopath before writing code that
+  uses it.
+- Pair the package command with a small reproducible example before folding it into a larger do-file.
+validation_case: Run a small batch-mode example that exercises eststo and inspect the resulting log.
+related_refs:
+- tables-reporting
+- outreg2
+install_commands:
+- ssc install estout, replace
+smoke_test: 'sysuse auto, clear
+
+  eststo clear
+
+  eststo: reg price mpg weight
+
+  esttab'
+provenance:
+  local_help_topics:
+  - estout
+  local_help_files: []
+  upstream_files:
+  - plugins/stata/skills/stata/packages/estout.md
+  upstream_only: true

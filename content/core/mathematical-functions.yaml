@@ -1,0 +1,32 @@
+slug: mathematical-functions
+skill: core
+section: Data Operations
+title: Mathematical and Statistical Functions in Stata
+trigger: Use when the user needs built-in Stata help with mathematical and statistical functions in stata.
+commands: &id001
+- functions
+- random_number_functions
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Mathematical and Statistical Functions in Stata, then
+  tailor the syntax to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises functions and inspect the resulting log.
+related_refs:
+- variables-operators
+- date-time-functions
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - functions
+  - random_number_functions
+  local_help_files:
+  - ado/base/f/functions.sthlp
+  - ado/base/r/random_number_functions.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/mathematical-functions.md
+  upstream_only: false

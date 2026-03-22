@@ -1,0 +1,38 @@
+slug: programming-basics
+skill: core
+section: Programming and Mata
+title: Stata Programming Basics
+trigger: Use when the user needs built-in Stata help with stata programming basics.
+commands: &id001
+- foreach
+- forvalues
+- macro
+- do
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Stata Programming Basics, then tailor the syntax to
+  the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises foreach and inspect the resulting log.
+related_refs:
+- advanced-programming
+- workflow-best-practices
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - foreach
+  - forvalues
+  - macro
+  - do
+  local_help_files:
+  - ado/base/f/foreach.sthlp
+  - ado/base/f/forvalues.sthlp
+  - ado/base/m/macro.sthlp
+  - ado/base/d/do.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/programming-basics.md
+  upstream_only: false

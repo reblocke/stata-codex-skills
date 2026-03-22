@@ -1,0 +1,53 @@
+slug: sem-factor-analysis
+skill: core
+section: Advanced Methods
+title: Structural Equation Modeling and Factor Analysis in Stata
+trigger: Use when the user needs built-in Stata help with structural equation modeling and factor analysis
+  in stata.
+commands: &id001
+- sem
+- gsem
+- factor
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Structural Equation Modeling and Factor Analysis in
+  Stata, then tailor the syntax to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises sem and inspect the resulting log.
+related_refs:
+- maximum-likelihood
+- descriptive-statistics
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - sem
+  - gsem
+  - factor
+  local_help_files:
+  - ado/base/s/sem.sthlp
+  - ado/base/g/gsem_builder.sthlp
+  - ado/base/g/gsem_command.sthlp
+  - ado/base/g/gsem_estimation_options.sthlp
+  - ado/base/g/gsem_family_and_link_options.sthlp
+  - ado/base/g/gsem_fvstandard.sthlp
+  - ado/base/g/gsem_group_options.sthlp
+  - ado/base/g/gsem_lclass_options.sthlp
+  - ado/base/g/gsem_model_options.sthlp
+  - ado/base/g/gsem_path_notation_extensions.sthlp
+  - ado/base/g/gsem_postestimation.sthlp
+  - ado/base/g/gsem_predict.sthlp
+  - ado/base/g/gsem_reporting_options.sthlp
+  - ado/base/s/sem_and_gsem_option_constraints.sthlp
+  - ado/base/s/sem_and_gsem_option_covstructure.sthlp
+  - ado/base/s/sem_and_gsem_option_from.sthlp
+  - ado/base/s/sem_and_gsem_option_reliability.sthlp
+  - ado/base/s/sem_and_gsem_path_notation.sthlp
+  - ado/base/s/sem_and_gsem_syntax_options.sthlp
+  - ado/base/f/factor.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/sem-factor-analysis.md
+  upstream_only: false

@@ -1,0 +1,34 @@
+slug: date-time-functions
+skill: core
+section: Data Operations
+title: Date and Time Functions in Stata
+trigger: Use when the user needs built-in Stata help with date and time functions in stata.
+commands: &id001
+- datetime
+- datetime_translation
+- format
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Date and Time Functions in Stata, then tailor the syntax
+  to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises datetime and inspect the resulting log.
+related_refs:
+- data-management
+- string-functions
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - datetime
+  - datetime_translation
+  - format
+  local_help_files:
+  - ado/base/d/datetime.sthlp
+  - ado/base/f/format.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/date-time-functions.md
+  upstream_only: false

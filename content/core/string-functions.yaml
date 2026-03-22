@@ -1,0 +1,42 @@
+slug: string-functions
+skill: core
+section: Data Operations
+title: String Functions in Stata
+trigger: Use when the user needs built-in Stata help with string functions in stata.
+commands: &id001
+- string_functions
+- split
+- regexm
+- ustrlen
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to String Functions in Stata, then tailor the syntax to
+  the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises string_functions and inspect the resulting
+  log.
+related_refs:
+- data-management
+- date-time-functions
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - string_functions
+  - split
+  - regexm
+  - ustrlen
+  local_help_files:
+  - ado/base/s/string_functions.sthlp
+  - ado/base/s/split.sthlp
+  - ado/base/f/f_regexm.sthlp
+  - ado/base/f/f_regexmatch.sthlp
+  - ado/base/f/f_ustrregexm.sthlp
+  - ado/base/f/f_ustrlen.sthlp
+  - ado/base/m/mf_ustrlen.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/string-functions.md
+  upstream_only: false

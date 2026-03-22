@@ -1,0 +1,35 @@
+slug: panel-data
+skill: core
+section: Statistics and Econometrics
+title: Panel Data Analysis in Stata
+trigger: Use when the user needs built-in Stata help with panel data analysis in stata.
+commands: &id001
+- xtset
+- xtreg
+- xt
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Panel Data Analysis in Stata, then tailor the syntax
+  to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises xtset and inspect the resulting log.
+related_refs:
+- linear-regression
+- difference-in-differences
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - xtset
+  - xtreg
+  - xt
+  local_help_files:
+  - ado/base/x/xtset.sthlp
+  - ado/base/x/xtreg.sthlp
+  - ado/base/x/xt.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/panel-data.md
+  upstream_only: false

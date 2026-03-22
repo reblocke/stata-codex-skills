@@ -1,0 +1,41 @@
+slug: descriptive-statistics
+skill: core
+section: Statistics and Econometrics
+title: Descriptive Statistics in Stata
+trigger: Use when the user needs built-in Stata help with descriptive statistics in stata.
+commands: &id001
+- summarize
+- tabulate
+- tabstat
+- codebook
+- correlate
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Descriptive Statistics in Stata, then tailor the syntax
+  to the current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises summarize and inspect the resulting log.
+related_refs:
+- linear-regression
+- survey-data-analysis
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - summarize
+  - tabulate
+  - tabstat
+  - codebook
+  - correlate
+  local_help_files:
+  - ado/base/s/summarize.sthlp
+  - ado/base/t/tabulate.sthlp
+  - ado/base/t/tabstat.sthlp
+  - ado/base/c/codebook.sthlp
+  - ado/base/c/correlate.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/descriptive-statistics.md
+  upstream_only: false

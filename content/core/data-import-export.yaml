@@ -1,0 +1,38 @@
+slug: data-import-export
+skill: core
+section: Data Operations
+title: Data Import and Export
+trigger: Use when the user needs built-in Stata help with data import and export.
+commands: &id001
+- import
+- import_delimited
+- import_excel
+- export
+source_topics: *id001
+syntax_patterns: []
+gotchas:
+- Check missing-value behavior, option defaults, and stored results before chaining commands.
+workflows:
+- Start with the official help topics attached to Data Import and Export, then tailor the syntax to the
+  current dataset.
+- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
+validation_case: Run a small batch-mode example that exercises import and inspect the resulting log.
+related_refs:
+- basics-getting-started
+- data-management
+install_commands: []
+smoke_test: null
+provenance:
+  local_help_topics:
+  - import
+  - import_delimited
+  - import_excel
+  - export
+  local_help_files:
+  - ado/base/i/import.sthlp
+  - ado/base/i/import_delimited.sthlp
+  - ado/base/i/import_excel.sthlp
+  - ado/base/e/export.sthlp
+  upstream_files:
+  - plugins/stata/skills/stata/references/data-import-export.md
+  upstream_only: false

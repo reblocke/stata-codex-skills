@@ -1,0 +1,33 @@
+slug: nprobust
+skill: packages
+section: Estimation Packages
+title: 'nprobust: Nonparametric Kernel-Based Estimation and Robust Bias-Corrected Inference'
+trigger: Use when the user asks about nprobust or a related community-package workflow.
+commands:
+- nprobust
+source_topics:
+- nprobust
+syntax_patterns: []
+gotchas:
+- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
+  code.
+workflows:
+- Confirm the package and any dependencies are installed on the active adopath before writing code that
+  uses it.
+- Pair the package command with a small reproducible example before folding it into a larger do-file.
+validation_case: Run a small batch-mode example that exercises nprobust and inspect the resulting log.
+related_refs:
+- nonparametric-methods
+- graphics
+install_commands:
+- ssc install nprobust, replace
+smoke_test: 'sysuse auto, clear
+
+  nprobust price mpg'
+provenance:
+  local_help_topics:
+  - nprobust
+  local_help_files: []
+  upstream_files:
+  - plugins/stata/skills/stata/packages/nprobust.md
+  upstream_only: true
