@@ -112,6 +112,102 @@ Useful targeted validation commands:
 /opt/anaconda3/bin/python3 scripts/validate_skill_pack.py --package-limit 5
 ```
 
+## Deploying on other machines and repositories
+
+Codex discovers skills from the local machine, not from the current git repository alone.
+
+That means:
+
+- installing the skills into `~/.codex/skills/` or `$CODEX_HOME/skills/` is a machine-specific step
+- adding `AGENTS.md` or `README.md` guidance in a project repo is a repository-specific step
+- you usually need both if you want Codex to reliably use these skills in another project
+
+### Same machine, different repository
+
+If the skills are already published on the current machine, no reinstall is needed.
+
+What to do in the other repository:
+
+- add an `AGENTS.md` or project README note that routes Stata work to `stata-core`, `stata-packages`, and `stata-c-plugins` as appropriate
+- prefer portable skill paths such as `~/.codex/skills/stata-core/SKILL.md` rather than user-specific absolute paths
+- name the relevant package skill only when a community package is actually involved
+
+In practice, once these folders exist locally, Codex can use them from any repository on the same machine:
+
+- `~/.codex/skills/stata-core`
+- `~/.codex/skills/stata-packages`
+- `~/.codex/skills/stata-c-plugins`
+
+### New machine or new user account
+
+On a new machine, clone this repo and publish the skills locally:
+
+```bash
+git clone https://github.com/reblocke/stata-codex-skills.git ~/src/stata-codex-skills
+cd ~/src/stata-codex-skills
+make all
+make publish
+```
+
+If you want validation as well:
+
+```bash
+make validate
+```
+
+After `make publish`, the skill folders should exist under `~/.codex/skills/` unless you published to a custom destination.
+
+### Publishing to a non-default Codex home
+
+If the machine uses a custom `CODEX_HOME`, publish there explicitly:
+
+```bash
+/opt/anaconda3/bin/python3 scripts/publish_local.py --dest "$CODEX_HOME/skills"
+```
+
+If `CODEX_HOME` is unset, the default location is:
+
+```bash
+~/.codex/skills
+```
+
+### Refreshing an existing installation
+
+If the skills are already installed on a machine and you want to update them after pulling new changes:
+
+```bash
+cd ~/src/stata-codex-skills
+git pull
+make all
+make publish
+```
+
+Run `make validate` as well if you changed package metadata, rendering logic, or anything that affects Stata execution.
+
+### What is and is not repository-specific
+
+Repository-specific actions:
+
+- adding an `AGENTS.md` or repo README note that tells Codex when to use `stata-core`, `stata-packages`, and `stata-c-plugins`
+- documenting any local prerequisites the repository assumes, such as Stata availability or a preferred batch entrypoint
+
+Not repository-specific:
+
+- the actual skill installation into `~/.codex/skills/` or `$CODEX_HOME/skills/`
+- the rendered `SKILL.md` files themselves
+- Codex discovery of installed skills on the local machine
+
+### Minimal collaborator instructions
+
+If collaborators will use these skills, the minimum setup note to give them is:
+
+1. Clone `stata-codex-skills`.
+2. Run `make all` and `make publish`.
+3. Confirm the skill folders exist in `~/.codex/skills/` or `$CODEX_HOME/skills/`.
+4. In the analysis repository, add `AGENTS.md` guidance that names the Stata skills explicitly.
+
+Without step 2, an `AGENTS.md` file can mention the skills but Codex will not be able to load them on that machine.
+
 ## Typical workflow
 
 When you update the repo, the normal order is:
