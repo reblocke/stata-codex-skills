@@ -21,24 +21,33 @@ related_refs:
 - difference-in-differences
 - graphics
 install_commands:
+- net install require, from("https://raw.githubusercontent.com/sergiocorreia/stata-require/master/src/")
+  replace
+- net install ftools, from("https://raw.githubusercontent.com/sergiocorreia/ftools/master/src/")
+  replace
+- ftools, compile
+- 'mata: mata mlib index'
+- net install reghdfe, from("https://raw.githubusercontent.com/sergiocorreia/reghdfe/master/src/")
+  replace
+- capture noisily reghdfe, compile
+- ssc install avar, replace
 - ssc install eventstudyinteract, replace
-smoke_test: 'clear
-
-  set obs 80
-
-  gen id = ceil(_n/4)
-
-  gen t = mod(_n-1,4)
-
-  gen g = cond(id <= 10, 2, 0)
-
-  gen treated = g > 0
-
-  gen rel = t - g
-
-  gen y = rnormal() + 2*(treated & t>=g)
-
-  eventstudyinteract y treated rel, cohort(g) control_cohort(0)'
+smoke_test: |
+  webuse nlswork, clear
+  keep if inrange(year, 70, 82)
+  gen union_year = year if union == 1
+  bysort idcode: egen first_union = min(union_year)
+  drop union_year
+  gen ry = year - first_union
+  gen never_union = first_union == .
+  forvalues k = 3(-1)2 {
+      gen g_`k' = ry == -`k'
+  }
+  gen g0 = ry == 0
+  forvalues k = 1/2 {
+      gen g`k' = ry == `k'
+  }
+  eventstudyinteract ln_wage g_3 g_2 g0 g1 g2, cohort(first_union) control_cohort(never_union) covariates(south) absorb(idcode year) vce(cluster idcode)
 provenance:
   local_help_topics:
   - eventstudyinteract

@@ -20,7 +20,8 @@ related_refs:
 - graphics
 - nonparametric-methods
 install_commands:
-- ssc install binsreg, replace
+- net install binsreg, from("https://raw.githubusercontent.com/nppackages/binsreg/master/stata")
+  replace
 smoke_test: 'sysuse auto, clear
 
   binsreg price mpg'

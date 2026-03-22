@@ -23,8 +23,15 @@ related_refs:
 - panel-data
 - ivreg2
 install_commands:
-- ssc install ftools, replace
-- ssc install reghdfe, replace
+- net install require, from("https://raw.githubusercontent.com/sergiocorreia/stata-require/master/src/")
+  replace
+- net install ftools, from("https://raw.githubusercontent.com/sergiocorreia/ftools/master/src/")
+  replace
+- ftools, compile
+- 'mata: mata mlib index'
+- net install reghdfe, from("https://raw.githubusercontent.com/sergiocorreia/reghdfe/master/src/")
+  replace
+- capture noisily reghdfe, compile
 smoke_test: 'webuse nlswork, clear
 
   reghdfe ln_wage tenure ttl_exp, absorb(idcode year)'

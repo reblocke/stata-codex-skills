@@ -10,6 +10,8 @@ It does three things:
 
 The repo is designed to be a distillation pipeline, not a mirror. Upstream material is used for inventory and gap-finding. Local `.sthlp` files are the primary raw source. Final skill content is generated from structured YAML in `content/`, not edited by hand in the generated skill folders.
 
+This repository is released under the MIT License. See `LICENSE`.
+
 ## What gets built
 
 This repo builds three skills:
@@ -163,38 +165,42 @@ The batch runner watches for a `VALIDATION COMPLETE` marker in the generated Sta
 
 ### Full package sweep
 
-The full 20-package sweep was run. Result:
+After tightening package metadata, install sources, and smoke tests, the full 20-package sweep was rerun. Result:
 
-- 14 packages passed
-- 6 packages failed
+- 20 packages passed
+- 0 packages failed
 
 Packages that passed:
 
 - `asdoc`
+- `binsreg`
 - `coefplot`
 - `data-manipulation`
 - `diagnostics`
 - `did`
 - `estout`
+- `event-study`
 - `graph-schemes`
+- `ivreg2`
+- `nprobust`
 - `outreg2`
 - `package-management`
 - `psmatch2`
 - `rdrobust`
+- `reghdfe`
+- `synth`
 - `tabout`
 - `winsor`
 - `xtabond2`
 
-Package failures and current interpretation:
+The package metadata changes that mattered most were:
 
-- `binsreg`: `ssc install binsreg, replace` failed because SSC did not have a `binsreg` entry
-- `nprobust`: `ssc install nprobust, replace` failed because SSC did not have an `nprobust` entry
-- `ivreg2`: installed, but the smoke test failed because `ranktest` was not installed
-- `reghdfe`: installed, but the runtime now requires the `require` package as an additional dependency
-- `event-study`: `eventstudyinteract` installed, but the smoke test stalled when the estimator ran
-- `synth`: installed, but the smoke test stalled immediately after `webuse synth_smoking, clear`
-
-The current package metadata in `scripts/seed_data.py` still needs dependency and source updates for at least `ivreg2`, `reghdfe`, `binsreg`, and `nprobust`.
+- `binsreg` and `nprobust`: switched from stale `ssc install` paths to the current NP Packages `net install` URLs
+- `nprobust`: smoke test now exercises the actual command family (`lprobust`, `kdrobust`) instead of the package name
+- `ivreg2`: installs `ranktest` before the smoke test
+- `reghdfe`: installs `require`, `ftools`, and `reghdfe` from the current upstream sources and compiles `ftools`
+- `event-study`: uses a valid `eventstudyinteract` example based on the documented `nlswork` workflow
+- `synth`: uses a synthetic local panel dataset instead of relying on `webuse synth_smoking`
 
 ### Plugin validation
 
@@ -219,7 +225,7 @@ Manual plugin repro files used during debugging were written under `tests/tmp/pl
 ## Known caveats
 
 - The repo currently targets a macOS Stata install under `/Applications/Stata`.
-- Package install sources change over time. Some package validation failures are probably metadata drift, not skill-content problems.
+- Package install sources change over time, so validation metadata will still need occasional refreshes.
 - Plugin execution under local batch-mode `StataBE` is not yet reliable on this machine.
 - Validation artifacts such as `.log`, `.doc`, and `.txt` files are left in the repo root when tests run. They are ignored by git, but they are still local clutter.
 
@@ -227,9 +233,9 @@ Manual plugin repro files used during debugging were written under `tests/tmp/pl
 
 The highest-value follow-up changes are:
 
-1. Update package install metadata for packages that are no longer installed from SSC or that need extra dependencies.
-2. Tighten the `event-study` and `synth` smoke tests so they fail fast instead of stalling.
-3. Investigate the plugin runtime hang at the macOS loader boundary before relying on `stata-c-plugins` runtime validation.
+1. Investigate the plugin runtime hang at the macOS loader boundary before relying on `stata-c-plugins` runtime validation.
+2. Decide whether to fold package install URLs and dependency policy into a small reference page so future maintenance is more obvious.
+3. Add a small cleanup target for local validation artifacts if you want the repo root to stay visually clean after test runs.
 
 ## Generated outputs to inspect
 

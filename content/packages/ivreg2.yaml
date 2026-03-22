@@ -20,6 +20,7 @@ related_refs:
 - linear-regression
 - gmm-estimation
 install_commands:
+- ssc install ranktest, replace
 - ssc install ivreg2, replace
 smoke_test: 'sysuse auto, clear
 

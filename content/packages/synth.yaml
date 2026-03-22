@@ -21,9 +21,31 @@ related_refs:
 - graphics
 install_commands:
 - ssc install synth, replace
-smoke_test: 'webuse synth_smoking, clear
+smoke_test: 'clear
 
-  synth cigsale beer lnincome retprice age15to24, trunit(3) trperiod(1989)'
+  set seed 12345
+
+  set obs 60
+
+  gen state = ceil(_n/10)
+
+  bysort state: gen year = 2000 + _n - 1
+
+  tsset state year
+
+  gen beer = 20 + state + runiform()
+
+  gen lnincome = 10 + 0.02*(year - 2000) + 0.1*state
+
+  gen retprice = 50 + 0.5*state + runiform()
+
+  gen age15to24 = 0.18 + 0.005*runiform()
+
+  gen cigsale = 100 + 2*state + 0.4*(year - 2000) + 1.2*beer - 0.5*retprice + 12*age15to24 + rnormal()
+
+  replace cigsale = cigsale - 8 if state == 1 & year >= 2006
+
+  synth cigsale beer(2003(1)2005) lnincome retprice age15to24 cigsale(2005) cigsale(2003) cigsale(2001), trunit(1) trperiod(2006)'
 provenance:
   local_help_topics:
   - synth

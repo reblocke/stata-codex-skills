@@ -1,5 +1,5 @@
 skill: package
-generated_at: '2026-03-22T16:34:30.646715+00:00'
+generated_at: '2026-03-22T19:04:03.678109+00:00'
 upstream_repo: https://github.com/dylantmoore/stata-skill.git
 entry_count: 20
 entries:
@@ -38,7 +38,7 @@ entries:
   validation_case: Run a small batch-mode example that exercises binsreg and inspect the resulting log.
   allow_upstream_only: true
   install_commands:
-  - ssc install binsreg, replace
+  - net install binsreg, from("https://raw.githubusercontent.com/nppackages/binsreg/master/stata") replace
   smoke_test: 'sysuse auto, clear
 
     binsreg price mpg'
@@ -177,24 +177,21 @@ entries:
     log.
   allow_upstream_only: true
   install_commands:
+  - net install require, from("https://raw.githubusercontent.com/sergiocorreia/stata-require/master/src/")
+    replace
+  - net install ftools, from("https://raw.githubusercontent.com/sergiocorreia/ftools/master/src/") replace
+  - ftools, compile
+  - 'mata: mata mlib index'
+  - net install reghdfe, from("https://raw.githubusercontent.com/sergiocorreia/reghdfe/master/src/") replace
+  - capture noisily reghdfe, compile
+  - ssc install avar, replace
   - ssc install eventstudyinteract, replace
-  smoke_test: 'clear
-
-    set obs 80
-
-    gen id = ceil(_n/4)
-
-    gen t = mod(_n-1,4)
-
-    gen g = cond(id <= 10, 2, 0)
-
-    gen treated = g > 0
-
-    gen rel = t - g
-
-    gen y = rnormal() + 2*(treated & t>=g)
-
-    eventstudyinteract y treated rel, cohort(g) control_cohort(0)'
+  smoke_test: "webuse nlswork, clear\nkeep if inrange(year, 70, 82)\ngen union_year = year if union ==\
+    \ 1\nbysort idcode: egen first_union = min(union_year)\ndrop union_year\ngen ry = year - first_union\n\
+    gen never_union = first_union == .\nforvalues k = 3(-1)2 {\n    gen g_`k' = ry == -`k'\n}\ngen g0\
+    \ = ry == 0\nforvalues k = 1/2 {\n    gen g`k' = ry == `k'\n}\neventstudyinteract ln_wage g_3 g_2\
+    \ g0 g1 g2, cohort(first_union) control_cohort(never_union) covariates(south) absorb(idcode year)\
+    \ vce(cluster idcode)"
 - slug: graph-schemes
   title: 'Graph Schemes: Professional Visualization Design'
   section: Graphics and Diagnostics
@@ -228,6 +225,7 @@ entries:
   validation_case: Run a small batch-mode example that exercises ivreg2 and inspect the resulting log.
   allow_upstream_only: true
   install_commands:
+  - ssc install ranktest, replace
   - ssc install ivreg2, replace
   smoke_test: 'sysuse auto, clear
 
@@ -237,22 +235,25 @@ entries:
 - slug: nprobust
   title: 'nprobust: Nonparametric Kernel-Based Estimation and Robust Bias-Corrected Inference'
   section: Estimation Packages
-  trigger: Use when the user asks about nprobust or a related community-package workflow.
+  trigger: Use when the user asks about lprobust or a related community-package workflow.
   commands:
-  - nprobust
+  - lprobust
+  - lpbwselect
+  - kdrobust
+  - kdbwselect
   source_topics:
   - nprobust
   upstream_relpath: plugins/stata/skills/stata/packages/nprobust.md
   related_refs:
   - nonparametric-methods
   - graphics
-  validation_case: Run a small batch-mode example that exercises nprobust and inspect the resulting log.
+  validation_case: Run a small batch-mode example that exercises lprobust and inspect the resulting log.
   allow_upstream_only: true
   install_commands:
-  - ssc install nprobust, replace
+  - net install nprobust, from("https://raw.githubusercontent.com/nppackages/nprobust/master/stata") replace
   smoke_test: 'sysuse auto, clear
 
-    nprobust price mpg'
+    lprobust price mpg'
 - slug: outreg2
   title: 'outreg2: Quick Regression Tables in Stata'
   section: Tables and Reporting
@@ -360,8 +361,13 @@ entries:
   validation_case: Run a small batch-mode example that exercises reghdfe and inspect the resulting log.
   allow_upstream_only: true
   install_commands:
-  - ssc install ftools, replace
-  - ssc install reghdfe, replace
+  - net install require, from("https://raw.githubusercontent.com/sergiocorreia/stata-require/master/src/")
+    replace
+  - net install ftools, from("https://raw.githubusercontent.com/sergiocorreia/ftools/master/src/") replace
+  - ftools, compile
+  - 'mata: mata mlib index'
+  - net install reghdfe, from("https://raw.githubusercontent.com/sergiocorreia/reghdfe/master/src/") replace
+  - capture noisily reghdfe, compile
   smoke_test: 'webuse nlswork, clear
 
     reghdfe ln_wage tenure ttl_exp, absorb(idcode year)'
@@ -381,9 +387,32 @@ entries:
   allow_upstream_only: true
   install_commands:
   - ssc install synth, replace
-  smoke_test: 'webuse synth_smoking, clear
+  smoke_test: 'clear
 
-    synth cigsale beer lnincome retprice age15to24, trunit(3) trperiod(1989)'
+    set seed 12345
+
+    set obs 60
+
+    gen state = ceil(_n/10)
+
+    bysort state: gen year = 2000 + _n - 1
+
+    tsset state year
+
+    gen beer = 20 + state + runiform()
+
+    gen lnincome = 10 + 0.02*(year - 2000) + 0.1*state
+
+    gen retprice = 50 + 0.5*state + runiform()
+
+    gen age15to24 = 0.18 + 0.005*runiform()
+
+    gen cigsale = 100 + 2*state + 0.4*(year - 2000) + 1.2*beer - 0.5*retprice + 12*age15to24 + rnormal()
+
+    replace cigsale = cigsale - 8 if state == 1 & year >= 2006
+
+    synth cigsale beer(2003(1)2005) lnincome retprice age15to24 cigsale(2005) cigsale(2003) cigsale(2001),
+    trunit(1) trperiod(2006)'
 - slug: tabout
   title: 'tabout: Publication-Quality Cross-Tabulations and Summary Tables'
   section: Tables and Reporting

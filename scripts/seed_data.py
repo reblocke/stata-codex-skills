@@ -180,7 +180,9 @@ PACKAGE_METADATA = {
     "binsreg": {
         "commands": ["binsreg"],
         "source_topics": ["binsreg"],
-        "install_commands": ["ssc install binsreg, replace"],
+        "install_commands": [
+            'net install binsreg, from("https://raw.githubusercontent.com/nppackages/binsreg/master/stata") replace'
+        ],
         "smoke_test": "sysuse auto, clear\nbinsreg price mpg",
         "related_refs": ["graphics", "nonparametric-methods"],
     },
@@ -222,8 +224,17 @@ PACKAGE_METADATA = {
     "event-study": {
         "commands": ["eventstudyinteract"],
         "source_topics": ["eventstudyinteract"],
-        "install_commands": ["ssc install eventstudyinteract, replace"],
-        "smoke_test": "clear\nset obs 80\ngen id = ceil(_n/4)\ngen t = mod(_n-1,4)\ngen g = cond(id <= 10, 2, 0)\ngen treated = g > 0\ngen rel = t - g\ngen y = rnormal() + 2*(treated & t>=g)\neventstudyinteract y treated rel, cohort(g) control_cohort(0)",
+        "install_commands": [
+            'net install require, from("https://raw.githubusercontent.com/sergiocorreia/stata-require/master/src/") replace',
+            'net install ftools, from("https://raw.githubusercontent.com/sergiocorreia/ftools/master/src/") replace',
+            "ftools, compile",
+            "mata: mata mlib index",
+            'net install reghdfe, from("https://raw.githubusercontent.com/sergiocorreia/reghdfe/master/src/") replace',
+            "capture noisily reghdfe, compile",
+            "ssc install avar, replace",
+            "ssc install eventstudyinteract, replace",
+        ],
+        "smoke_test": "webuse nlswork, clear\nkeep if inrange(year, 70, 82)\ngen union_year = year if union == 1\nbysort idcode: egen first_union = min(union_year)\ndrop union_year\ngen ry = year - first_union\ngen never_union = first_union == .\nforvalues k = 3(-1)2 {\n    gen g_`k' = ry == -`k'\n}\ngen g0 = ry == 0\nforvalues k = 1/2 {\n    gen g`k' = ry == `k'\n}\neventstudyinteract ln_wage g_3 g_2 g0 g1 g2, cohort(first_union) control_cohort(never_union) covariates(south) absorb(idcode year) vce(cluster idcode)",
         "related_refs": ["difference-in-differences", "graphics"],
     },
     "graph-schemes": {
@@ -236,15 +247,17 @@ PACKAGE_METADATA = {
     "ivreg2": {
         "commands": ["ivreg2"],
         "source_topics": ["ivreg2"],
-        "install_commands": ["ssc install ivreg2, replace"],
+        "install_commands": ["ssc install ranktest, replace", "ssc install ivreg2, replace"],
         "smoke_test": "sysuse auto, clear\ngen z = turn + trunk\nivreg2 price weight (mpg = z)",
         "related_refs": ["linear-regression", "gmm-estimation"],
     },
     "nprobust": {
-        "commands": ["nprobust"],
+        "commands": ["lprobust", "lpbwselect", "kdrobust", "kdbwselect"],
         "source_topics": ["nprobust"],
-        "install_commands": ["ssc install nprobust, replace"],
-        "smoke_test": "sysuse auto, clear\nnprobust price mpg",
+        "install_commands": [
+            'net install nprobust, from("https://raw.githubusercontent.com/nppackages/nprobust/master/stata") replace'
+        ],
+        "smoke_test": "sysuse auto, clear\nlprobust price mpg",
         "related_refs": ["nonparametric-methods", "graphics"],
     },
     "outreg2": {
@@ -278,7 +291,14 @@ PACKAGE_METADATA = {
     "reghdfe": {
         "commands": ["reghdfe", "ivreghdfe"],
         "source_topics": ["reghdfe", "ivreghdfe"],
-        "install_commands": ["ssc install ftools, replace", "ssc install reghdfe, replace"],
+        "install_commands": [
+            'net install require, from("https://raw.githubusercontent.com/sergiocorreia/stata-require/master/src/") replace',
+            'net install ftools, from("https://raw.githubusercontent.com/sergiocorreia/ftools/master/src/") replace',
+            "ftools, compile",
+            "mata: mata mlib index",
+            'net install reghdfe, from("https://raw.githubusercontent.com/sergiocorreia/reghdfe/master/src/") replace',
+            "capture noisily reghdfe, compile",
+        ],
         "smoke_test": "webuse nlswork, clear\nreghdfe ln_wage tenure ttl_exp, absorb(idcode year)",
         "related_refs": ["linear-regression", "panel-data", "ivreg2"],
     },
@@ -286,7 +306,7 @@ PACKAGE_METADATA = {
         "commands": ["synth"],
         "source_topics": ["synth"],
         "install_commands": ["ssc install synth, replace"],
-        "smoke_test": "webuse synth_smoking, clear\nsynth cigsale beer lnincome retprice age15to24, trunit(3) trperiod(1989)",
+        "smoke_test": "clear\nset seed 12345\nset obs 60\ngen state = ceil(_n/10)\nbysort state: gen year = 2000 + _n - 1\ntsset state year\ngen beer = 20 + state + runiform()\ngen lnincome = 10 + 0.02*(year - 2000) + 0.1*state\ngen retprice = 50 + 0.5*state + runiform()\ngen age15to24 = 0.18 + 0.005*runiform()\ngen cigsale = 100 + 2*state + 0.4*(year - 2000) + 1.2*beer - 0.5*retprice + 12*age15to24 + rnormal()\nreplace cigsale = cigsale - 8 if state == 1 & year >= 2006\nsynth cigsale beer(2003(1)2005) lnincome retprice age15to24 cigsale(2005) cigsale(2003) cigsale(2001), trunit(1) trperiod(2006)",
         "related_refs": ["treatment-effects", "graphics"],
     },
     "tabout": {
