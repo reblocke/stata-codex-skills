@@ -70,17 +70,19 @@ Also note:
   - downloading plugin SDK sample files from `stata.com`
   - installing community packages during validation
 
-On this machine, the default `python3` did not have the required packages, so the `Makefile` is pinned to:
+The checked-in `Makefile` currently defaults to:
 
 ```bash
 /opt/anaconda3/bin/python3
 ```
 
-If your preferred Python already has the dependencies, override it when running `make`, for example:
+That path is machine-specific. On any machine where it does not exist, or where you want to use a different interpreter, override `PYTHON` explicitly:
 
 ```bash
 make PYTHON=$(which python3) all
 ```
+
+If you change the checked-in `Makefile`, keep it consistent with your local Python setup.
 
 ## Quick start
 
@@ -88,33 +90,38 @@ Build the manifests, harvest local help, scaffold content, render the skills, an
 
 ```bash
 cd ~/src/stata-codex-skills
-make all
+PYTHON=$(which python3)
+make PYTHON="$PYTHON" all
 ```
 
 Publish the generated skills into Codex:
 
 ```bash
-make publish
+make PYTHON="$PYTHON" publish
 ```
 
 Run the validation suite:
 
 ```bash
-make validate
+make PYTHON="$PYTHON" validate
 ```
 
 Useful targeted validation commands:
 
 ```bash
-/opt/anaconda3/bin/python3 scripts/validate_skill_pack.py --skip-plugin
-/opt/anaconda3/bin/python3 scripts/validate_skill_pack.py --skip-packages
-/opt/anaconda3/bin/python3 scripts/validate_skill_pack.py --skip-packages --skip-plugin
-/opt/anaconda3/bin/python3 scripts/validate_skill_pack.py --package-limit 5
+$PYTHON scripts/validate_skill_pack.py --skip-plugin
+$PYTHON scripts/validate_skill_pack.py --skip-packages
+$PYTHON scripts/validate_skill_pack.py --skip-packages --skip-plugin
+$PYTHON scripts/validate_skill_pack.py --package-limit 5
 ```
+
+If this is the first time you have installed the skills on a machine, restart Codex after `make ... publish`.
 
 ## Deploying on other machines and repositories
 
 Codex discovers skills from the local machine, not from the current git repository alone.
+
+The same OpenAI account does not sync `~/.codex/skills` across machines automatically.
 
 That means:
 
@@ -140,29 +147,42 @@ In practice, once these folders exist locally, Codex can use them from any repos
 
 ### New machine or new user account
 
-On a new machine, clone this repo and publish the skills locally:
+On a new machine, you have two reasonable options.
+
+Option 1: copy the already-generated skill folders from another working machine:
+
+```bash
+mkdir -p ~/.codex/skills
+cp -R /path/from/other/machine/stata-core ~/.codex/skills/
+cp -R /path/from/other/machine/stata-packages ~/.codex/skills/
+cp -R /path/from/other/machine/stata-c-plugins ~/.codex/skills/
+```
+
+Option 2: clone this repo and publish the skills locally:
 
 ```bash
 git clone https://github.com/reblocke/stata-codex-skills.git ~/src/stata-codex-skills
 cd ~/src/stata-codex-skills
-make all
-make publish
+PYTHON=$(which python3)
+make PYTHON="$PYTHON" all
+make PYTHON="$PYTHON" publish
 ```
 
 If you want validation as well:
 
 ```bash
-make validate
+make PYTHON="$PYTHON" validate
 ```
 
-After `make publish`, the skill folders should exist under `~/.codex/skills/` unless you published to a custom destination.
+After `make publish`, the skill folders should exist under `~/.codex/skills/` unless you published to a custom destination. Restart Codex if the skills were not already installed on that machine.
 
 ### Publishing to a non-default Codex home
 
 If the machine uses a custom `CODEX_HOME`, publish there explicitly:
 
 ```bash
-/opt/anaconda3/bin/python3 scripts/publish_local.py --dest "$CODEX_HOME/skills"
+PYTHON=$(which python3)
+$PYTHON scripts/publish_local.py --dest "$CODEX_HOME/skills"
 ```
 
 If `CODEX_HOME` is unset, the default location is:
@@ -178,8 +198,9 @@ If the skills are already installed on a machine and you want to update them aft
 ```bash
 cd ~/src/stata-codex-skills
 git pull
-make all
-make publish
+PYTHON=$(which python3)
+make PYTHON="$PYTHON" all
+make PYTHON="$PYTHON" publish
 ```
 
 Run `make validate` as well if you changed package metadata, rendering logic, or anything that affects Stata execution.
@@ -202,7 +223,7 @@ Not repository-specific:
 If collaborators will use these skills, the minimum setup note to give them is:
 
 1. Clone `stata-codex-skills`.
-2. Run `make all` and `make publish`.
+2. Run `make PYTHON=$(which python3) all` and `make PYTHON=$(which python3) publish`.
 3. Confirm the skill folders exist in `~/.codex/skills/` or `$CODEX_HOME/skills/`.
 4. In the analysis repository, add `AGENTS.md` guidance that names the Stata skills explicitly.
 
@@ -252,12 +273,15 @@ Validation has three layers:
 
 The batch runner watches for a `VALIDATION COMPLETE` marker in the generated Stata log. This is necessary because local `StataBE` on this machine does not reliably exit on its own in `-b do` mode, even when the do-file ends with `exit, clear`.
 
-## Current status as of March 22, 2026
+For `stata-core`, the validator stages `tests/stata/core/core_smoke.do` into its temporary working directory before invoking Stata. This avoids false failures when the repository checkout path contains spaces.
+
+## Current status as of March 23, 2026
 
 ### Static and core validation
 
 - Static lint: pass
 - `stata-core` smoke test: pass
+- `stata-core` validator path handling: pass when the repo lives in a path with spaces
 
 ### Full package sweep
 
@@ -321,17 +345,17 @@ Manual plugin repro files used during debugging were written under `tests/tmp/pl
 ## Known caveats
 
 - The repo currently targets a macOS Stata install under `/Applications/Stata`.
+- The checked-in `Makefile` default for `PYTHON` is machine-specific and may need an override on fresh machines.
 - Package install sources change over time, so validation metadata will still need occasional refreshes.
 - Plugin execution under local batch-mode `StataBE` is not yet reliable on this machine.
-- Validation artifacts such as `.log`, `.doc`, and `.txt` files are left in the repo root when tests run. They are ignored by git, but they are still local clutter.
 
 ## Next recommended fixes
 
 The highest-value follow-up changes are:
 
 1. Investigate the plugin runtime hang at the macOS loader boundary before relying on `stata-c-plugins` runtime validation.
-2. Decide whether to fold package install URLs and dependency policy into a small reference page so future maintenance is more obvious.
-3. Add a small cleanup target for local validation artifacts if you want the repo root to stay visually clean after test runs.
+2. Decide whether to make the default `PYTHON` in `Makefile` more portable across machines.
+3. Decide whether to fold package install URLs and dependency policy into a small reference page so future maintenance is more obvious.
 
 ## Generated outputs to inspect
 
