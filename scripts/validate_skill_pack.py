@@ -27,9 +27,16 @@ PLUGIN_C_URL = "https://www.stata.com/plugins/stplugin.c"
 PLUGIN_HELLO_URL = "https://www.stata.com/plugins/hello.c"
 
 
+def stage_do_file(source: Path, run_dir: Path) -> Path:
+    staged = run_dir / source.name
+    shutil.copy2(source, staged)
+    return staged
+
+
 def validate_core(stata_binary: Path, work_root: Path) -> tuple[bool, str]:
-    do_file = TESTS_ROOT / "stata" / "core" / "core_smoke.do"
+    source_do_file = TESTS_ROOT / "stata" / "core" / "core_smoke.do"
     run_dir = ensure_dir(work_root / "core")
+    do_file = stage_do_file(source_do_file, run_dir)
     result, log_path = run_stata_do(stata_binary, do_file, run_dir, timeout_seconds=90)
     log_text = read_text(log_path) if log_path.exists() else ""
     success = result.returncode == 0 and log_path.exists() and not has_stata_error(log_text)
