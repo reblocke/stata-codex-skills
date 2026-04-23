@@ -7,19 +7,46 @@ commands: &id001
 - generate
 - replace
 - merge
+- joinby
+- duplicates
+- isid
 - append
 - reshape
 - collapse
 - egen
 source_topics: *id001
-syntax_patterns: []
+syntax_patterns:
+- isid keyvars
+- duplicates report keyvars
+- merge 1:1 keyvars using "using_data.dta"
+- merge m:1 keyvars using "using_data.dta"
+- merge 1:m keyvars using "using_data.dta"
+- tab _merge
+- assert _merge == 3
+- keep if _merge == 3
+- keep if _merge != 2
+- keep if _merge != 1
+- joinby keyvars using "using_data.dta"
 gotchas:
 - Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Verify key uniqueness before choosing a merge type. Use isid when keys should be unique and duplicates
+  report when diagnosing repeated keys.
+- Check for missing key values before merging; a missing key cannot identify a real entity.
+- Stata merge keeps all master and using rows by default. Use _merge to distinguish master-only, using-only,
+  and matched observations before dropping or asserting rows.
+- Avoid merge m:m. It performs positional matching within key groups rather than a relational Cartesian
+  join, so results can depend on sort order even when _merge reports all rows matched.
 workflows:
 - Start with the official help topics attached to Data Management in Stata, then tailor the syntax to
   the current dataset.
 - Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises generate and inspect the resulting log.
+- Choose merge 1:1, m:1, or 1:m from the verified key cardinality, not from the desired output row count.
+- Treat merge as a full outer join unless you explicitly filter afterward. Keep matched rows with _merge
+  == 3, keep master-side rows with _merge != 2, and keep using-side rows with _merge != 1.
+- Use joinby only when every combination within duplicated key groups is substantively meaningful. If
+  merge m:m appears necessary, first look for a missing component of the real key.
+validation_case: Run a small batch-mode example that checks merge key cardinality, inspects _merge, and
+  verifies a joinby Cartesian match count.
 related_refs:
 - variables-operators
 - workflow-best-practices
@@ -30,6 +57,9 @@ provenance:
   - generate
   - replace
   - merge
+  - joinby
+  - duplicates
+  - isid
   - append
   - reshape
   - collapse
@@ -40,6 +70,9 @@ provenance:
   - ado/base/f/f_regexreplaceall.sthlp
   - ado/base/m/mi_replace0.sthlp
   - ado/base/m/merge.sthlp
+  - ado/base/j/joinby.sthlp
+  - ado/base/d/duplicates.sthlp
+  - ado/base/i/isid.sthlp
   - ado/base/a/append.sthlp
   - ado/base/r/reshape.sthlp
   - ado/base/c/collapse.sthlp

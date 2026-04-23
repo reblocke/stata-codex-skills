@@ -57,7 +57,7 @@ CORE_SOURCE_TOPICS = {
     "basics-getting-started": ["use", "save", "describe", "browse", "sysuse"],
     "bootstrap-simulation": ["bootstrap", "simulate", "permute"],
     "data-import-export": ["import", "import_delimited", "import_excel", "export"],
-    "data-management": ["generate", "replace", "merge", "append", "reshape", "collapse", "egen"],
+    "data-management": ["generate", "replace", "merge", "joinby", "duplicates", "isid", "append", "reshape", "collapse", "egen"],
     "date-time-functions": ["datetime", "datetime_translation", "format"],
     "descriptive-statistics": ["summarize", "tabulate", "tabstat", "codebook", "correlate"],
     "difference-in-differences": ["didregress", "xtdidregress"],

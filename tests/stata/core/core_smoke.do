@@ -2,6 +2,7 @@ clear all
 set more off
 
 tempfile base collapsed
+tempfile employees contracts
 
 sysuse auto, clear
 keep make price mpg weight foreign turn trunk
@@ -20,6 +21,33 @@ assert _merge == 3
 drop _merge
 display "PASS: merge"
 
+clear
+input str8 firm str8 employee
+"firm_42" "Alice"
+"firm_42" "Bob"
+"firm_99" "Dave"
+end
+save `employees', replace
+
+clear
+input str8 firm str8 contract
+"firm_42" "C001"
+"firm_42" "C002"
+"firm_99" "D001"
+end
+isid firm contract
+save `contracts', replace
+
+use `employees', clear
+duplicates report firm
+joinby firm using `contracts'
+count if firm == "firm_42"
+assert r(N) == 4
+count if firm == "firm_99"
+assert r(N) == 1
+display "PASS: joinby"
+
+use `base', clear
 egen mean_price = mean(price), by(foreign)
 assert !missing(mean_price)
 display "PASS: egen"
