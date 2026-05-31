@@ -369,3 +369,51 @@ After rendering and publishing, the most important files to inspect are:
 - `~/.codex/skills/stata-c-plugins/SKILL.md`
 
 If you want to update the knowledge, edit the YAML in `content/`, not the generated files.
+
+## LLM and Repository Readiness Notes
+
+### Description
+Builds local Codex skills for Stata from structured YAML and local help sources
+
+### Instructions
+Start with this README, then inspect the files listed under Repository Layout. For computational workflows, run commands from the repository root and avoid committing generated outputs unless a release explicitly calls for them.
+
+### Authors, Funding, and Acknowledgments
+Maintainer: Brian W. Locke (`@reblocke`, ORCID 0000-0002-3588-5238). Preserve any project-specific author, funding, and acknowledgment details already listed elsewhere in the repository or accompanying publication.
+
+### Repository Layout
+- `LICENSE`
+- `Makefile`
+- `README.md`
+- `manifests/package-map.yaml`
+- `manifests/plugin-map.yaml`
+- `manifests/topic-map.yaml`
+- `pyproject.toml`
+- `scripts/fetch_upstream.py`
+- `scripts/harvest_stata_help.py`
+- `scripts/libskillpack.py`
+- `scripts/lint_skill_pack.py`
+- `scripts/publish_local.py`
+- `scripts/render_skills.py`
+- `scripts/scaffold_content.py`
+
+### Data and Codebook
+No clinical data expected
+
+### Workflow / Script Order
+Run project tests if present
+
+### Dependencies / Environment
+Python dependency metadata
+
+### Citation
+No publication DOI is assigned to this repository. Cite the GitHub repository URL and the commit or release used.
+
+### License
+Repository license status: MIT. See the root license file when present. Third-party and publisher materials remain under their original terms.
+
+### Manuscript Status
+No manuscript version expected Code and generated instructions; respect third-party Stata help/source licensing
+
+### Contact
+Maintainer: Brian W. Locke (`@reblocke`). Use GitHub issues or pull requests for repository-specific questions when the repository is public.
