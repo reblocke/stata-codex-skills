@@ -372,6 +372,10 @@ If you want to update the knowledge, edit the YAML in `content/`, not the genera
 
 ## Repository Notes
 
+### Description
+
+Builds local Codex skills for Stata from structured YAML and local help sources
+
 ### Data and Reuse
 
 No clinical data expected
