@@ -1,0 +1,45 @@
+# stata-codex-skills
+
+Repository: https://github.com/reblocke/stata-codex-skills
+Purpose: Builds local Codex skills for Stata from structured YAML and local help sources
+Status: No manuscript version is expected. This repository contains code and generated instructions; respect third-party Stata help and source licensing.
+
+## Human-Readable Entry Points
+- `README.md` is the primary human-facing overview.
+- `llms.txt` is a compact machine-readable index and should not replace the README.
+
+## Repository Layout
+- `LICENSE`
+- `Makefile`
+- `README.md`
+- `manifests/package-map.yaml`
+- `manifests/plugin-map.yaml`
+- `manifests/topic-map.yaml`
+- `pyproject.toml`
+- `scripts/fetch_upstream.py`
+- `scripts/harvest_stata_help.py`
+- `scripts/libskillpack.py`
+- `scripts/lint_skill_pack.py`
+- `scripts/publish_local.py`
+- `scripts/render_skills.py`
+- `scripts/scaffold_content.py`
+
+## Data and Reuse Boundaries
+No clinical data expected
+
+## Workflow
+Run project tests if present
+
+## Dependencies
+Python dependency metadata
+
+## Citation
+No publication DOI is assigned to this repository. Cite the GitHub repository URL and the commit or release used.
+
+## License
+MIT License for repository code; see `LICENSE`. Third-party and publisher materials remain under their original terms.
+
+## Agent Cautions
+- Do not re-add a README appendix aimed primarily at LLMs; integrate user-facing details into normal README sections.
+- Keep restricted clinical data, private drafts, publisher PDFs, local paths, and generated outputs out of public documentation unless explicitly reviewed.
+- Prefer concise summaries plus links to citable records over copied manuscript or publisher text.
