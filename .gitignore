@@ -11,3 +11,4 @@ tests/tmp/
 *.doc
 *.txt
 !.gitkeep
+!llms.txt
