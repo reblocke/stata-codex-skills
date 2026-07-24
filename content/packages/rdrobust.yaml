@@ -1,41 +1,105 @@
 slug: rdrobust
 skill: packages
 section: Estimation Packages
-title: 'rdrobust Suite: Regression Discontinuity Design Analysis'
-trigger: Use when the user asks about rdrobust or a related community-package workflow.
+order: 160
+title: "rdrobust Suite: Regression-Discontinuity Estimation and Diagnostics"
+trigger: Use when the user asks for rdrobust, rdbwselect, rdplot, rddensity, the rdlocrand package and its rdrandinf or rdwinselect commands, rdmulti, sharp or fuzzy regression discontinuity, robust bias-corrected inference, bandwidth selection, manipulation testing, or multi-cutoff RD.
+aliases:
+- rdrobust
+- rdbwselect
+- rdplot
+- rddensity
+- rdlocrand
+- rdrandinf
+- rdwinselect
+- rdsensitivity
+- rdrbounds
+- rdmulti
+- rdmc
+- rdms
+- regression discontinuity
+- fuzzy RD
 commands:
 - rdrobust
+- rdbwselect
+- rdplot
+- rddensity
+- rdrandinf
+- rdwinselect
+- rdsensitivity
+- rdrbounds
+- rdmc
+- rdms
 source_topics:
 - rdrobust
-syntax_patterns: []
+- rdbwselect
+- rdplot
+- rddensity
+- rdrandinf
+- rdwinselect
+- rdsensitivity
+- rdrbounds
+- rdmulti
+syntax_patterns:
+- rdrobust outcome running_var, c(cutoff) bwselect(mserd)
+- rdrobust outcome running_var, fuzzy(treatment) covs(covariates) cluster(cluster_id)
+- rdbwselect outcome running_var, c(cutoff) all
+- rdplot outcome running_var, c(cutoff) p(1)
+- rddensity running_var, c(cutoff)
+- rdrandinf outcome running_var, cutoff(cutoff) wl(left_limit) wr(right_limit) reps(1000) seed(271828)
+assumptions:
+- Potential outcomes and treatment probability are sufficiently smooth at the cutoff absent treatment.
+- Units cannot precisely manipulate assignment around the cutoff, and observations near it are comparable.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- The continuity, no-sorting, and local-overlap assumptions are design claims; a robust standard error cannot repair a manipulated score or a wrong cutoff.
+- Report the cutoff, polynomial orders, kernel, bandwidth selector, effective observations on each side, and robust bias-corrected estimate.
+- Covariates should improve precision rather than define treatment assignment; test predetermined covariate balance without selecting the final specification by significance.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises rdrobust and inspect the resulting log.
+- Preflight the requested suite commands and ado describe rdrobust; ask before installing or updating packages in the user's environment.
+- Validate score units and cutoff, plot the outcome, test density continuity and covariate balance, select bandwidths, then estimate the prespecified sharp or fuzzy effect.
+- Compare bandwidths and polynomial orders as sensitivity checks while avoiding high-order global polynomials.
+validation_case: Generate a seeded score with a known discontinuity at zero, run rdrobust, verify a finite bias-corrected estimate and positive effective sample on both sides, and require an error-free log.
+validation_mode: stata
 related_refs:
 - regression-discontinuity
 - graphics
+preflight_commands:
+- which rdrobust
+- which rdbwselect
+- which rdplot
+- which rdrandinf
+- ado describe rdrobust
+- ado describe rdlocrand
 install_commands:
-- ssc install rdrobust, replace
-smoke_test: 'clear
-
-  set seed 12345
-
-  set obs 200
-
-  gen x = _n - 100
-
-  gen y = x + 2*(x>=0) + rnormal()
-
-  rdrobust y x'
+- net install rdrobust, from("https://raw.githubusercontent.com/rdpackages/rdrobust/5d7b5cdb7a304b87981736f4d6fa63002a470ee1/stata")
+- net install rddensity, from("https://raw.githubusercontent.com/rdpackages/rddensity/94a458351c8fb7bbc5bb4648828be4906947ed4c/stata")
+- net install rdlocrand, from("https://raw.githubusercontent.com/rdpackages/rdlocrand/0d96ece47e56c33c0ad8fbc7f72f1d229ed60732/stata")
+- net install rdmulti, from("https://raw.githubusercontent.com/rdpackages/rdmulti/23b1e7d6e53bb69575d307629985724adbec6e30/stata")
+smoke_test: |
+  clear
+  set seed 271828
+  set obs 240
+  generate double running = (_n - 120.5) / 12
+  generate double outcome = 0.4 * running + 2 * (running >= 0) + rnormal()
+  rdrobust outcome running, c(0)
+  assert !missing(e(tau_bc))
+  assert e(N_h_l) > 0
+  assert e(N_h_r) > 0
 provenance:
+  reviewed: true
   local_help_topics:
   - rdrobust
+  - rdbwselect
+  - rdplot
+  - rddensity
+  - rdrandinf
+  - rdwinselect
+  - rdsensitivity
+  - rdrbounds
+  - rdmulti
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/rdrobust.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

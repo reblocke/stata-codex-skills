@@ -1,31 +1,53 @@
 slug: difference-in-differences
 skill: core
 section: Causal Inference
-title: Difference-in-Differences Analysis in Stata
-trigger: Use when the user needs built-in Stata help with difference-in-differences analysis in stata.
-commands: &id001
-- didregress
-- xtdidregress
-source_topics: *id001
-syntax_patterns: []
+order: 410
+title: Built-in Difference-in-Differences Estimation
+trigger: >-
+  Use for canonical or panel difference-in-differences with didregress or xtdidregress, treatment timing,
+  group and time definitions, aggregate treatment effects, parallel-trends checks, and Granger-type tests.
+commands: [didregress, xtdidregress, estat ptrends, estat granger, estat trendplots]
+aliases: [difference in differences, difference-in-differences, DID, DiD, parallel trends, treatment timing]
+source_topics: [didregress, didregress_postestimation, did_intro]
+syntax_patterns:
+- didregress (outcome covariates) (treated), group(group_id) time(period)
+- xtdidregress (outcome covariates) (treated), group(panel_id) time(period)
+assumptions:
+- In the absence of treatment, treated and comparison groups would have followed parallel outcome trends.
+- Treatment timing, group membership, and the absence of anticipation or interference are correctly defined.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- A nonsignificant pretrend test is not proof of parallel trends, especially with few pretreatment periods.
+- Conditioning on variables affected by treatment can change or bias the target effect.
+- didregress and xtdidregress address built-in DID designs; route requests for csdid, drdid, or other community estimators for staggered heterogeneous effects to the did package reference.
 workflows:
-- Start with the official help topics attached to Difference-in-Differences Analysis in Stata, then tailor
-  the syntax to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises didregress and inspect the resulting log.
-related_refs:
-- panel-data
-- treatment-effects
+- Plot group-time outcomes and audit treatment adoption before fitting the prespecified DID model.
+- Estimate the effect with design-appropriate inference, inspect pretrends, and report sensitivity to time windows and group composition.
+validation_case: >-
+  Construct treated and never-treated panels with a common pretrend and known post-period effect, fit didregress,
+  and verify the treatment coefficient is positive.
+validation_mode: stata
+related_refs: [panel-data, treatment-effects, did]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  set obs 200
+  generate int hospital = ceil(_n/4)
+  bysort hospital: generate byte month = _n
+  generate byte treated_group = hospital <= 25
+  generate byte procedure = treated_group & month >= 3
+  generate double satis = hospital/20 + month + 2*procedure
+  didregress (satis) (procedure), group(hospital) time(month)
+  matrix did_b = e(b)
+  assert el(did_b, 1, 1) > 0
 provenance:
-  local_help_topics:
-  - didregress
-  - xtdidregress
+  local_help_topics: [didregress, didregress_postestimation, did_intro]
+  local_help_globs: []
   local_help_files:
   - ado/base/d/didregress.sthlp
+  - ado/base/d/didregress_postestimation.sthlp
+  - ado/base/d/did_intro.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/difference-in-differences.md
   upstream_only: false
+  package_only: false
+  reviewed: true

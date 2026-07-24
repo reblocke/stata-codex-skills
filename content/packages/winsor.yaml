@@ -1,33 +1,69 @@
 slug: winsor
 skill: packages
 section: Data and Workflow Utilities
-title: 'Winsorizing in Stata: winsor and winsor2'
-trigger: Use when the user asks about winsor2 or a related community-package workflow.
+order: 330
+title: "winsor and winsor2: Explicit Outlier Capping or Trimming"
+trigger: Use when the user asks for winsor, winsor2, winsorization, percentile capping, trimming, by-group outlier treatment, cuts(), suffix(), or sensitivity analyses for extreme observations.
+aliases:
+- winsor
+- winsor2
+- winsorization
+- percentile capping
+- trimming
+- outlier treatment
 commands:
+- winsor
 - winsor2
 source_topics:
+- winsor
 - winsor2
-syntax_patterns: []
+syntax_patterns:
+- winsor varname, gen(newvar) p(0.01)
+- winsor2 varlist, cuts(1 99) suffix(_w)
+- winsor2 varlist, cuts(1 99) suffix(_w) by(groupvar)
+- winsor2 varlist, cuts(1 99) trim
+assumptions:
+- The scientific rationale, variables, percentile thresholds, grouping, and choice between capping and deletion are specified before transformation.
+- Original variables remain available so the analyst can quantify changed observations and compare results with untreated data.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- replace destroys original values and makes sensitivity analysis harder; generate suffixed variables unless replacement is explicitly required and reversible.
+- By-group cuts can be unstable in small groups and change the estimand relative to pooled winsorization.
+- Winsorization is not a substitute for correcting data errors or choosing a robust model; inspect extreme values before transforming them.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises winsor2 and inspect the resulting log.
+- Preflight winsor/winsor2 with which and ado describe, and ask before installation or update.
+- Diagnose extremes and data errors, predeclare thresholds and grouping, create suffixed variables, then count and summarize changed observations.
+- Refit the primary analysis on raw and transformed variables and report whether conclusions depend on the outlier rule.
+validation_case: Create a suffixed 1st/99th-percentile winsorized price variable in auto.dta, verify the original is unchanged and the new range is no wider, and require an error-free log.
+validation_mode: stata
 related_refs:
 - data-management
 - workflow-best-practices
+preflight_commands:
+- which winsor
+- which winsor2
+- ado describe winsor2
 install_commands:
-- ssc install winsor2, replace
-smoke_test: 'sysuse auto, clear
-
-  winsor2 price, replace cuts(1 99)'
+- ssc install winsor
+- ssc install winsor2
+smoke_test: |
+  sysuse auto, clear
+  clonevar price_original = price
+  summarize price, meanonly
+  scalar raw_min = r(min)
+  scalar raw_max = r(max)
+  winsor2 price, cuts(1 99) suffix(_w)
+  assert price == price_original
+  summarize price_w, meanonly
+  assert r(min) >= raw_min
+  assert r(max) <= raw_max
 provenance:
+  reviewed: true
   local_help_topics:
+  - winsor
   - winsor2
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/winsor.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

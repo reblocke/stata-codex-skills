@@ -1,39 +1,76 @@
 slug: packaging_and_help
 skill: plugins
 section: Packaging and Distribution
-title: Stata Package Structure and Distribution
-trigger: Use when the task needs stata package structure and distribution for a Stata plugin project.
-commands:
-- .pkg
-- .toc
-- .sthlp
+order: 30
+title: Packaging, Help, and Multi-Platform Distribution for Stata Plugins
+trigger: Use when a plugin project needs stata.toc, .pkg manifests, .ado wrappers, .sthlp help, platform-specific binaries, net install layout, version metadata, local-install testing, or release packaging.
+aliases:
+- stata.toc
+- pkg manifest
+- sthlp
 - net install
+- net from
+- ado describe
+- which
+- program plugin
+- plugin package
+- platform binary
+- Stata package distribution
+commands:
+- net install
+- net from
+- ado describe
+- which
+- program ..., plugin
 source_topics:
 - net
 - ssc
 - plugin
-syntax_patterns: []
+syntax_patterns:
+- |-
+  v 3
+  d packagename - Short description
+  p packagename Package description
+- |-
+  v 3
+  d packagename: Short description
+  f command.ado
+  f command.sthlp
+  f plugin_macosx.plugin
+- 'net install packagename, from("immutable_release_url")'
+- 'program plugin_handle, plugin using("plugin_macosx.plugin")'
+assumptions:
+- Every distributed binary is built from the same tagged source and tested with the intended Stata/OS/architecture combination.
+- Package metadata, command help, binary filenames, wrapper dispatch, and checksums are generated or reviewed as one release unit.
 gotchas:
-- A plugin crash terminates the Stata session, so treat every memory access and return code as high risk.
+- Subprograms in an ado file are not auto-discovered as separate commands; each public command needs a matching first program/filename or explicit dispatch.
+- A .pkg entry with the wrong binary name or case can pass repository review but fail on a case-sensitive installation target.
+- net install from a moving branch is not reproducible; publish immutable release paths and record file hashes.
+- Shipping one architecture under a generic filename can load on the build machine and fail elsewhere; make platform dispatch explicit.
 workflows:
-- Plan the interface and the validation path before writing plugin code or wrapper ado-files.
-- Use batch-mode Stata logs and compiler output together when debugging plugin failures.
-validation_case: Build a tiny package directory with plugin binary, ado, and sthlp, then install it from
-  a local folder.
+- Stage a release tree containing ado, help, toc/pkg metadata, licenses, and all supported binaries from one pinned source revision.
+- Validate manifest completeness, line endings, help links, wrapper dispatch, and hashes before any publication.
+- Install from the staged local directory into an empty PLUS tree, run help/which/ado describe and platform smoke tests, then inspect the package inventory.
+validation_case: Build and inspect a minimal local package tree with toc/pkg, ado, sthlp, and platform binary entries; install it into an empty temporary PLUS directory and verify help, which, and ado describe resolve only staged files.
+validation_mode: manual-review
 related_refs:
 - plugin-sdk-basics
 - testing_strategy
+preflight_commands: []
 install_commands: []
 smoke_test: null
 provenance:
+  reviewed: true
   local_help_topics:
   - net
   - ssc
   - plugin
+  local_help_globs: []
   local_help_files:
   - ado/base/n/net.sthlp
   - ado/base/s/ssc.sthlp
   - ado/base/p/plugin.sthlp
   upstream_files:
   - plugins/stata-c-plugins/skills/stata-c-plugins/references/packaging_and_help.md
-  upstream_only: true
+  package_only: false
+  upstream_only: false

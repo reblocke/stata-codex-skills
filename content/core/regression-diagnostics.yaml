@@ -1,0 +1,58 @@
+slug: regression-diagnostics
+skill: core
+section: Statistics and Econometrics
+order: 230
+title: Built-in Linear Regression Diagnostics
+trigger: >-
+  Use after regress for multicollinearity, heteroskedasticity, functional-form, specification, residual,
+  leverage, and influence checks with estat vif, estat hettest, estat ovtest, linktest, rvfplot, and predict.
+commands: [estat vif, estat hettest, estat ovtest, linktest, rvfplot, predict]
+aliases: [VIF, variance inflation factor, Breusch-Pagan test, Cook-Weisberg test, RESET test, residual plot]
+source_topics: [regress_postestimation, regress_postestimation_plots, linktest]
+syntax_patterns:
+- estat hettest, rhs
+- rvfplot, yline(0)
+- predict double studentized, rstudent
+assumptions:
+- Diagnostics are applied to the final prespecified regress sample and variance structure.
+- Residual, leverage, and specification checks are interpreted relative to the intended linear-model estimand.
+gotchas:
+- A diagnostic test flags a pattern under its assumptions; it does not identify the correct replacement model.
+- VIF concerns the design matrix and coefficient precision, not bias, and arbitrary thresholds should not drive variable deletion.
+- Heteroskedasticity-consistent standard errors do not repair nonlinear mean structure or influential observations.
+- linktest and RESET can reject for many reasons, so investigate residual plots and prespecified functional forms.
+workflows:
+- Fit the planned regress model, preserve its estimation sample, and run diagnostics without changing observations between commands.
+- Combine residual-versus-fitted and influence plots with targeted tests, then document any model revision and rerun the full diagnostic set.
+validation_case: >-
+  Fit a linear model, run VIF, heteroskedasticity, RESET, and link tests, create a residual-versus-fitted plot,
+  and verify each command is operating on the same estimation sample.
+validation_mode: stata
+related_refs: [linear-regression, graphics]
+install_commands: []
+smoke_test: |-
+  clear all
+  sysuse auto, clear
+  regress price mpg weight length
+  local diagnostic_n = e(N)
+  estat vif
+  assert e(N) == `diagnostic_n'
+  estat hettest
+  assert inrange(r(p), 0, 1)
+  estat ovtest
+  assert inrange(r(p), 0, 1)
+  rvfplot, name(regdiag_smoke, replace)
+  graph drop regdiag_smoke
+  linktest
+  assert e(N) == `diagnostic_n'
+provenance:
+  local_help_topics: [regress_postestimation, regress_postestimation_plots, linktest]
+  local_help_globs: []
+  local_help_files:
+  - ado/base/r/regress_postestimation.sthlp
+  - ado/base/r/regress_postestimation_plots.sthlp
+  - ado/base/l/linktest.sthlp
+  upstream_files: []
+  upstream_only: false
+  package_only: false
+  reviewed: true

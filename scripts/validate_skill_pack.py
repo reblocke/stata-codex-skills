@@ -10,9 +10,11 @@ import tempfile
 import uuid
 
 from libskillpack import (
-    MANIFEST_ROOT,
+    CONTENT_ROOT,
+    LOCK_ROOT,
     REPO_ROOT,
-    TESTS_ROOT,
+    iter_content_entries,
+    load_skill_config,
     detect_stata_binary,
     download_binary,
     ensure_dir,
@@ -21,28 +23,12 @@ from libskillpack import (
     read_yaml,
     run_command,
     run_stata_do,
+    sha256_file,
     write_text,
 )
 from lint_skill_pack import lint_repo
 
 
-PLUGIN_SOURCES = (
-    (
-        "https://www.stata.com/plugins/stplugin.h",
-        "stplugin.h",
-        "0d32086bfb7a621e30ed7fefa41b351b6733bb4561da28a4c581580d62c64e8b",
-    ),
-    (
-        "https://www.stata.com/plugins/stplugin.c",
-        "stplugin.c",
-        "ab694f53e30a404bbfbe59d301a81b8bc59eeecf84bc5427eb65cbf0c5020d6d",
-    ),
-    (
-        "https://www.stata.com/plugins/hello.c",
-        "hello.c",
-        "1ea64f7dea195acd9bd5715b827669d62a642e62ea9d4cf4990649b87f69758c",
-    ),
-)
 SUITE_CHOICES = (
     "static",
     "core",
@@ -52,13 +38,224 @@ SUITE_CHOICES = (
     "default",
 )
 DEFAULT_SUITES = ("static", "core", "packages", "plugin-compile")
-MARKER_PLACEHOLDER = 'display "VALIDATION COMPLETE"'
 SENSITIVE_LOG_LINE = re.compile(
     r"(?i)\b("
     r"licensed?\s+to|license\s+(?:code|number|serial)|"
     r"serial\s+number|authorization\s+code"
     r")\b"
 )
+TRACK_METADATA_FILES = {"stata.trk", "backup.trk"}
+
+
+def package_content_entries() -> list[dict]:
+    config = load_skill_config()
+    entries = [
+        entry
+        for skill_key, _, entry in iter_content_entries(CONTENT_ROOT, config)
+        if skill_key == "packages" and entry.get("validation_mode") == "stata"
+    ]
+    return sorted(entries, key=lambda entry: (entry.get("order", 10**9), entry.get("slug", "")))
+
+
+def plugin_sources() -> list[tuple[str, str, str]]:
+    lock_path = LOCK_ROOT / "plugin-sdk.yaml"
+    lock = read_yaml(lock_path)
+    sources = lock.get("sources")
+    if lock.get("schema_version") != 1 or not isinstance(sources, list) or not sources:
+        raise ValueError(f"{lock_path}: invalid or empty plugin SDK lock")
+    resolved: list[tuple[str, str, str]] = []
+    for source in sources:
+        if not isinstance(source, dict):
+            raise ValueError(f"{lock_path}: source must be a mapping")
+        url = source.get("url")
+        filename = source.get("filename")
+        sha256 = source.get("sha256")
+        if not all(isinstance(value, str) and value for value in (url, filename, sha256)):
+            raise ValueError(f"{lock_path}: source requires url, filename, and sha256")
+        resolved.append((url, filename, sha256))
+    return resolved
+
+
+def parse_stata_track(text: str) -> list[dict]:
+    """Parse stable module metadata from an isolated PLUS/stata.trk file."""
+
+    modules: list[dict] = []
+    current: dict | None = None
+    descriptions: list[str] = []
+    for raw_line in text.splitlines():
+        if not raw_line:
+            continue
+        code, _, value = raw_line.partition(" ")
+        value = value.strip()
+        if code == "S":
+            if current is not None:
+                current["description"] = descriptions
+                modules.append(current)
+            current = {
+                "source": value,
+                "descriptor": "",
+                "distribution_date": "",
+                "files": [],
+            }
+            descriptions = []
+        elif current is None:
+            continue
+        elif code == "N":
+            current["descriptor"] = value
+        elif code == "d":
+            descriptions.append(value)
+            match = re.fullmatch(r"Distribution-Date:\s*(\d{8})", value)
+            if match:
+                current["distribution_date"] = match.group(1)
+        elif code == "f":
+            current["files"].append(value)
+        elif code == "e":
+            current["description"] = descriptions
+            modules.append(current)
+            current = None
+            descriptions = []
+    if current is not None:
+        current["description"] = descriptions
+        modules.append(current)
+    return modules
+
+
+def verify_package_install_lock(slug: str, plus_dir: Path) -> tuple[bool, str]:
+    """Verify isolated installed files against the checked package lock.
+
+    Stata-managed ``stata.trk`` and ``backup.trk`` files are deliberately
+    excluded because their administrative state is mutable. The lock records
+    stable distribution metadata for review and hashes every package artifact
+    expected under the isolated PLUS directory.
+    """
+
+    lock_path = LOCK_ROOT / "packages.yaml"
+    lock = read_yaml(lock_path)
+    packages = lock.get("packages")
+    if lock.get("schema_version") != 1 or not isinstance(packages, dict):
+        return False, f"{lock_path}: invalid package lock"
+    package = packages.get(slug)
+    if not isinstance(package, dict):
+        return False, f"{lock_path}: missing package lock for {slug}"
+    distributions = package.get("distributions")
+    if not isinstance(distributions, list) or not distributions:
+        return False, f"{lock_path}: package {slug} has no locked distributions"
+    errors: list[str] = []
+    track_path = plus_dir / "stata.trk"
+    if not track_path.is_file():
+        return False, "Isolated installation did not create PLUS/stata.trk; refresh required"
+    observed_modules = parse_stata_track(read_text(track_path))
+    expected_modules = [
+        {
+            "source": distribution.get("source"),
+            "descriptor": distribution.get("descriptor"),
+            "distribution_date": distribution.get("distribution_date"),
+            "files": sorted(distribution.get("files", {})),
+        }
+        for distribution in distributions
+        if isinstance(distribution, dict)
+    ]
+    normalized_observed = [
+        {
+            "source": module.get("source"),
+            "descriptor": module.get("descriptor"),
+            "distribution_date": module.get("distribution_date"),
+            # A few SSC descriptors repeat the same file line.  The lock stores
+            # one hash per path, so compare the corresponding set of paths.
+            "files": sorted(set(module.get("files", []))),
+        }
+        for module in observed_modules
+    ]
+    sort_key = lambda module: (
+        str(module.get("descriptor")),
+        str(module.get("source")),
+    )
+    if sorted(normalized_observed, key=sort_key) != sorted(
+        expected_modules, key=sort_key
+    ):
+        errors.append(
+            "stata.trk source/descriptor/distribution/file metadata drifted; "
+            "refresh the package lock "
+            f"(expected {sorted(expected_modules, key=sort_key)!r}; "
+            f"observed {sorted(normalized_observed, key=sort_key)!r})"
+        )
+
+    locked_files: dict[str, str] = {}
+    for distribution in distributions:
+        if not isinstance(distribution, dict) or not isinstance(
+            distribution.get("files"), dict
+        ):
+            errors.append("invalid distribution lock")
+            continue
+        for relative, expected_sha256 in distribution["files"].items():
+            previous = locked_files.get(relative)
+            if previous is not None and previous != expected_sha256:
+                errors.append(f"conflicting hashes for {relative}")
+            locked_files[relative] = expected_sha256
+    generated_files = package.get("generated_files", {})
+    if not isinstance(generated_files, dict):
+        errors.append("generated_files lock must be a mapping")
+        generated_files = {}
+    for relative, expected_sha256 in generated_files.items():
+        previous = locked_files.get(relative)
+        if previous is not None and previous != expected_sha256:
+            errors.append(f"conflicting hashes for {relative}")
+        locked_files[relative] = expected_sha256
+
+    observed_files = {
+        str(path.relative_to(plus_dir))
+        for path in plus_dir.rglob("*")
+        if path.is_file()
+        and str(path.relative_to(plus_dir)) not in TRACK_METADATA_FILES
+    }
+    expected_files = set(locked_files)
+    unexpected = sorted(observed_files - expected_files)
+    missing = sorted(expected_files - observed_files)
+    if unexpected:
+        errors.append(
+            "unexpected installed files (refresh required): " + ", ".join(unexpected)
+        )
+    if missing:
+        errors.append("missing locked files: " + ", ".join(missing))
+    for relative, expected_sha256 in sorted(locked_files.items()):
+        candidate = plus_dir / relative
+        if not candidate.is_file():
+            errors.append(f"missing locked file {relative}")
+            continue
+        actual_sha256 = sha256_file(candidate)
+        if actual_sha256 != expected_sha256:
+            errors.append(
+                f"SHA-256 mismatch for {relative}: expected {expected_sha256}, got {actual_sha256}"
+            )
+    return not errors, "\n".join(errors)
+
+
+def diagnostics_alias_check() -> tuple[bool, str]:
+    config = load_skill_config()
+    aliases = [
+        alias
+        for alias in config.get("route_aliases", [])
+        if alias.get("from_skill") == "packages"
+        and alias.get("from_route") == "packages/diagnostics.md"
+    ]
+    if len(aliases) != 1:
+        return False, "Expected exactly one packages/diagnostics.md compatibility alias"
+    alias = aliases[0]
+    targets = [
+        entry
+        for skill_key, _, entry in iter_content_entries(CONTENT_ROOT, config)
+        if skill_key == alias.get("to_skill") and entry.get("slug") == alias.get("to_slug")
+    ]
+    if len(targets) != 1:
+        return False, "Diagnostics compatibility alias does not resolve to one canonical target"
+    target = targets[0]
+    if target.get("validation_mode") != "stata":
+        return False, "Diagnostics compatibility target is not covered by Stata validation"
+    return True, (
+        "Historical package route resolves to "
+        f"{config['skills'][alias['to_skill']]['name']}/"
+        f"{config['skills'][alias['to_skill']]['route_dir']}/{target['slug']}.md"
+    )
 
 
 def completion_marker(label: str) -> str:
@@ -70,36 +267,80 @@ def has_exact_log_line(log_text: str, expected: str) -> bool:
     return any(line.strip() == expected for line in log_text.splitlines())
 
 
-def stage_do_file(source: Path, run_dir: Path, marker: str) -> Path:
-    """Copy a smoke test into its run directory with a unique marker and name."""
-    source_text = read_text(source)
-    if MARKER_PLACEHOLDER not in source_text:
-        raise ValueError(f"{source.name} does not contain the validation marker placeholder")
-    run_token = marker.rsplit("::", 1)[-1]
-    staged = run_dir / f"{source.stem}_{run_token}.do"
-    write_text(staged, source_text.replace(MARKER_PLACEHOLDER, f'display "{marker}"'))
-    return staged
-
-
 def combined_output(log_text: str, stdout: str | None, stderr: str | None) -> str:
     return "\n".join(part for part in (log_text, stdout or "", stderr or "") if part).strip()
 
 
-def validate_core(stata_binary: Path, work_root: Path) -> tuple[bool, str]:
-    source_do_file = TESTS_ROOT / "stata" / "core" / "core_smoke.do"
-    run_dir = ensure_dir(work_root / "core")
-    marker = completion_marker("core")
-    do_file = stage_do_file(source_do_file, run_dir, marker)
-    result, log_path = run_stata_do(
-        stata_binary,
-        do_file,
-        run_dir,
-        completion_marker=marker,
-        timeout_seconds=90,
-    )
-    log_text = read_text(log_path) if log_path.exists() else ""
-    success = result.returncode == 0 and log_path.exists() and not has_stata_error(log_text)
-    return success, combined_output(log_text, result.stdout, result.stderr)
+def core_content_entries() -> list[dict]:
+    config = load_skill_config()
+    entries = [
+        entry
+        for skill_key, _, entry in iter_content_entries(CONTENT_ROOT, config)
+        if skill_key == "core" and entry.get("validation_mode") == "stata"
+    ]
+    return sorted(entries, key=lambda entry: (entry.get("order", 10**9), entry.get("slug", "")))
+
+
+def stata_entry_do_text(entry: dict, marker: str) -> str:
+    return "\n".join(
+        [
+            "clear all",
+            "set more off",
+            "set seed 271828",
+            entry["smoke_test"],
+            f'display "PASS: {entry["slug"]}"',
+            f'display "{marker}"',
+            "exit, clear",
+        ]
+    ) + "\n"
+
+
+def validate_core(
+    stata_binary: Path,
+    work_root: Path,
+    core_slugs: list[str] | None = None,
+) -> list[tuple[str, bool, str]]:
+    content_entries = core_content_entries()
+    if not content_entries:
+        return [
+            (
+                "<content>",
+                False,
+                "Canonical core content has no Stata validation entries; refusing a vacuous pass.",
+            )
+        ]
+    entries, unknown = selected_package_entries(content_entries, core_slugs)
+    results: list[tuple[str, bool, str]] = [
+        (slug, False, f"Unknown core slug: {slug}") for slug in unknown
+    ]
+    for entry in entries:
+        slug = entry.get("slug", "<missing-slug>")
+        try:
+            run_dir = ensure_dir(work_root / "core" / slug)
+            marker = completion_marker(f"core-{slug}")
+            run_token = marker.rsplit("::", 1)[-1]
+            do_file = run_dir / f"{slug}_smoke_{run_token}.do"
+            write_text(do_file, stata_entry_do_text(entry, marker))
+            result, log_path = run_stata_do(
+                stata_binary,
+                do_file,
+                run_dir,
+                completion_marker=marker,
+                timeout_seconds=90,
+            )
+            log_text = read_text(log_path) if log_path.exists() else ""
+            success = (
+                result.returncode == 0
+                and log_path.exists()
+                and not has_stata_error(log_text)
+                and has_exact_log_line(log_text, f"PASS: {slug}")
+            )
+            diagnostics = combined_output(log_text, result.stdout, result.stderr)
+        except Exception as error:
+            success = False
+            diagnostics = f"{type(error).__name__}: {error}"
+        results.append((slug, success, diagnostics))
+    return results
 
 
 def package_do_text(entry: dict, plus_dir: Path, marker: str) -> str:
@@ -111,6 +352,14 @@ def package_do_text(entry: dict, plus_dir: Path, marker: str) -> str:
         f'sysdir set PERSONAL "{(plus_dir / "personal").as_posix()}"',
     ]
     lines.extend(entry.get("install_commands", []))
+    for command in entry.get("preflight_commands", []):
+        lines.append(
+            re.sub(
+                r"(?i)^\s*(?:(?:capture|quietly|noisily)\s+)+",
+                "",
+                command,
+            ).strip()
+        )
     lines.append(entry["smoke_test"])
     lines.append(f'display "PASS: {entry["slug"]}"')
     lines.append(f'display "{marker}"')
@@ -146,17 +395,25 @@ def validate_packages(
     work_root: Path,
     package_slugs: list[str] | None = None,
 ) -> list[tuple[str, bool, str]]:
-    manifest = read_yaml(MANIFEST_ROOT / "package-map.yaml")
-    manifest_entries = manifest.get("entries")
-    if not isinstance(manifest_entries, list) or not manifest_entries:
+    content_entries = package_content_entries()
+    if not content_entries:
         return [
             (
-                "<manifest>",
+                "<content>",
                 False,
-                "Package manifest has no validation entries; refusing a vacuous pass.",
+                "Canonical package content has no Stata validation entries; refusing a vacuous pass.",
             )
         ]
-    entries, unknown = selected_package_entries(manifest_entries, package_slugs)
+    requested = package_slugs or []
+    include_alias = not requested or "diagnostics" in requested
+    canonical_requests = [slug for slug in requested if slug != "diagnostics"]
+    if requested and not canonical_requests:
+        entries, unknown = [], []
+    else:
+        entries, unknown = selected_package_entries(
+            content_entries,
+            canonical_requests if requested else None,
+        )
     results: list[tuple[str, bool, str]] = [
         (slug, False, f"Unknown package slug: {slug}") for slug in unknown
     ]
@@ -176,7 +433,7 @@ def validate_packages(
                 do_file,
                 run_dir,
                 completion_marker=marker,
-                timeout_seconds=60,
+                timeout_seconds=180,
             )
             log_text = read_text(log_path) if log_path.exists() else ""
             pass_marker = f"PASS: {slug}"
@@ -187,10 +444,21 @@ def validate_packages(
                 and has_exact_log_line(log_text, pass_marker)
             )
             diagnostics = combined_output(log_text, result.stdout, result.stderr)
+            if success and entry.get("install_commands"):
+                lock_ok, lock_diagnostics = verify_package_install_lock(slug, plus_dir)
+                success = lock_ok
+                diagnostics = combined_output(
+                    diagnostics,
+                    "",
+                    lock_diagnostics,
+                )
         except Exception as error:
             success = False
             diagnostics = f"{type(error).__name__}: {error}"
         results.append((slug, success, diagnostics))
+    if include_alias:
+        alias_ok, alias_diagnostics = diagnostics_alias_check()
+        results.append(("diagnostics [compatibility alias]", alias_ok, alias_diagnostics))
     return results
 
 
@@ -211,7 +479,7 @@ def plugin_do_text(plugin_path: Path, marker: str) -> str:
 def validate_plugin_compile(work_root: Path) -> tuple[bool, str, Path | None]:
     run_dir = ensure_dir(work_root / "plugins" / "compile")
     try:
-        for url, filename, expected_sha256 in PLUGIN_SOURCES:
+        for url, filename, expected_sha256 in plugin_sources():
             download_binary(
                 url,
                 run_dir / filename,
@@ -334,11 +602,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Validation suite to run; may be repeated. Defaults to the default suite.",
     )
     parser.add_argument(
+        "--core",
+        action="append",
+        dest="core_slugs",
+        metavar="SLUG",
+        help="Limit core validation to this canonical content slug; may be repeated.",
+    )
+    parser.add_argument(
         "--package",
         action="append",
         dest="packages",
         metavar="SLUG",
-        help="Limit package validation to this manifest slug; may be repeated.",
+        help="Limit package validation to this canonical content slug; may be repeated.",
     )
     parser.add_argument(
         "--keep-workdir",
@@ -380,8 +655,20 @@ def main(argv: list[str] | None = None) -> int:
                 record("core", False, "Could not locate a Stata binary under /Applications/Stata")
             else:
                 try:
-                    core_ok, core_output = validate_core(stata_binary, work_root)
-                    record("core", core_ok, core_output)
+                    core_results = validate_core(
+                        stata_binary,
+                        work_root,
+                        args.core_slugs,
+                    )
+                    if not core_results:
+                        record(
+                            "core",
+                            False,
+                            "Core validation produced no results; refusing a vacuous pass.",
+                        )
+                    else:
+                        for slug, success, diagnostics in core_results:
+                            record(f"core {slug}", success, diagnostics)
                 except Exception as error:
                     record("core", False, f"{type(error).__name__}: {error}")
 

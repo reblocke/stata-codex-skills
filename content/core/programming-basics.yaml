@@ -1,33 +1,47 @@
 slug: programming-basics
 skill: core
 section: Programming and Mata
-title: Stata Programming Basics
-trigger: Use when the user needs built-in Stata help with stata programming basics.
-commands: &id001
-- foreach
-- forvalues
-- macro
-- do
-source_topics: *id001
-syntax_patterns: []
+order: 10
+title: Stata Macros, Loops, and Do-Files
+trigger: >-
+  Use for local and global macros, foreach and forvalues loops, do-file arguments, comments,
+  command delimiters, temporary names, quietly/noisily, capture, and basic reusable automation.
+commands: [local, global, foreach, forvalues, do, run, tempfile, tempname, capture, quietly]
+aliases: [Stata programming, macro, loop, foreach, forvalues, do-file, automation]
+source_topics: [foreach, forvalues, macro, do]
+syntax_patterns:
+- local outcomes "y1 y2 y3"
+- foreach outcome of local outcomes { regress `outcome' exposure covariates }
+- forvalues year = 2010/2020 { summarize outcome if calendar_year == `year' }
+- do "analysis.do" input_path output_path
+assumptions:
+- Macro contents and loop lists are defined at the intended scope and contain valid quoted tokens.
+- Repeated commands are safe at each iteration and produce uniquely named or intentionally replaced outputs.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Local macros disappear outside their defining scope; globals persist and can create hidden cross-script state.
+- Macro expansion happens before command parsing, so unmatched quotes or apostrophes can change the command silently.
+- capture suppresses the return code unless checked immediately and can conceal a failed iteration.
 workflows:
-- Start with the official help topics attached to Stata Programming Basics, then tailor the syntax to
-  the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises foreach and inspect the resulting log.
-related_refs:
-- advanced-programming
-- workflow-best-practices
+- Prototype one concrete command, parameterize only the changing pieces, then inspect expanded commands on a small loop.
+- Use local macros and temporary files by default, check _rc after expected failures, and make reruns idempotent.
+validation_case: >-
+  Loop over a fixed numeric list, construct deterministic variables, and verify both macro expansion and final values.
+validation_mode: stata
+related_refs: [advanced-programming, workflow-best-practices]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  set obs 5
+  generate int base = _n
+  forvalues power = 2/3 {
+      generate double value`power' = base^`power'
+  }
+  local expected 25
+  assert value2[5] == `expected'
+  assert value3[2] == 8
 provenance:
-  local_help_topics:
-  - foreach
-  - forvalues
-  - macro
-  - do
+  local_help_topics: [foreach, forvalues, macro, do]
+  local_help_globs: []
   local_help_files:
   - ado/base/f/foreach.sthlp
   - ado/base/f/forvalues.sthlp
@@ -36,3 +50,5 @@ provenance:
   upstream_files:
   - plugins/stata/skills/stata/references/programming-basics.md
   upstream_only: false
+  package_only: false
+  reviewed: true

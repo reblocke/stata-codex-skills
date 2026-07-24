@@ -1,32 +1,58 @@
 slug: mata-data-access
 skill: core
 section: Programming and Mata
-title: Mata-Stata Data Access Interface
-trigger: Use when the user needs built-in Stata help with mata-stata data access interface.
-commands: &id001
-- mf_st_data
-- mf_st_store
-source_topics: *id001
-syntax_patterns: []
+order: 60
+title: Mata Access to Stata Data and Metadata
+trigger: >-
+  Use for reading Stata observations into Mata views or copies, adding variables, writing results back,
+  respecting if/in samples, and exchanging scalars, macros, and matrices through st_*() functions.
+commands: [st_data(), st_view(), st_store(), st_addvar(), st_matrix(), st_local(), st_numscalar()]
+aliases: [Mata Stata interface, st_data, st_view, st_store, data access]
+source_topics: [mf_st_data, mf_st_store]
+syntax_patterns:
+- "mata: X = st_data(., (\"x1\", \"x2\"), \"touse\")"
+- "mata: st_view(X=., ., (\"x1\", \"x2\"), \"touse\")"
+- "mata: new_index = st_addvar(\"double\", \"prediction\")"
+- "mata: st_store(., \"prediction\", values)"
+assumptions:
+- Observation order and sample-selection expressions are stable between reading and writing data.
+- Destination variables have intentional storage types and the returned values have matching dimensions.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- st_view() is linked to Stata data; sorting, dropping observations, or changing variables can invalidate assumptions about the view.
+- st_data() copies values and may consume substantial memory, while st_view() avoids copies but requires more lifecycle care.
+- st_store() writes by observation position, so dimension or ordering mistakes can silently attach results to the wrong rows.
 workflows:
-- Start with the official help topics attached to Mata-Stata Data Access Interface, then tailor the syntax
-  to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises mf_st_data and inspect the resulting log.
-related_refs:
-- mata-introduction
-- mata-programming
+- Mark the estimation sample in Stata, read only required variables, assert dimensions, compute, and write to a new typed variable.
+- Use views for large read-heavy work, copies when data may change, and verify written results on known observations.
+validation_case: >-
+  Read a known variable into Mata, add a double variable, store a deterministic transformation, and assert row-level alignment.
+validation_mode: stata
+related_refs: [mata-introduction, mata-programming]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  set obs 4
+  generate double x = _n
+  mata:
+  x = st_data(., "x")
+  st_addvar("double", "x_squared")
+  st_store(., "x_squared", x:^2)
+  end
+  assert x_squared[1] == 1
+  assert x_squared[4] == 16
 provenance:
-  local_help_topics:
-  - mf_st_data
-  - mf_st_store
+  local_help_topics: [mf_st_data, mf_st_store, mf_st_view, mf_st_addvar, mf_st_matrix, mf_st_local, mf_st_numscalar]
+  local_help_globs: []
   local_help_files:
   - ado/base/m/mf_st_data.sthlp
   - ado/base/m/mf_st_store.sthlp
+  - ado/base/m/mf_st_view.sthlp
+  - ado/base/m/mf_st_addvar.sthlp
+  - ado/base/m/mf_st_matrix.sthlp
+  - ado/base/m/mf_st_local.sthlp
+  - ado/base/m/mf_st_numscalar.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/mata-data-access.md
-  upstream_only: true
+  upstream_only: false
+  package_only: false
+  reviewed: true

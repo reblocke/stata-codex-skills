@@ -1,32 +1,59 @@
 slug: missing-data-handling
 skill: core
 section: Statistics and Econometrics
-title: Missing Data Handling in Stata
-trigger: Use when the user needs built-in Stata help with missing data handling in stata.
-commands: &id001
-- mi
-- misstable
-source_topics: *id001
-syntax_patterns: []
+order: 290
+title: Missing-Data Audit and Multiple Imputation
+trigger: >-
+  Use for missingness summaries, complete-case denominators, Stata mi setup, variable registration,
+  chained or regression imputation, passive variables, mi estimate, and sensitivity planning.
+commands: [misstable, mi set, mi register, mi impute, mi estimate, mi passive]
+aliases: [missing data, multiple imputation, MICE, chained equations, complete case, MI]
+source_topics: [mi, misstable, mi_impute]
+syntax_patterns:
+- misstable summarize outcome exposure covariates
+- mi set mlong
+- mi register imputed bmi income
+- mi impute chained (regress) bmi income = age i.sex, add(20) rseed(271828)
+- "mi estimate: regress outcome exposure covariates"
+assumptions:
+- Missingness is plausibly ignorable conditional on the imputation model, or departures are addressed by sensitivity analysis.
+- Imputation models respect variable distributions, structural missingness, interactions, and the substantive analysis model.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Stata extended missing values .a through .z are all greater than real numbers and may encode distinct source reasons.
+- Imputation models should include analysis variables and useful predictors of missingness; convenience alone is not sufficient.
+- Passive transforms and interactions must remain synchronized across imputations rather than being imputed independently.
+- Multiple imputation does not solve missing-not-at-random bias without additional assumptions and sensitivity analysis.
 workflows:
-- Start with the official help topics attached to Missing Data Handling in Stata, then tailor the syntax
-  to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises mi and inspect the resulting log.
-related_refs:
-- data-management
-- survey-data-analysis
+- Quantify missingness by variable and analysis group, trace source codes, and compare included versus excluded observations.
+- Define the imputation model and seed, run diagnostics across imputations, fit with mi estimate, and report a sensitivity analysis.
+validation_case: >-
+  Introduce deterministic missing values, declare mlong data, impute one continuous variable with a fixed seed,
+  and verify the requested number of imputations.
+validation_mode: stata
+related_refs: [data-management, survey-data-analysis]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  set seed 271828
+  set obs 50
+  generate double x = rnormal()
+  generate double y = 2*x + rnormal()
+  replace x = . if mod(_n, 7) == 0
+  misstable summarize x y
+  mi set mlong
+  mi register imputed x
+  mi impute regress x = y, add(2) rseed(271828)
+  mi describe
+  assert r(M) == 2
 provenance:
-  local_help_topics:
-  - mi
-  - misstable
+  local_help_topics: [mi, misstable, mi_impute]
+  local_help_globs: []
   local_help_files:
   - ado/base/m/mi.sthlp
   - ado/base/m/misstable.sthlp
+  - ado/base/m/mi_impute.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/missing-data-handling.md
   upstream_only: false
+  package_only: false
+  reviewed: true

@@ -1,34 +1,50 @@
 slug: external-tools-integration
 skill: core
 section: Output and Workflow
-title: External Tools Integration
-trigger: Use when the user needs built-in Stata help with external tools integration.
-commands: &id001
-- python
-- shell
-- java_plugin
-source_topics: *id001
-syntax_patterns: []
+order: 540
+title: Python, Shell, and Java Integration Boundaries
+trigger: >-
+  Use for calling Python from Stata, PyStata integration, shell commands, Java plugins,
+  environment discovery, quoting paths, subprocess return codes, and controlled data exchange with external tools.
+commands: [python, python query, shell, java, javacall, Stata Function Interface]
+aliases: [Python integration, PyStata, shell command, Java plugin, external process, SFI]
+source_topics: [pystata_intro, shell, java_plugin]
+syntax_patterns:
+- python script "analysis.py", args("--input" "data.csv")
+- shell "/usr/bin/tool" "--input" "data.csv"
+- javacall com.example.Plugin run, jars(plugin.jar) args(arguments)
+assumptions:
+- The external runtime, executable, libraries, and versions are available and explicitly identified.
+- Inputs and outputs cross the Stata boundary through documented paths or APIs without exposing secrets or restricted data.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Shell quoting differs across operating systems, and untrusted interpolated text can become command injection.
+- A successful process launch does not prove the external command produced complete or valid output.
+- Python or Java state can persist within a session and make reruns depend on earlier imports or objects.
 workflows:
-- Start with the official help topics attached to External Tools Integration, then tailor the syntax to
-  the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises python and inspect the resulting log.
-related_refs:
-- workflow-best-practices
-- programming-basics
+- Query the runtime and versions, test a minimal no-data call, then add explicit paths, arguments, timeouts, and return-code checks.
+- Exchange only required data through temporary files or documented APIs, validate the returned schema, and clean temporary artifacts.
+validation_case: >-
+  Query Stata's Python integration and execute a no-op shell command, confirming both interfaces return without writing project files.
+validation_mode: stata
+related_refs: [workflow-best-practices, advanced-programming]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  python query
+  assert inlist(r(initialized), 0, 1)
+  assert "`r(execpath)'" != ""
+  shell /usr/bin/true
 provenance:
-  local_help_topics:
-  - python
-  - shell
-  - java_plugin
+  local_help_topics: [pystata_intro, pystata_integration, shell, java_plugin, javacall]
+  local_help_globs: []
   local_help_files:
+  - ado/base/p/pystata_intro.sthlp
+  - ado/base/p/pystata_integration.sthlp
   - ado/base/s/shell.sthlp
   - ado/base/j/java_plugin.sthlp
+  - ado/base/j/javacall.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/external-tools-integration.md
   upstream_only: false
+  package_only: false
+  reviewed: true

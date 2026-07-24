@@ -1,31 +1,49 @@
 slug: panel-data
 skill: core
 section: Statistics and Econometrics
-title: Panel Data Analysis in Stata
-trigger: Use when the user needs built-in Stata help with panel data analysis in stata.
-commands: &id001
-- xtset
-- xtreg
-- xt
-source_topics: *id001
-syntax_patterns: []
+order: 240
+title: Panel-Data Setup and Regression
+trigger: >-
+  Use for declaring panel-time structure, checking duplicate panel periods, fixed- or random-effects models,
+  between estimators, population-averaged models, and panel-aware lags with xtset and xtreg.
+commands: [xtset, xtdescribe, xtsum, xtreg, hausman]
+aliases: [panel data, longitudinal data, fixed effects, random effects, within estimator, FE, RE]
+source_topics: [xtset, xtreg, xt]
+syntax_patterns:
+- isid panel_id time
+- xtset panel_id time
+- xtreg outcome exposure i.time, fe vce(cluster panel_id)
+- xtreg outcome exposure i.time, re vce(cluster panel_id)
+assumptions:
+- Panel and time identifiers uniquely define observations and represent repeated measures of the same units.
+- Unobserved-effect, strict-exogeneity, and dependence assumptions match the selected FE, RE, or population-averaged estimator.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- xtset requires at most one observation per panel-time pair; duplicates often signal an unresolved key.
+- Fixed effects do not estimate coefficients for variables constant within panel and rely only on within-panel variation.
+- Serial correlation and within-panel dependence usually require panel-level clustering or another justified variance model.
 workflows:
-- Start with the official help topics attached to Panel Data Analysis in Stata, then tailor the syntax
-  to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises xtset and inspect the resulting log.
-related_refs:
-- linear-regression
-- difference-in-differences
+- Assert panel-time uniqueness, xtset the data, and inspect gaps, balance, and within/between variation before modeling.
+- Match FE, RE, or population-averaged estimation to the estimand and assumptions rather than choosing from a single specification test.
+validation_case: >-
+  Construct a balanced panel, assert panel-time uniqueness, declare it with xtset, and fit a fixed-effects model
+  with panel-clustered standard errors.
+validation_mode: stata
+related_refs: [linear-regression, difference-in-differences]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  set obs 60
+  generate int id = ceil(_n/3)
+  bysort id: generate int time = _n
+  generate double x = mod(id + time, 7)
+  generate double y = id/10 + 2*x + time
+  isid id time
+  xtset id time
+  xtreg y x i.time, fe vce(cluster id)
+  assert e(N) == 60
 provenance:
-  local_help_topics:
-  - xtset
-  - xtreg
-  - xt
+  local_help_topics: [xtset, xtreg, xt]
+  local_help_globs: []
   local_help_files:
   - ado/base/x/xtset.sthlp
   - ado/base/x/xtreg.sthlp
@@ -33,3 +51,5 @@ provenance:
   upstream_files:
   - plugins/stata/skills/stata/references/panel-data.md
   upstream_only: false
+  package_only: false
+  reviewed: true

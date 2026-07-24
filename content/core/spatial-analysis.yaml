@@ -1,32 +1,59 @@
 slug: spatial-analysis
 skill: core
 section: Advanced Methods
-title: Spatial Analysis in Stata
-trigger: Use when the user needs built-in Stata help with spatial analysis in stata.
-commands: &id001
-- spmatrix
-- spregress
-source_topics: *id001
-syntax_patterns: []
+order: 640
+title: Spatial Data Setup, Weight Matrices, and Spatial Regression
+trigger: >-
+  Use for declaring spatial data, coordinate systems, spatial identifiers, creating or importing weight matrices,
+  spatial lags, cross-sectional spatial autoregression, and spatial-regression diagnostics.
+commands: [spset, spmatrix create, spmatrix summarize, spgenerate, spregress]
+aliases: [spatial analysis, spatial weights, contiguity matrix, inverse distance, spatial lag, SAR]
+source_topics: [spset, spmatrix, spregress]
+syntax_patterns:
+- spset area_id, coord(x_coordinate y_coordinate)
+- spmatrix create idistance W, normalize(row)
+- spmatrix create contiguity W, normalize(row)
+- spregress outcome covariates, gs2sls dvarlag(W)
+assumptions:
+- Spatial identifiers, coordinates or boundaries, and the weight matrix represent the scientifically relevant neighborhood structure.
+- The spatial dependence terms and exogeneity restrictions match the selected spregress estimator.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Results can change materially with the weight definition and normalization; W is part of the model, not preprocessing trivia.
+- Coordinate-system mistakes make distance matrices meaningless even when commands execute successfully.
+- Spatially lagged outcomes, covariates, and errors encode different data-generating assumptions.
 workflows:
-- Start with the official help topics attached to Spatial Analysis in Stata, then tailor the syntax to
-  the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises spmatrix and inspect the resulting log.
-related_refs:
-- graphics
-- data-management
+- Validate unique geography IDs and coordinates, declare with spset, create W, and inspect neighbors and normalization.
+- Fit a nonspatial baseline, estimate the prespecified spatial model, and compare sensitivity to defensible alternative matrices.
+validation_case: >-
+  Declare a small planar coordinate grid, create and summarize a row-normalized inverse-distance matrix,
+  verify all spatial units are represented, and fit a spatial-lag regression with positive observations.
+validation_mode: stata
+related_refs: [data-management, linear-regression]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  set obs 16
+  generate int area_id = _n
+  generate double xcoord = mod(_n-1, 4)
+  generate double ycoord = floor((_n-1)/4)
+  spset area_id, coord(xcoord ycoord)
+  spmatrix create idistance W, normalize(row) replace
+  spmatrix summarize W
+  assert r(n) == 16
+  generate double covariate = xcoord + ycoord
+  generate double outcome = 2 + 0.5*covariate + sin(_n)
+  spregress outcome covariate, gs2sls dvarlag(W)
+  assert e(N) == 16
 provenance:
-  local_help_topics:
-  - spmatrix
-  - spregress
+  local_help_topics: [spset, spmatrix, spmatrix_summarize, spregress]
+  local_help_globs: []
   local_help_files:
+  - ado/base/s/spset.sthlp
   - ado/base/s/spmatrix.sthlp
+  - ado/base/s/spmatrix_summarize.sthlp
   - ado/base/s/spregress.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/spatial-analysis.md
   upstream_only: false
+  package_only: false
+  reviewed: true

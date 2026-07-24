@@ -1,57 +1,84 @@
 slug: event-study
 skill: packages
 section: Graphics and Diagnostics
-title: Event Study Packages in Stata
-trigger: Use when the user asks about eventstudyinteract or a related community-package workflow.
+order: 220
+title: Event-Study Estimation and Plotting Packages
+trigger: Use when the user asks for eventstudyinteract, eventdd, event_plot, a Sun-Abraham interaction-weighted estimator, dynamic treatment effects, lead/lag plots, endpoint binning, pretrend tests, or modern event studies under staggered adoption.
+aliases:
+- eventstudyinteract
+- eventdd
+- event_plot
+- Sun-Abraham
+- event study
+- leads and lags
 commands:
 - eventstudyinteract
+- eventdd
+- event_plot
 source_topics:
 - eventstudyinteract
-syntax_patterns: []
+- eventdd
+- event_plot
+syntax_patterns:
+- eventstudyinteract outcome leadvars lagvars, cohort(first_treat) control_cohort(never_treated) absorb(unit time) vce(cluster unit)
+- eventdd outcome controls, timevar(relative_time) baseline(-1) leads(4) lags(6) cluster(unit)
+- event_plot stored_result, default_look together
+assumptions:
+- Treatment timing, never/not-yet-treated controls, anticipation window, and reference period are defined before constructing event-time indicators.
+- Each plotted horizon has adequate treated and comparison support, and standard errors are clustered at the treatment-assignment level.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- A conventional two-way fixed-effects lead/lag regression can mix cohort-specific effects under staggered treatment; choose an estimator that matches the design.
+- Omit exactly one reference period and bin sparse tails deliberately. Collinearity-driven omissions are not a substitute for a prespecified baseline.
+- A nonsignificant joint pretrend test has limited power and does not prove parallel trends; show estimates, uncertainty, and support.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises eventstudyinteract and inspect the resulting
-  log.
+- Preflight the chosen estimator and its dependencies with which/ado describe; ask before installing or updating them.
+- Validate first-treatment timing and irreversible adoption, create and tabulate event time, choose supported horizons and controls, then estimate.
+- Store the result, test the prespecified preperiod coefficients, and plot with a zero line, labeled reference period, and support-aware endpoints.
+validation_case: On a bounded nlswork panel, construct first union year and event-time indicators, run eventstudyinteract with never-treated controls and clustered errors, and require an error-free log.
+validation_mode: stata
 related_refs:
 - difference-in-differences
+- did
 - graphics
+preflight_commands:
+- which require
+- which eventstudyinteract
+- which reghdfe
+- which avar
+- ado describe require
+- ado describe eventstudyinteract
 install_commands:
-- net install require, from("https://raw.githubusercontent.com/sergiocorreia/stata-require/master/src/")
-  replace
-- net install ftools, from("https://raw.githubusercontent.com/sergiocorreia/ftools/master/src/")
-  replace
-- ftools, compile
-- 'mata: mata mlib index'
-- net install reghdfe, from("https://raw.githubusercontent.com/sergiocorreia/reghdfe/master/src/")
-  replace
-- capture noisily reghdfe, compile
-- ssc install avar, replace
-- ssc install eventstudyinteract, replace
+- net install require, from("https://raw.githubusercontent.com/sergiocorreia/stata-require/7ee750b12f9c51ec8a879445cbf39357c308bdee/src/")
+- ssc install ftools
+- ssc install reghdfe
+- ssc install avar
+- ssc install eventstudyinteract
+- ssc install eventdd
+- ssc install event_plot
 smoke_test: |
   webuse nlswork, clear
   keep if inrange(year, 70, 82)
-  gen union_year = year if union == 1
+  generate union_year = year if union == 1
   bysort idcode: egen first_union = min(union_year)
   drop union_year
-  gen ry = year - first_union
-  gen never_union = first_union == .
-  forvalues k = 3(-1)2 {
-      gen g_`k' = ry == -`k'
-  }
-  gen g0 = ry == 0
-  forvalues k = 1/2 {
-      gen g`k' = ry == `k'
-  }
-  eventstudyinteract ln_wage g_3 g_2 g0 g1 g2, cohort(first_union) control_cohort(never_union) covariates(south) absorb(idcode year) vce(cluster idcode)
+  generate rel_year = year - first_union
+  generate never_union = missing(first_union)
+  generate lead3 = rel_year == -3
+  generate lead2 = rel_year == -2
+  generate event0 = rel_year == 0
+  generate lag1 = rel_year == 1
+  generate lag2 = rel_year == 2
+  eventstudyinteract ln_wage lead3 lead2 event0 lag1 lag2, cohort(first_union) control_cohort(never_union) absorb(idcode year) vce(cluster idcode)
+  assert e(N) > 0
 provenance:
+  reviewed: true
   local_help_topics:
   - eventstudyinteract
+  - eventdd
+  - event_plot
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/event-study.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

@@ -1,107 +1,92 @@
 #!/usr/bin/env python3
+"""Report content gaps without mutating reviewed content.
+
+The pre-PR2 scaffold command merged harvested/default text into curated YAML.
+That made generated candidates an accidental publication authority.  This
+compatibility command is now deliberately read-only with respect to content/.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
 import argparse
+
 from libskillpack import (
     CONTENT_ROOT,
-    MANIFEST_ROOT,
     RAW_ROOT,
-    REPO_ROOT,
-    extract_syntax_patterns,
-    extract_warning_lines,
-    read_text,
-    read_yaml,
+    iter_content_entries,
+    load_skill_config,
     write_yaml,
 )
 
 
-def default_workflows(kind: str, title: str) -> list[str]:
-    if kind == "core":
-        return [
-            f"Start with the official help topics attached to {title}, then tailor the syntax to the current dataset.",
-            "Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.",
+DEFAULT_REPORT = RAW_ROOT / "candidates" / "content-review-gaps.yaml"
+EXPECTED_FIELDS = (
+    "slug",
+    "skill",
+    "section",
+    "order",
+    "title",
+    "trigger",
+    "aliases",
+    "commands",
+    "source_topics",
+    "syntax_patterns",
+    "gotchas",
+    "assumptions",
+    "workflows",
+    "validation_case",
+    "validation_mode",
+    "related_refs",
+    "install_commands",
+    "smoke_test",
+    "provenance",
+)
+
+
+def build_gap_report() -> dict:
+    config = load_skill_config()
+    entries: list[dict] = []
+    for skill_key, path, content in iter_content_entries(CONTENT_ROOT, config):
+        missing = [field for field in EXPECTED_FIELDS if field not in content]
+        empty = [
+            field
+            for field in ("aliases", "syntax_patterns", "gotchas", "assumptions", "workflows")
+            if field in content and not content[field]
         ]
-    if kind == "packages":
-        return [
-            "Confirm the package and any dependencies are installed on the active adopath before writing code that uses it.",
-            "Pair the package command with a small reproducible example before folding it into a larger do-file.",
-        ]
-    return [
-        "Plan the interface and the validation path before writing plugin code or wrapper ado-files.",
-        "Use batch-mode Stata logs and compiler output together when debugging plugin failures.",
-    ]
+        entries.append(
+            {
+                "skill": skill_key,
+                "slug": content.get("slug", path.stem),
+                "content_file": str(path.relative_to(CONTENT_ROOT.parent)),
+                "missing_fields": missing,
+                "empty_curated_fields": empty,
+                "review_required": bool(missing or empty),
+            }
+        )
+    return {"schema_version": 1, "entries": entries}
 
 
-def default_gotchas(kind: str) -> list[str]:
-    if kind == "core":
-        return ["Check missing-value behavior, option defaults, and stored results before chaining commands."]
-    if kind == "packages":
-        return ["Package syntax and dependencies vary across versions; verify the installed help file before finalizing code."]
-    return ["A plugin crash terminates the Stata session, so treat every memory access and return code as high risk."]
-
-
-def scaffold_kind(kind: str, manifest_name: str, content_dir_name: str, force: bool) -> None:
-    manifest = read_yaml(MANIFEST_ROOT / manifest_name)
-    harvest_summary = read_yaml(RAW_ROOT / "stata-help" / "harvest-summary.yaml").get(kind, {})
-    target_dir = CONTENT_ROOT / content_dir_name
-
-    for entry in manifest.get("entries", []):
-        slug = entry["slug"]
-        existing_path = target_dir / f"{slug}.yaml"
-        existing = read_yaml(existing_path) if existing_path.exists() else {}
-        summary = harvest_summary.get(slug, {})
-        normalized_path = summary.get("normalized_file")
-        normalized_text = ""
-        if normalized_path:
-            normalized_text = read_text(REPO_ROOT / normalized_path)
-
-        syntax_patterns = existing.get("syntax_patterns") or extract_syntax_patterns(normalized_text)
-        gotchas = existing.get("gotchas") or extract_warning_lines(normalized_text) or default_gotchas(kind)
-        workflows = existing.get("workflows") or default_workflows(kind, entry["title"])
-
-        scaffold = {
-            "slug": slug,
-            "skill": kind,
-            "section": entry["section"],
-            "title": existing.get("title", entry["title"]),
-            "trigger": existing.get("trigger", entry["trigger"]),
-            "commands": existing.get("commands", entry.get("commands", [])),
-            "source_topics": existing.get("source_topics", entry.get("source_topics", [])),
-            "syntax_patterns": syntax_patterns,
-            "gotchas": gotchas,
-            "workflows": workflows,
-            "validation_case": existing.get("validation_case", entry.get("validation_case")),
-            "related_refs": existing.get("related_refs", entry.get("related_refs", [])),
-            "install_commands": existing.get("install_commands", entry.get("install_commands", [])),
-            "smoke_test": existing.get("smoke_test", entry.get("smoke_test")),
-            "provenance": {
-                "local_help_topics": entry.get("source_topics", []),
-                "local_help_files": summary.get("local_help_files", []),
-                "upstream_files": [entry["upstream_relpath"]] if entry.get("upstream_relpath") else [],
-                "upstream_only": bool(entry.get("allow_upstream_only")),
-            },
-        }
-
-        if not existing_path.exists() or force:
-            write_yaml(existing_path, scaffold)
-            print(f"Scaffolded {existing_path}")
-        else:
-            merged = scaffold | existing
-            merged["provenance"] = existing.get("provenance", {}) | scaffold["provenance"]
-            write_yaml(existing_path, merged)
-            print(f"Refreshed metadata for {existing_path}")
-
-
-def main() -> None:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--force", action="store_true", help="Overwrite existing content files.")
-    args = parser.parse_args()
-
-    scaffold_kind("core", "topic-map.yaml", "core", args.force)
-    scaffold_kind("packages", "package-map.yaml", "packages", args.force)
-    scaffold_kind("plugins", "plugin-map.yaml", "plugins", args.force)
+    parser.add_argument("--report", type=Path, default=DEFAULT_REPORT)
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Retained only to reject the former destructive behavior.",
+    )
+    args = parser.parse_args(argv)
+    if args.force:
+        print("ERROR: --force is retired; curated content is never rewritten.")
+        return 2
+    report = build_gap_report()
+    write_yaml(args.report, report)
+    review_count = sum(
+        1 for entry in report["entries"] if entry["review_required"]
+    )
+    print(f"Wrote {args.report}; {review_count} entries require review")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

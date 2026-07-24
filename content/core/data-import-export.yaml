@@ -1,33 +1,63 @@
 slug: data-import-export
 skill: core
 section: Data Operations
+order: 120
 title: Data Import and Export
-trigger: Use when the user needs built-in Stata help with data import and export.
-commands: &id001
+trigger: >-
+  Use for moving data between Stata and CSV, delimited text, Excel, SAS, SPSS, or other supported formats,
+  including import delimited, import excel, export delimited, and export excel.
+commands:
+- import delimited
+- import excel
+- import sas
+- import spss
+- export delimited
+- export excel
+aliases: [CSV import, Excel import, delimited text, spreadsheet export, import data, export data]
+source_topics:
 - import
 - import_delimited
 - import_excel
 - export
-source_topics: *id001
-syntax_patterns: []
+syntax_patterns:
+- import delimited using "input.csv", varnames(1) clear
+- import excel using "input.xlsx", sheet("Data") firstrow clear
+- export delimited using "output.csv", replace
+- export excel using "output.xlsx", firstrow(variables) replace
+assumptions:
+- The source format, character encoding, delimiter, header convention, and missing-value codes are known or inspectable.
+- The export target can represent the required values and metadata without unacceptable information loss.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Automatic type inference can turn identifiers with leading zeros into numbers or mix numeric and string values.
+- firstrow treats the first Excel row as variable names; invalid names are translated, so inspect the resulting names.
+- replace overwrites the destination, and export commands do not preserve all Stata metadata such as value labels.
 workflows:
-- Start with the official help topics attached to Data Import and Export, then tailor the syntax to the
-  current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises import and inspect the resulting log.
+- Inspect the source delimiter, header row, encoding, missing-value conventions, and identifier columns before import.
+- After import, verify row count, storage types, missingness, and key uniqueness before saving a canonical .dta copy.
+validation_case: >-
+  Export a small labeled dataset to a temporary CSV, import it into a cleared session, and verify row count
+  and numeric values without writing to the repository.
+validation_mode: stata
 related_refs:
 - basics-getting-started
 - data-management
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  input id value
+  1 10
+  2 20
+  3 30
+  end
+  tempfile csv
+  export delimited using `csv', replace
+  clear
+  import delimited using `csv', clear
+  assert _N == 3
+  assert value[3] == 30
 provenance:
-  local_help_topics:
-  - import
-  - import_delimited
-  - import_excel
-  - export
+  local_help_topics: [import, import_delimited, import_excel, export]
+  local_help_globs: []
   local_help_files:
   - ado/base/i/import.sthlp
   - ado/base/i/import_delimited.sthlp
@@ -36,3 +66,5 @@ provenance:
   upstream_files:
   - plugins/stata/skills/stata/references/data-import-export.md
   upstream_only: false
+  package_only: false
+  reviewed: true

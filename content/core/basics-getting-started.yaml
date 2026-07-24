@@ -1,40 +1,71 @@
 slug: basics-getting-started
 skill: core
 section: Data Operations
-title: 'Stata Basics: Getting Started Guide'
-trigger: 'Use when the user needs built-in Stata help with stata basics: getting started guide.'
-commands: &id001
+order: 110
+title: "Stata Basics: Getting Started Guide"
+trigger: >-
+  Use for opening, inspecting, browsing, saving, and reloading Stata datasets, including
+  use, sysuse, describe, summarize, list, browse, save, clear, and first-session orientation.
+commands:
+- use
+- sysuse
+- describe
+- summarize
+- list
+- browse
+- save
+- clear
+aliases: [Stata basics, open dataset, inspect data, browse data, save dataset, sysuse]
+source_topics:
 - use
 - save
 - describe
-- browse
+- edit
 - sysuse
-source_topics: *id001
-syntax_patterns: []
+syntax_patterns:
+- use "analysis.dta", clear
+- sysuse auto, clear
+- describe id outcome exposure
+- save "analysis_copy.dta", replace
+assumptions:
+- The requested input is a Stata-readable dataset and the user has permission to access its path.
+- Opening or saving the dataset will not overwrite the only authoritative copy of raw data.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- use without clear refuses to overwrite unsaved data in memory; verify whether the current data need saving first.
+- browse opens an interactive viewer and is unsuitable as the only inspection step in unattended batch runs.
+- save, replace overwrites an existing file, so use it only for an intentional derived-data target.
 workflows:
-- 'Start with the official help topics attached to Stata Basics: Getting Started Guide, then tailor the
-  syntax to the current dataset.'
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises use and inspect the resulting log.
+- Open a known dataset, inspect its dimensions and variable metadata, and assert basic expectations before analysis.
+- Save transformed data to a new path and reload it to verify that storage types, labels, and row counts survived.
+validation_case: >-
+  Load the bundled auto dataset, verify its observation count and variable metadata, save it to a temporary
+  file, reload it, and assert the count again.
+validation_mode: stata
 related_refs:
 - data-management
 - workflow-best-practices
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  sysuse auto, clear
+  describe price mpg
+  assert _N == 74
+  tempfile copy
+  save `copy'
+  clear
+  use `copy', clear
+  assert _N == 74
 provenance:
-  local_help_topics:
-  - use
-  - save
-  - describe
-  - browse
-  - sysuse
+  local_help_topics: [use, save, describe, edit, sysuse]
+  local_help_globs: []
   local_help_files:
   - ado/base/u/use.sthlp
   - ado/base/s/save.sthlp
   - ado/base/d/describe.sthlp
+  - ado/base/e/edit.sthlp
   - ado/base/s/sysuse.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/basics-getting-started.md
   upstream_only: false
+  package_only: false
+  reviewed: true

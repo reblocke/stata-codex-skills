@@ -1,33 +1,61 @@
 slug: xtabond2
 skill: packages
 section: Estimation Packages
-title: 'xtabond2: Dynamic Panel GMM Estimation'
-trigger: Use when the user asks about xtabond2 or a related community-package workflow.
+order: 190
+title: "xtabond2: Difference and System GMM for Dynamic Panels"
+trigger: Use when the user asks for xtabond2, Arellano-Bond difference GMM, Blundell-Bond system GMM, dynamic panels, gmmstyle()/ivstyle() instruments, collapsed instruments, Windmeijer-corrected two-step errors, AR tests, or Hansen and difference-in-Hansen diagnostics.
+aliases:
+- xtabond2
+- Arellano-Bond
+- Blundell-Bond
+- difference GMM
+- system GMM
+- dynamic panel
 commands:
 - xtabond2
 source_topics:
 - xtabond2
-syntax_patterns: []
+syntax_patterns:
+- xtabond2 outcome L.outcome controls, gmm(L.outcome, lag(2 3) collapse) iv(controls) robust
+- xtabond2 outcome L.outcome controls, gmm(L.outcome endogenous, lag(2 4) collapse) iv(exogenous) twostep robust small
+- xtabond2 outcome L.outcome controls, gmm(L.outcome, lag(2 .) equation(diff)) iv(controls, equation(both)) nolevel robust
+assumptions:
+- The panel has many groups relative to periods and a dynamic specification for which internal instruments are substantively defensible.
+- Serial-correlation and stationarity restrictions needed for the selected difference/system-GMM moment conditions are plausible.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- Instrument proliferation can overfit endogenous variables and weaken Hansen tests; cap lag ranges, collapse instruments, and report instrument count relative to groups.
+- Classify each regressor as endogenous, predetermined, or strictly exogenous before assigning gmm() or iv() instruments.
+- AR(1) in differences is expected, AR(2) threatens moment validity, and a comfortable Hansen p-value is not proof of a valid design.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises xtabond2 and inspect the resulting log.
+- Preflight xtabond2, ranktest, and ado describe xtabond2; ask before installing or updating packages.
+- xtset the panel, inspect gaps and group counts, fit pooled/within benchmarks, then build a parsimonious difference or system-GMM instrument set.
+- Report one- versus two-step choice, robust/small corrections, instrument count, AR tests, Hansen tests, and sensitivity to lag limits and collapse.
+validation_case: Run a collapsed dynamic-panel model on abdata with a bounded lag range, verify positive observations/groups, and require AR and Hansen diagnostics in an error-free log.
+validation_mode: stata
 related_refs:
 - panel-data
 - gmm-estimation
+preflight_commands:
+- which xtabond2
+- which ranktest
+- ado describe xtabond2
 install_commands:
-- ssc install xtabond2, replace
-smoke_test: 'webuse abdata, clear
-
-  xtabond2 n L.n w k, gmm(L.n, lag(2 .)) iv(w k) nolevel robust'
+- ssc install ranktest
+- ssc install xtabond2
+smoke_test: |
+  webuse abdata, clear
+  xtabond2 n L.n w k, gmm(L.n, lag(2 3) collapse) iv(w k) nolevel robust
+  assert e(N) > 0
+  assert e(N_g) > 0
+  assert !missing(e(ar2p))
+  assert !missing(e(hansenp))
 provenance:
+  reviewed: true
   local_help_topics:
   - xtabond2
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/xtabond2.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

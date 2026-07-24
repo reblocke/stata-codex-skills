@@ -4,11 +4,11 @@
 
 It does three things:
 
-1. Pulls topic coverage and routing hints from the upstream [`dylantmoore/stata-skill`](https://github.com/dylantmoore/stata-skill) repository.
-2. Harvests local Stata help files from `/Applications/Stata/ado/base` and normalizes them into a reusable local reference cache.
-3. Renders three Codex-native skills and publishes them into `~/.codex/skills`.
+1. Maintains reviewed, structured skill content in `content/**/*.yaml`.
+2. Produces review candidates from an exact upstream commit, exact local Stata help files, and isolated package metadata without rewriting curated fields.
+3. Renders three Codex-native skills and publishes them into the local Codex skills directory.
 
-The repo is designed to be a distillation pipeline, not a mirror. Upstream material is used for inventory and gap-finding. Local `.sthlp` files are the primary raw source. Final skill content is generated from structured YAML in `content/`, not edited by hand in the generated skill folders.
+The repo is designed to be a distillation pipeline, not a mirror. Upstream material and local `.sthlp` files are evidence for review, but `content/**/*.yaml` is the sole executable publication authority. Manifests and locks record provenance; they cannot add, remove, or alter published routes. Generated skill folders are never edited by hand.
 
 This repository is released under the MIT License. See `LICENSE`.
 
@@ -22,9 +22,13 @@ This repo builds three skills:
 
 Current content inventory:
 
-- 37 core references in `content/core/`
-- 20 package references in `content/packages/`
+- 38 core references in `content/core/`
+- 19 package references in `content/packages/`
 - 6 plugin references in `content/plugins/`
+
+That is 63 canonical references. The former package diagnostics route remains
+available as a generated compatibility alias to the canonical built-in
+regression-diagnostics reference and does not count as a 64th reference.
 
 Generated skills are written to `build/generated/` and published into:
 
@@ -36,7 +40,7 @@ Generated skills are written to `build/generated/` and published into:
 
 - Treat the YAML files under `content/` as the source of truth.
 - Do not hand-edit generated `SKILL.md` files or generated reference pages.
-- Keep provenance explicit. Each content file records which local help topics and upstream files it was distilled from.
+- Keep provenance explicit. Each content file records exact local help selectors and upstream files; checked locks record source revisions and file hashes.
 - Prefer local Stata help over upstream prose whenever equivalent coverage exists.
 - Use isolated validation directories and temporary Stata `PLUS` paths so validation does not pollute your normal Stata environment.
 
@@ -48,11 +52,13 @@ stata-codex-skills/
 │   ├── core/          # editable YAML source for built-in Stata topics
 │   ├── packages/      # editable YAML source for community packages
 │   └── plugins/       # editable YAML source for plugin workflows
-├── manifests/         # generated topic/package/plugin maps
+├── config/            # deterministic skill names, sections, and compatibility routes
+├── locks/             # reviewed upstream, Stata-help, package, and plugin-SDK locks
+├── manifests/         # generated provenance indexes; never publication authority
 ├── templates/         # Jinja templates for SKILL.md and reference pages
 ├── scripts/           # fetch, harvest, scaffold, render, lint, publish, validate
-├── tests/             # Stata smoke tests and prompt-trigger examples
-├── raw/               # harvested upstream repo + normalized Stata help (gitignored)
+├── tests/             # unit tests and structured routing cases
+├── raw/               # upstream/help/lock review candidates (gitignored)
 └── build/             # generated skill folders before publish (gitignored)
 ```
 
@@ -80,31 +86,26 @@ The checked-in `Makefile` currently defaults to:
 That path is machine-specific. On any machine where it does not exist, or where you want to use a different interpreter, override `PYTHON` explicitly:
 
 ```bash
-make PYTHON=$(which python3) all
+make PYTHON=$(which python3) check
 ```
 
 If you change the checked-in `Makefile`, keep it consistent with your local Python setup.
 
 ## Quick start
 
-Build the manifests, harvest local help, scaffold content, render the skills, and lint the result:
+Render the reviewed content and run the offline checks:
 
 ```bash
 cd ~/src/stata-codex-skills
 PYTHON=$(which python3)
-make PYTHON="$PYTHON" all
+make PYTHON="$PYTHON" render check
 ```
 
-Publish the generated skills into Codex:
-
-```bash
-make PYTHON="$PYTHON" publish
-```
-
-Run the validation suite:
+Run licensed/network integration validation before publishing:
 
 ```bash
 make PYTHON="$PYTHON" validate
+make PYTHON="$PYTHON" publish
 ```
 
 Useful targeted validation commands:
@@ -181,14 +182,9 @@ Option 2: clone this repo and publish the skills locally:
 git clone https://github.com/reblocke/stata-codex-skills.git ~/src/stata-codex-skills
 cd ~/src/stata-codex-skills
 PYTHON=$(which python3)
-make PYTHON="$PYTHON" all
-make PYTHON="$PYTHON" publish
-```
-
-If you want validation as well:
-
-```bash
+make PYTHON="$PYTHON" render check
 make PYTHON="$PYTHON" validate
+make PYTHON="$PYTHON" publish
 ```
 
 After `make publish`, the skill folders should exist under `~/.codex/skills/` unless you published to a custom destination. Restart Codex if the skills were not already installed on that machine.
@@ -216,11 +212,12 @@ If the skills are already installed on a machine and you want to update them aft
 cd ~/src/stata-codex-skills
 git pull
 PYTHON=$(which python3)
-make PYTHON="$PYTHON" all
+make PYTHON="$PYTHON" render check
+make PYTHON="$PYTHON" validate
 make PYTHON="$PYTHON" publish
 ```
 
-Run `make validate` as well if you changed package metadata, rendering logic, or anything that affects Stata execution.
+Licensed Stata and network access are required for `make validate`.
 
 ### What is and is not repository-specific
 
@@ -240,7 +237,7 @@ Not repository-specific:
 If collaborators will use these skills, the minimum setup note to give them is:
 
 1. Clone `stata-codex-skills`.
-2. Run `make PYTHON=$(which python3) all` and `make PYTHON=$(which python3) publish`.
+2. Run `make PYTHON=$(which python3) render check`, `make PYTHON=$(which python3) validate`, and `make PYTHON=$(which python3) publish`.
 3. Confirm the skill folders exist in `~/.codex/skills/` or `$CODEX_HOME/skills/`.
 4. In the analysis repository, add `AGENTS.md` guidance that names the Stata skills explicitly.
 
@@ -250,24 +247,27 @@ Without step 2, an `AGENTS.md` file can mention the skills but Codex will not be
 
 When you update the repo, the normal order is:
 
-1. `make fetch`
-2. `make harvest`
-3. `make scaffold`
-4. Edit the YAML files in `content/`
-5. `make render`
-6. `make lint`
-7. `make publish`
-8. `make validate`
+1. Edit the reviewed YAML files in `content/`.
+2. Regenerate structured cases with `scripts/render_prompt_cases.py`.
+3. `make render`
+4. `make check`
+5. `make validate`
+6. `make publish`
 
-Use `make all` as a shortcut for steps 1 through 6.
+Fetching upstream material, harvesting help, scaffolding candidates, and
+refreshing locks are explicit maintenance operations. Review their ignored
+candidate reports before promoting any source or lock change.
 
 ## What each script does
 
-- `scripts/fetch_upstream.py`: clones or refreshes the upstream repo and rebuilds the manifest files
-- `scripts/harvest_stata_help.py`: copies matching local `.sthlp` files and writes normalized Markdown under `raw/stata-help/normalized/`
-- `scripts/scaffold_content.py`: creates or refreshes YAML stubs for topics defined in the manifests
+- `scripts/fetch_upstream.py`: refreshes the ignored upstream checkout and records its exact resulting commit in a review candidate without changing curated content
+- `scripts/harvest_stata_help.py`: resolves only exact help names or declared globs and writes a reviewable candidate report
+- `scripts/scaffold_content.py`: reports missing or empty curated fields and never rewrites content
 - `scripts/render_skills.py`: renders the three generated skill folders from the YAML content and Jinja templates
-- `scripts/lint_skill_pack.py`: validates YAML structure, provenance, generated routing, and frontmatter
+- `scripts/render_prompt_cases.py`: deterministically generates structured routing fixtures from every canonical reference plus boundary cases
+- `scripts/refresh_locks.py`: writes ignored lock candidates for explicit review; it never promotes them
+- `scripts/verify_locks.py`: verifies checked provenance locks, with optional live local/network checks
+- `scripts/lint_skill_pack.py`: validates schema quality, exact provenance, locks, prompt cases, generated routing, and metadata
 - `scripts/publish_local.py`: copies generated skill folders into `~/.codex/skills`
 - `scripts/validate_skill_pack.py`: runs static lint, Stata smoke tests, package install tests, and plugin compilation tests
 
@@ -303,20 +303,24 @@ before compilation. Plugin execution remains an explicit integration test
 because the official sample currently hangs at the plugin call on this local
 Stata/macOS loader boundary.
 
-## Current status as of March 23, 2026
+## Current status as of July 24, 2026
 
 ### Static and core validation
 
-- Static lint: pass
-- `stata-core` smoke test: pass
+- Static schema, provenance, lock, prompt-case, and generated-drift lint: pass
+- Python unit tests: 38 passed
+- Structured routing cases: 76 (63 canonical plus 13 boundary cases)
+- Fresh-agent forward routing: 76/76 selected the expected route and no forbidden route
+- `stata-core`: all 38 content-defined smoke tests passed
 - `stata-core` validator path handling: pass when the repo lives in a path with spaces
 
 ### Full package sweep
 
-After tightening package metadata, install sources, and smoke tests, the full 20-package sweep was rerun. Result:
+The full package gate contains 19 canonical references plus the generated
+historical diagnostics compatibility route. Result:
 
-- 20 packages passed
-- 0 packages failed
+- 20 checks passed
+- 0 checks failed
 
 Packages that passed:
 
@@ -324,7 +328,7 @@ Packages that passed:
 - `binsreg`
 - `coefplot`
 - `data-manipulation`
-- `diagnostics`
+- `diagnostics` compatibility alias to built-in regression diagnostics
 - `did`
 - `estout`
 - `event-study`
@@ -346,7 +350,8 @@ The package metadata changes that mattered most were:
 - `binsreg` and `nprobust`: switched from stale `ssc install` paths to the current NP Packages `net install` URLs
 - `nprobust`: smoke test now exercises the actual command family (`lprobust`, `kdrobust`) instead of the package name
 - `ivreg2`: installs `ranktest` before the smoke test
-- `reghdfe`: installs `require`, `ftools`, and `reghdfe` from the current upstream sources and compiles `ftools`
+- `rdrobust`: installs the suite from exact official GitHub commits after a newer SSC distribution failed its own Mata runtime
+- `reghdfe`: installs pinned `require`, `ftools`, and `reghdfe` sources and compiles `ftools`
 - `event-study`: uses a valid `eventstudyinteract` example based on the documented `nlswork` workflow
 - `synth`: uses a synthetic local panel dataset instead of relying on `webuse synth_smoking`
 

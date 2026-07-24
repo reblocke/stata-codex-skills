@@ -14,11 +14,15 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONTENT_ROOT = REPO_ROOT / "content"
+CONFIG_ROOT = REPO_ROOT / "config"
+LOCK_ROOT = REPO_ROOT / "locks"
 MANIFEST_ROOT = REPO_ROOT / "manifests"
 RAW_ROOT = REPO_ROOT / "raw"
 BUILD_ROOT = REPO_ROOT / "build" / "generated"
 TEMPLATES_ROOT = REPO_ROOT / "templates"
 TESTS_ROOT = REPO_ROOT / "tests"
+SKILL_CONFIG_PATH = CONFIG_ROOT / "skills.yaml"
+PROMPT_CASES_PATH = TESTS_ROOT / "prompts" / "cases.yaml"
 UPSTREAM_REPO_URL = "https://github.com/dylantmoore/stata-skill.git"
 UPSTREAM_REPO_DIR = RAW_ROOT / "upstream" / "stata-skill"
 STATA_ROOT = Path("/Applications/Stata")
@@ -45,6 +49,50 @@ def read_yaml(path: Path) -> dict:
         return {}
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     return data or {}
+
+
+def sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def load_skill_config(path: Path = SKILL_CONFIG_PATH) -> dict:
+    config = read_yaml(path)
+    if not isinstance(config, dict):
+        raise ValueError(f"{path}: expected a YAML mapping")
+    return config
+
+
+def iter_content_entries(
+    content_root: Path = CONTENT_ROOT,
+    config: dict | None = None,
+) -> list[tuple[str, Path, dict]]:
+    """Return reviewed content entries without consulting generated manifests."""
+
+    config = config or load_skill_config()
+    entries: list[tuple[str, Path, dict]] = []
+    for skill_key, skill in config.get("skills", {}).items():
+        content_dir = content_root / skill["content_dir"]
+        for path in sorted(content_dir.rglob("*.yaml")):
+            data = read_yaml(path)
+            entries.append((skill_key, path, data))
+    return entries
+
+
+def content_entries_by_skill(
+    content_root: Path = CONTENT_ROOT,
+    config: dict | None = None,
+) -> dict[str, list[dict]]:
+    config = config or load_skill_config()
+    grouped = {skill_key: [] for skill_key in config.get("skills", {})}
+    for skill_key, path, data in iter_content_entries(content_root, config):
+        entry = dict(data)
+        entry["_source_path"] = path
+        grouped[skill_key].append(entry)
+    return grouped
 
 
 def write_yaml(path: Path, data: dict) -> None:
@@ -85,48 +133,78 @@ def relative_to_stata(path: Path) -> str:
     return str(path.relative_to(STATA_ROOT))
 
 
-def normalized_key(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "", value.lower())
-
-
 @lru_cache(maxsize=1)
 def help_index() -> dict[str, list[Path]]:
     index: dict[str, list[Path]] = {}
     if not STATA_ADO_BASE.exists():
         return index
     for path in STATA_ADO_BASE.rglob("*"):
-        if path.suffix.lower() not in {".sthlp", ".hlp"}:
+        if path.suffix.lower() != ".sthlp":
             continue
         index.setdefault(path.stem.lower(), []).append(path)
     return index
 
 
-def find_help_files_for_topic(topic: str) -> list[Path]:
+def find_help_files_exact(
+    exact_stems: list[str],
+    declared_globs: list[str] | None = None,
+) -> tuple[list[Path], list[str]]:
+    """Resolve only exact .sthlp stems and explicitly declared .sthlp globs.
+
+    The second return value contains selectors that matched nothing.  No
+    normalization, prefix matching, or substring matching is permitted because
+    those behaviors previously attached unrelated help files to curated topics.
+    """
+
     if not STATA_ADO_BASE.exists():
-        return []
-    topic = topic.strip()
-    if not topic:
-        return []
-    if "*" in topic or "?" in topic:
-        return sorted(STATA_ADO_BASE.rglob(topic))
+        return [], [*exact_stems, *(declared_globs or [])]
 
-    exact = sorted(help_index().get(topic.lower(), []))
-    if exact:
-        return exact
-
-    wanted = normalized_key(topic)
     matches: list[Path] = []
-    for stem, paths in help_index().items():
-        normalized_stem = normalized_key(stem)
-        if normalized_stem == wanted or normalized_stem.startswith(wanted) or wanted in normalized_stem:
-            matches.extend(paths)
+    missing: list[str] = []
+    for stem in exact_stems:
+        selector = stem.strip()
+        if not selector:
+            missing.append(stem)
+            continue
+        if any(token in selector for token in ("*", "?", "[", "]", "/", "\\")):
+            missing.append(selector)
+            continue
+        exact = sorted(help_index().get(selector.lower(), []))
+        if exact:
+            matches.extend(exact)
+        else:
+            missing.append(selector)
+
+    for pattern in declared_globs or []:
+        if (
+            not pattern
+            or Path(pattern).is_absolute()
+            or ".." in Path(pattern).parts
+            or not pattern.endswith(".sthlp")
+            or not any(token in pattern for token in ("*", "?", "["))
+        ):
+            missing.append(pattern)
+            continue
+        resolved = sorted(path for path in STATA_ADO_BASE.glob(pattern) if path.is_file())
+        if resolved:
+            matches.extend(resolved)
+        else:
+            missing.append(pattern)
+
     unique: list[Path] = []
     seen: set[Path] = set()
     for path in sorted(matches):
         if path not in seen:
             unique.append(path)
             seen.add(path)
-    return unique
+    return unique, missing
+
+
+def find_help_files_for_topic(topic: str) -> list[Path]:
+    """Backward-compatible exact resolver; fuzzy matching is intentionally gone."""
+
+    files, _ = find_help_files_exact([topic])
+    return files
 
 
 def unique_list(items: list[str]) -> list[str]:

@@ -1,34 +1,65 @@
 slug: binsreg
 skill: packages
 section: Estimation Packages
-title: 'BINSREG: Binscatter Estimation and Inference'
-trigger: Use when the user asks about binsreg or a related community-package workflow.
+order: 110
+title: "binsreg Suite: Binned-Scatter Estimation and Inference"
+trigger: Use when the user asks for binsreg, binslogit, binsprobit, binsqreg, binstest, binspwc, binsregselect, a binscatter replacement, data-driven bin selection, or inference for a binned relationship.
+aliases:
+- binsreg
+- binslogit
+- binsprobit
+- binsqreg
+- binstest
+- binspwc
+- binsregselect
+- binscatter
 commands:
 - binsreg
+- binslogit
+- binsprobit
+- binsqreg
+- binstest
+- binspwc
+- binsregselect
 source_topics:
 - binsreg
-syntax_patterns: []
+syntax_patterns:
+- binsreg depvar xvar controls, dots(0 0) line(3 3) ci(3 3)
+- binslogit depvar xvar controls, nolink ci(3 3)
+- binsqreg depvar xvar controls, quantile(0.5) ci(3 3)
+- binstest depvar xvar controls, testmodelpoly(1)
+- binspwc depvar xvar controls, by(groupvar)
+assumptions:
+- The running variable has enough support for the requested bins and subgroup comparisons.
+- Covariates, outcome family, derivative order, and inferential target are specified before selecting bins or polynomial orders.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- Controls belong directly in binsreg; residualizing the outcome and running variable separately is generally not equivalent to the package's covariate-adjusted estimator.
+- Bin count, polynomial orders, derivative order, and confidence-band choices answer different questions. Do not tune them only for visual smoothness.
+- Group comparisons require common support and an interpretable by() variable; inspect subgroup sample sizes before relying on binspwc.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises binsreg and inspect the resulting log.
+- Preflight with which binsreg and ado describe binsreg, then obtain authorization before installing the pinned source in the active environment.
+- Plot the raw relationship, select bins or assess specification with binsregselect/binstest, then fit the final curve and uncertainty display.
+- Keep estimation options and graph styling separate so a visual revision cannot silently alter the estimand.
+validation_case: Run binsreg on price versus mpg in auto.dta using the immutable package source, verify the command returns without r() errors, and retain no graph or data artifact outside the temporary run directory.
+validation_mode: stata
 related_refs:
-- graphics
 - nonparametric-methods
+- graphics
+preflight_commands:
+- which binsreg
+- ado describe binsreg
 install_commands:
-- net install binsreg, from("https://raw.githubusercontent.com/nppackages/binsreg/master/stata")
-  replace
-smoke_test: 'sysuse auto, clear
-
-  binsreg price mpg'
+- net install binsreg, from("https://raw.githubusercontent.com/nppackages/binsreg/1f0dbb8bc0b477fc24f300c538810a696df0792e/stata")
+smoke_test: |
+  sysuse auto, clear
+  binsreg price mpg, dots(0 0) line(3 3)
 provenance:
+  reviewed: true
   local_help_topics:
   - binsreg
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/binsreg.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

@@ -1,0 +1,128 @@
+schema_version: 1
+repository:
+  url: https://github.com/dylantmoore/stata-skill.git
+  commit: 33a7efc85e92cd30edc7b907f1deb9d7038397bc
+  expected_commit: 33a7efc85e92cd30edc7b907f1deb9d7038397bc
+files:
+  plugins/stata-c-plugins/skills/stata-c-plugins/references/cpp_plugins.md:
+    sha256: d9be81b90f07cd8c49d8f50b32f65d4da3b2e945709dfd990c78018ea6f1d668
+  plugins/stata-c-plugins/skills/stata-c-plugins/references/packaging_and_help.md:
+    sha256: 14e8c1188e6e770a0a3127cb76f9d9ab7a935bbc4dd5ff44b7e1a40f7555527d
+  plugins/stata-c-plugins/skills/stata-c-plugins/references/performance_patterns.md:
+    sha256: e52fa3c9704581a0a7dfb54ab893d4172df821b5227b2d3f91b04a7113888a61
+  plugins/stata-c-plugins/skills/stata-c-plugins/references/testing_strategy.md:
+    sha256: 8d7bc0be436a3747e64b9a36cd73fc9ceec87f650640cdb8d783f8529517443a
+  plugins/stata-c-plugins/skills/stata-c-plugins/references/translation_workflow.md:
+    sha256: b6251bfa7a1638f7a3c222460b36ccaf2d5cf654d6c2b66615f97a95a01e4e8d
+  plugins/stata/skills/stata/packages/asdoc.md:
+    sha256: 04a17e648f26393b155605954a8811547e7a1fd0bed24809b64fc835444da7da
+  plugins/stata/skills/stata/packages/binsreg.md:
+    sha256: 4dad81e9ffadd2db81ce6e2f4545b7cbb5ec130cdd7c958f3f35f7d364cc59da
+  plugins/stata/skills/stata/packages/coefplot.md:
+    sha256: f5d4a312aa59082a5b4da29c15db23841e5f299b78960350859625dafb1fd44b
+  plugins/stata/skills/stata/packages/data-manipulation.md:
+    sha256: cd68af118b7d72e28e59e2c9b1b12c6ecab58d02cc0ab050e373a3d1d3a445b1
+  plugins/stata/skills/stata/packages/did.md:
+    sha256: cba87ad7bd411e2632a94660e61b6092bd68e93fee62421d89d6103546c3c11a
+  plugins/stata/skills/stata/packages/estout.md:
+    sha256: add7bf4393cc4413014c51efb646dfda9bc89081514504ad2b44929437eee932
+  plugins/stata/skills/stata/packages/event-study.md:
+    sha256: 228216e6465d3959f2c8a9bbb73defc03c00e5cf316031d5ef9896969c7c49d4
+  plugins/stata/skills/stata/packages/graph-schemes.md:
+    sha256: 241a93fe44cf48b2459bfd666c2cd1f4649940ce8c4ff24ed3e7bfd33b07efd5
+  plugins/stata/skills/stata/packages/ivreg2.md:
+    sha256: b4611cb6976ece35c7cad5235d03e57cf270eb207059180fd9eda77628c022c0
+  plugins/stata/skills/stata/packages/nprobust.md:
+    sha256: d412f328d97fe712dba3e1715b553fe63c22c3fcf1c79d1f517eb0d8b4861031
+  plugins/stata/skills/stata/packages/outreg2.md:
+    sha256: c387bca1d66150112b8487e44fe8e5642c5e7fdd98612c0c22c1f38f718163ae
+  plugins/stata/skills/stata/packages/package-management.md:
+    sha256: e2caad178599ea2eec0237f8e896df82268d15774e0f32e49c8a2610b46fcd24
+  plugins/stata/skills/stata/packages/psmatch2.md:
+    sha256: 0e4654d6613cba17eccedb0e140c19ea45b855faa264d713c47e10272c31fed3
+  plugins/stata/skills/stata/packages/rdrobust.md:
+    sha256: b88a9d442dd305ee4a7031ef6e90c6be39da367329251cd9eb6240a0381354c7
+  plugins/stata/skills/stata/packages/reghdfe.md:
+    sha256: c39dfdbeeba89cb068d0d8c5928d29b9941c76c0d2936ed23b69660fe7dcca3e
+  plugins/stata/skills/stata/packages/synth.md:
+    sha256: 9262f1337a27061f328b3d7488c70bb44ff4bfd3b8da2d373315b86ed4dd31e4
+  plugins/stata/skills/stata/packages/tabout.md:
+    sha256: 3a19512cadfe876e229de15e7c87e53f21a738938641b7534604543f5ad0d348
+  plugins/stata/skills/stata/packages/winsor.md:
+    sha256: 05259df462dcf60bd8182efee84c9e2e335f5d7f4c90ec0820206013205bb444
+  plugins/stata/skills/stata/packages/xtabond2.md:
+    sha256: 89875c39bb51970c52bfe99d217a24fdf64ae000780fa76fba7213d0af0dd5cc
+  plugins/stata/skills/stata/references/advanced-programming.md:
+    sha256: 7a6505f54d626b232a71dad7ef44f275673a806c8b0745eb8af393133bbcb50e
+  plugins/stata/skills/stata/references/basics-getting-started.md:
+    sha256: 48ddffbb04a02624a203c996fe91d2ce3a5b6baa7575281404a9e445108e6847
+  plugins/stata/skills/stata/references/bootstrap-simulation.md:
+    sha256: 84ccacee8067a32530d903af2877d302a5de404b1bf89e4a33e49525af004966
+  plugins/stata/skills/stata/references/data-import-export.md:
+    sha256: e645c66889ed11d7674a54e4301f1f33e671c82135a63407aa913696960e7dd6
+  plugins/stata/skills/stata/references/data-management.md:
+    sha256: bd0c5ae3f11c3c50db664d9f60c92d4ba727146e53cbe70e65eb85bccd24faf1
+  plugins/stata/skills/stata/references/date-time-functions.md:
+    sha256: c6ca72f674a1f075256697a2cd09dc16c77df5482cc4c759e4929d56510226f3
+  plugins/stata/skills/stata/references/descriptive-statistics.md:
+    sha256: 04e65af4f24e605df6dbef33166cdead577b5190014d2315733cfcd684c62e72
+  plugins/stata/skills/stata/references/difference-in-differences.md:
+    sha256: b20bead4dc2f43dbd8e6664d57e4ad8bbd20a35e42e2a5e97e6a0d097c6ad736
+  plugins/stata/skills/stata/references/external-tools-integration.md:
+    sha256: a0086e29450f0af15a0fd9ce8f08bf26e8fe84756bd3582c599ec0f472372815
+  plugins/stata/skills/stata/references/gmm-estimation.md:
+    sha256: fcec969f6864e54699277845ff2ac9c9ff8ea15b0b443020a26bdd3390cfa72a
+  plugins/stata/skills/stata/references/graphics.md:
+    sha256: 16779234aeaab34558099fec8bc33212f78e333c564ef60776b2845c3b281fbc
+  plugins/stata/skills/stata/references/limited-dependent-variables.md:
+    sha256: 03a1cd00a59248e0feb71b9007c832372febcf52b90dba1e8fbb93a581f3dc2b
+  plugins/stata/skills/stata/references/linear-regression.md:
+    sha256: 65c00d8722d52464d8ce2b4774433ea6697d340f95b585c34f12348023c8ae46
+  plugins/stata/skills/stata/references/machine-learning.md:
+    sha256: 1dba1131687fea746cce9cd01ca2111e87139a62bb8a0eb85cc4e24d16cfc842
+  plugins/stata/skills/stata/references/mata-data-access.md:
+    sha256: d80c314e55f8a8a30fe22084a137b7c6b71efefd43d749a9fbe7a12ef389032d
+  plugins/stata/skills/stata/references/mata-introduction.md:
+    sha256: 5e6fe4140d8397a655ad145caeeb286c56691647a7e6f1204f509db73a38f847
+  plugins/stata/skills/stata/references/mata-matrix-operations.md:
+    sha256: ce15370f45262d23028bf4dce6ae0f580ac98af32a1bed5c7f4a0051912dbbda
+  plugins/stata/skills/stata/references/mata-programming.md:
+    sha256: e899e9bccc3524b487a19e58eb35436a709b018ebd4df86320e966377d8be42c
+  plugins/stata/skills/stata/references/matching-methods.md:
+    sha256: 976a13b3ada12abb0c76d77ca8fb1ffc77a7684c01580b52bf1535e5d6691bce
+  plugins/stata/skills/stata/references/mathematical-functions.md:
+    sha256: e809df58638a1aad9784949830e87a755a2288ce990e972dd3dd023f27b5696b
+  plugins/stata/skills/stata/references/maximum-likelihood.md:
+    sha256: e119c83f5b632783236285275e36a7cce42f2110514ba375e757e0f851edde2c
+  plugins/stata/skills/stata/references/missing-data-handling.md:
+    sha256: 2cff5184d242c06f8b8bdaa92fa05350a1986e4e29a4db0b09877ee5d134da9c
+  plugins/stata/skills/stata/references/nonparametric-methods.md:
+    sha256: 8055966cb1c829b2c91e7de4cf035bfc8a63774f148ffdebd429ab0eac624bc6
+  plugins/stata/skills/stata/references/panel-data.md:
+    sha256: 859b2f0efa3246c085e8ae2d06d8dc3b1a6af0689450e9f831815b51d0ee71d4
+  plugins/stata/skills/stata/references/programming-basics.md:
+    sha256: 8829332352e269c0879a6af90621ee03c7f66bd7cf031fc8128f34ff69286bf5
+  plugins/stata/skills/stata/references/regression-discontinuity.md:
+    sha256: 80e15de269f701ae1af57e425223ee1d314a35df6f59c5deb88eb0af708a1947
+  plugins/stata/skills/stata/references/sample-selection.md:
+    sha256: 0a2959dd2ecdfe89ae8fb6e0bcd2cdeae96d82f7df8f793379b30a799c5b9d12
+  plugins/stata/skills/stata/references/sem-factor-analysis.md:
+    sha256: 836bb36a187d5987ebb0584c289db0076e0fc5b5be947bf81ee0ccc85ae96206
+  plugins/stata/skills/stata/references/spatial-analysis.md:
+    sha256: 410ac69c6360c2f89bc0808ff518e9f42705fe17e46970c6cf658cb4316dd2c2
+  plugins/stata/skills/stata/references/string-functions.md:
+    sha256: cdaab4e091ecda2b8763420afcb67a53ee6ba51a016c6dac8a67f2b8cd152a3f
+  plugins/stata/skills/stata/references/survey-data-analysis.md:
+    sha256: cf9c2bd54dbccaf48ecd584fc1867dc2fd28b04594ce926077c78c9a1e890d6f
+  plugins/stata/skills/stata/references/survival-analysis.md:
+    sha256: f991e4bca54e5531f54231f99856010d12887b5b95c24466c3d227e42783a1ca
+  plugins/stata/skills/stata/references/tables-reporting.md:
+    sha256: bb4554ecda297c552ee2f1b28c43c46cdb05bb704846a4b53f310a2bc35a8f99
+  plugins/stata/skills/stata/references/time-series.md:
+    sha256: f0aa1232bd7d980c3b99db4923f219a0cb1852833eceadfe18df9ad6b5b06e6d
+  plugins/stata/skills/stata/references/treatment-effects.md:
+    sha256: 2128bc27b936ccb0ce8408b678d59069cfab90bccde8f44968de8d716d57f22a
+  plugins/stata/skills/stata/references/variables-operators.md:
+    sha256: a0026c014a00d591f5859076c8ef653554d9482ab7655b3d246a0fa964f1e3cf
+  plugins/stata/skills/stata/references/workflow-best-practices.md:
+    sha256: 36ee372808b8101d8ec3dd7b5872ac2b6f9f3358f7f0b4e31331229090225f76

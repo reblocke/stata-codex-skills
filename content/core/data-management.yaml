@@ -1,11 +1,25 @@
 slug: data-management
 skill: core
 section: Data Operations
+order: 130
 title: Data Management in Stata
-trigger: Use when the user needs built-in Stata help with data management in stata.
-commands: &id001
+trigger: >-
+  Use for generating or replacing variables, validating keys, merging or appending datasets, reshaping,
+  collapsing, detecting duplicates, and constructing grouped variables with egen.
+commands:
 - generate
 - replace
+- isid
+- duplicates
+- merge
+- joinby
+- append
+- reshape
+- collapse
+- egen
+aliases: [merge data, join data, append data, reshape data, collapse data, duplicate keys, data cleaning]
+source_topics:
+- generate
 - merge
 - joinby
 - duplicates
@@ -14,61 +28,61 @@ commands: &id001
 - reshape
 - collapse
 - egen
-source_topics: *id001
 syntax_patterns:
-- isid keyvars
-- duplicates report keyvars
-- merge 1:1 keyvars using "using_data.dta"
-- merge m:1 keyvars using "using_data.dta"
-- merge 1:m keyvars using "using_data.dta"
-- tab _merge
-- assert _merge == 3
-- keep if _merge == 3
-- keep if _merge != 2
-- keep if _merge != 1
-- joinby keyvars using "using_data.dta"
+- isid patient_id visit_date
+- merge m:1 site_id using "sites.dta"
+- joinby firm using "contracts.dta"
+- reshape long measure, i(id) j(time)
+- collapse (mean) mean_price=price, by(group)
+assumptions:
+- Entity and observation keys have a documented meaning and expected cardinality in every input.
+- Data transformations preserve the intended analysis unit or explicitly create a new documented unit.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
-- Verify key uniqueness before choosing a merge type. Use isid when keys should be unique and duplicates
-  report when diagnosing repeated keys.
-- Check for missing key values before merging; a missing key cannot identify a real entity.
-- Stata merge keeps all master and using rows by default. Use _merge to distinguish master-only, using-only,
-  and matched observations before dropping or asserting rows.
-- Avoid merge m:m. It performs positional matching within key groups rather than a relational Cartesian
-  join, so results can depend on sort order even when _merge reports all rows matched.
+- Verify key uniqueness with isid or duplicates before choosing 1:1, m:1, or 1:m merge cardinality.
+- Missing key values can match other missing values and cannot identify real entities; audit them before merging.
+- merge retains master-only and using-only rows by default; inspect _merge before filtering or dropping it.
+- Avoid merge m:m because it performs positional matching within key groups rather than a relational join.
+- collapse replaces the data in memory, so preserve or save a derived copy before destructive aggregation.
 workflows:
-- Start with the official help topics attached to Data Management in Stata, then tailor the syntax to
-  the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-- Choose merge 1:1, m:1, or 1:m from the verified key cardinality, not from the desired output row count.
-- Treat merge as a full outer join unless you explicitly filter afterward. Keep matched rows with _merge
-  == 3, keep master-side rows with _merge != 2, and keep using-side rows with _merge != 1.
-- Use joinby only when every combination within duplicated key groups is substantively meaningful. If
-  merge m:m appears necessary, first look for a missing component of the real key.
-validation_case: Run a small batch-mode example that checks merge key cardinality, inspects _merge, and
-  verifies a joinby Cartesian match count.
+- Determine the real key, assert its cardinality on both datasets, merge, tabulate _merge, and assert the intended disposition.
+- Use joinby only when every within-key combination is substantively meaningful and verify the expected Cartesian row count.
+- Reshape a small copy first, assert the i() identifier, and verify that suffixes or j() values map to the intended occasions.
+validation_case: >-
+  Build small master and using datasets, verify m:1 key cardinality, assert all merge results, and verify a
+  deliberate joinby Cartesian count.
+validation_mode: stata
 related_refs:
 - variables-operators
 - workflow-best-practices
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  tempfile master groups
+  input id group value
+  1 1 10
+  2 1 20
+  3 2 30
+  end
+  isid id
+  save `master'
+  clear
+  input group str4 label
+  1 "one"
+  2 "two"
+  end
+  isid group
+  save `groups'
+  use `master', clear
+  merge m:1 group using `groups'
+  assert _merge == 3
+  drop _merge
+  collapse (mean) mean_value=value, by(group)
+  assert _N == 2
 provenance:
-  local_help_topics:
-  - generate
-  - replace
-  - merge
-  - joinby
-  - duplicates
-  - isid
-  - append
-  - reshape
-  - collapse
-  - egen
+  local_help_topics: [generate, merge, joinby, duplicates, isid, append, reshape, collapse, egen]
+  local_help_globs: []
   local_help_files:
   - ado/base/g/generate.sthlp
-  - ado/base/f/f_regexreplace.sthlp
-  - ado/base/f/f_regexreplaceall.sthlp
-  - ado/base/m/mi_replace0.sthlp
   - ado/base/m/merge.sthlp
   - ado/base/j/joinby.sthlp
   - ado/base/d/duplicates.sthlp
@@ -80,3 +94,5 @@ provenance:
   upstream_files:
   - plugins/stata/skills/stata/references/data-management.md
   upstream_only: false
+  package_only: false
+  reviewed: true

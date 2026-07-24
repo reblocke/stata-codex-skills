@@ -1,34 +1,56 @@
 slug: asdoc
 skill: packages
 section: Tables and Reporting
-title: 'asdoc: Automatic Document Creation in Stata'
-trigger: Use when the user asks about asdoc or a related community-package workflow.
+order: 10
+title: "asdoc: Prefix-Based Word and Text Tables"
+trigger: Use when the user names asdoc or wants to prefix summarize, tabstat, correlate, regress, or other supported Stata commands to build a sequential Word, LaTeX, HTML, or text report.
+aliases:
+- asdoc
+- automatic document creation
+- prefix table export
+- Word table
 commands:
 - asdoc
 source_topics:
 - asdoc
-syntax_patterns: []
+syntax_patterns:
+- asdoc summarize varlist, save(filename.doc) replace
+- asdoc tabstat varlist, by(groupvar) statistics(n mean sd) append
+- asdoc regress depvar indepvars, vce(cluster clustvar) append
+assumptions:
+- The requested output format, destination, table sequence, and overwrite policy are known before the first prefixed command runs.
+- Each underlying Stata command is valid independently of asdoc and uses the intended sample and variance estimator.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- asdoc writes to the current working directory unless save() supplies a path; choose an explicit project output path and never overwrite an unreviewed report.
+- Use replace only for the first table and append thereafter. A misplaced replace silently discards earlier tables.
+- asdoc lays regression models out sequentially; use esttab when side-by-side stored-model comparison is the substantive need.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises asdoc and inspect the resulting log.
+- Run which asdoc and ado describe asdoc first. Ask the user before installing or updating it in their active Stata environment.
+- In automated validation, install only into a temporary PLUS directory and write the test document inside the temporary run directory.
+- Specify the filename, output format, decimal precision, and replace/append lifecycle before generating a multi-table report.
+validation_case: In an isolated batch run, export summary statistics to asdoc_smoke.doc, append a correlation table, confirm the file exists, and require an error-free log.
+validation_mode: stata
 related_refs:
 - estout
 - outreg2
 - tables-reporting
+preflight_commands:
+- which asdoc
+- ado describe asdoc
 install_commands:
-- ssc install asdoc, replace
-smoke_test: 'sysuse auto, clear
-
-  asdoc summarize price mpg, replace'
+- ssc install asdoc
+smoke_test: |
+  sysuse auto, clear
+  asdoc summarize price mpg weight, save(asdoc_smoke.doc) replace
+  asdoc correlate price mpg weight, save(asdoc_smoke.doc) append
+  confirm file "asdoc_smoke.doc"
 provenance:
+  reviewed: true
   local_help_topics:
   - asdoc
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/asdoc.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

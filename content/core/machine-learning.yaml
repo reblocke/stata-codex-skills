@@ -1,35 +1,61 @@
 slug: machine-learning
 skill: core
 section: Advanced Methods
-title: Machine Learning in Stata
-trigger: Use when the user needs built-in Stata help with machine learning in stata.
-commands: &id001
-- lasso
-- elasticnet
-- dsregress
-source_topics: *id001
-syntax_patterns: []
+order: 650
+title: Built-in Predictive Machine Learning and Double-Selection Inference
+trigger: >-
+  Use for penalized linear, logit, probit, or Poisson models; cross-validation or plugin selection;
+  lasso predictions; elastic net; H2O random forests or gradient boosting; and inferential double
+  selection with dsregress.
+commands: [lasso, elasticnet, lassocoef, lassogof, predict, dsregress, h2o init, _h2oframe put, h2oml rfregress, h2oml gbregress]
+aliases: [machine learning, lasso, elastic net, penalized regression, variable selection, double selection, random forest, gradient boosting, h2oml]
+source_topics: [lasso, elasticnet, dsregress, h2o_intro, h2oml, h2oml_rf, h2oml_gbm]
+syntax_patterns:
+- lasso linear outcome candidate_predictors, selection(cv, folds(10))
+- elasticnet linear outcome candidate_predictors, alphas(0.5)
+- dsregress outcome treatment, controls(candidate_controls)
+- predict double prediction
+- _h2oframe put, into(training)
+- h2oml rfregress outcome predictors, cv(5) ntrees(100)
+- h2oml gbregress outcome predictors, cv(5) ntrees(100)
+assumptions:
+- Training and validation observations represent the target deployment population and are split without leakage.
+- Prediction loss or the double-selection estimand is defined before tuning and model comparison.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Lasso-selected variables are unstable under correlated predictors and do not become causal confounders by selection.
+- Ordinary post-selection standard errors after prediction-oriented lasso ignore the selection process.
+- Cross-validation must respect clustering, time order, and preprocessing boundaries to avoid optimistic performance.
+- h2oml commands operate on the current H2O frame rather than directly on the active Stata frame; initialize H2O and transfer only the intended columns.
 workflows:
-- Start with the official help topics attached to Machine Learning in Stata, then tailor the syntax to
-  the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises lasso and inspect the resulting log.
-related_refs:
-- programming-basics
-- workflow-best-practices
+- Define the prediction target and validation scheme, freeze preprocessing, tune on training data, and evaluate once on held-out data.
+- Use dsregress for its inferential target rather than treating a predictive lasso fit as valid treatment-effect inference.
+- For random forests or gradient boosting, initialize H2O, create a named H2O frame, set a reproducible seed, bound the tuning grid, and shut down resources after validation.
+validation_case: >-
+  Fit a deterministic plugin-selected lasso on bundled data, generate predictions, and verify the estimation sample and
+  nonmissing predictions.
+validation_mode: stata
+related_refs: [linear-regression, workflow-best-practices]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  sysuse auto, clear
+  lasso linear price mpg weight length turn displacement, selection(plugin)
+  assert e(N) == 74
+  predict double prediction
+  assert !missing(prediction)
 provenance:
-  local_help_topics:
-  - lasso
-  - elasticnet
-  - dsregress
+  local_help_topics: [lasso, elasticnet, dsregress, h2o_intro, h2oml, h2oml_rf, h2oml_gbm]
+  local_help_globs: []
   local_help_files:
   - ado/base/l/lasso.sthlp
   - ado/base/e/elasticnet.sthlp
   - ado/base/d/dsregress.sthlp
+  - ado/base/h/h2o_intro.sthlp
+  - ado/base/h/h2oml.sthlp
+  - ado/base/h/h2oml_rf.sthlp
+  - ado/base/h/h2oml_gbm.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/machine-learning.md
   upstream_only: false
+  package_only: false
+  reviewed: true

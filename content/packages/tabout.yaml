@@ -1,33 +1,56 @@
 slug: tabout
 skill: packages
 section: Tables and Reporting
-title: 'tabout: Publication-Quality Cross-Tabulations and Summary Tables'
-trigger: Use when the user asks about tabout or a related community-package workflow.
+order: 40
+title: "tabout: Cross-Tabulations and Summary Tables"
+trigger: Use when the user names tabout or needs one-way, two-way, survey-weighted, panelled, or summary-statistic tables exported as text, CSV, LaTeX, or HTML.
+aliases:
+- tabout
+- crosstab export
+- summary table
+- table 1
+- survey table
 commands:
 - tabout
 source_topics:
 - tabout
-syntax_patterns: []
+syntax_patterns:
+- tabout rowvar using filename.txt, c(freq col) f(0 1) replace
+- tabout rowvar colvar using filename.tex, c(freq row col) style(tex) replace
+- tabout groupvar using filename.txt, sum c(mean outcome sd outcome) replace
+assumptions:
+- Row/column variables, denominators, missing-category handling, weights, and totals are defined before export.
+- The c() statistics and f() formats are aligned position by position for the requested output.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- The number and order of f() formats must match the statistics requested in c(); mismatches can misformat a table without changing its values.
+- style(tex) and HTML output require format-specific headings and escaping; validate the emitted source, not only the Stata log.
+- Missing categories, totals, survey design, and weights alter denominators. State those choices explicitly before interpreting percentages.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises tabout and inspect the resulting log.
+- Run which tabout and ado describe tabout first; ask before installing or updating it in the user's environment.
+- Prototype one small table, lock the c(), f(), totals, labels, and missing-value rules, then add panels or survey settings.
+- Render into a temporary output during validation and inspect both file existence and expected cell structure.
+validation_case: Export a two-way auto.dta table with frequencies and row percentages to tabout_smoke.txt, confirm the file exists, and require an error-free log.
+validation_mode: stata
 related_refs:
 - tables-reporting
-- graphics
+- asdoc
+- estout
+preflight_commands:
+- which tabout
+- ado describe tabout
 install_commands:
-- ssc install tabout, replace
-smoke_test: 'sysuse auto, clear
-
-  tabout foreign using tabout_smoke.txt, c(mean price) replace'
+- ssc install tabout
+smoke_test: |
+  sysuse auto, clear
+  tabout foreign rep78 using tabout_smoke.txt, c(freq row) f(0 1) replace
+  confirm file "tabout_smoke.txt"
 provenance:
+  reviewed: true
   local_help_topics:
   - tabout
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/tabout.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

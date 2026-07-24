@@ -1,0 +1,114 @@
+schema_version: 1
+
+source_resolution:
+  exact_stems_field: provenance.local_help_topics
+  explicit_globs_field: provenance.local_help_globs
+  resolved_files_field: provenance.local_help_files
+  source_topics_role: Reader-facing topic labels only; never used for filesystem matching.
+
+skills:
+  core:
+    name: stata-core
+    folder: stata-core
+    content_dir: core
+    route_dir: references
+    heading: Stata Core Skill
+    description: Use when tasks involve built-in Stata commands, do-files, data management, estimation, graphics, or Mata.
+    summary: This skill covers built-in Stata workflows. Load only the references that match the task intent.
+    section_order:
+      - Programming and Mata
+      - Data Operations
+      - Statistics and Econometrics
+      - Causal Inference
+      - Output and Workflow
+      - Advanced Methods
+    validation_modes:
+      - stata
+    rules:
+      - Prefer built-in Stata commands before reaching for a community package.
+      - When running code from the terminal, use batch mode and inspect the generated log file.
+      - Preserve raw data and write cleaned or derived outputs separately.
+      - Validate merge results, missing-value handling, and stored results before chaining commands.
+    critical_gotchas:
+      - title: Missing values
+        body: Numeric missing values sort above all real numbers, so guard comparisons with !missing(...).
+      - title: Comparison syntax
+        body: Use = for assignment and == for comparisons.
+      - title: by-groups
+        body: Use bysort unless the data are already sorted on the grouping variables.
+      - title: Factor variables
+        body: Use i. for categorical variables and c. for continuous interactions.
+      - title: Merge diagnostics
+        body: Inspect _merge before dropping it or asserting matched records.
+    interface:
+      display_name: Stata Core
+      short_description: Built-in Stata workflows, commands, data management, and estimation
+      default_prompt: Use $stata-core for built-in Stata commands and workflows, loading only the references whose aliases and task intent match the request.
+
+  packages:
+    name: stata-packages
+    folder: stata-packages
+    content_dir: packages
+    route_dir: packages
+    heading: Stata Community Packages Skill
+    description: Use when tasks involve community-contributed Stata packages such as reghdfe, estout, rdrobust, synth, or xtabond2.
+    summary: This skill covers community-contributed packages. Confirm installation and load only the package references that match the task intent.
+    section_order:
+      - Tables and Reporting
+      - Estimation Packages
+      - Graphics and Diagnostics
+      - Data and Workflow Utilities
+    validation_modes:
+      - stata
+    rules:
+      - Confirm the package and its dependencies are installed before writing dependent code.
+      - Use an isolated temporary PLUS directory for automated package tests.
+      - Prefer the smallest reproducible example that exercises the required package syntax.
+      - Do not install or update packages in a user's normal Stata environment without authorization.
+    critical_gotchas: []
+    interface:
+      display_name: Stata Packages
+      short_description: Community-contributed Stata package workflows and validation
+      default_prompt: Use $stata-packages for community-contributed Stata packages, routing by command aliases and task intent and checking installation before use.
+
+  plugins:
+    name: stata-c-plugins
+    folder: stata-c-plugins
+    content_dir: plugins
+    route_dir: references
+    heading: Stata C Plugins Skill
+    description: Use when tasks involve building, debugging, packaging, or validating Stata C or C++ plugins.
+    summary: This skill covers Stata C and C++ plugin work. Load only the workflow references that match the requested build or validation task.
+    section_order:
+      - SDK and Entry Points
+      - C++ Wrapping
+      - Packaging and Distribution
+      - Performance Patterns
+      - Testing and Validation
+      - Translation Workflow
+    validation_modes:
+      - compilation
+      - manual-review
+    rules:
+      - Plan the interface and validation path before writing plugin code.
+      - Prefer wrapping an existing C or C++ backend over reimplementing an algorithm.
+      - Catch every exception that could escape stata_call and validate return codes in batch mode.
+      - Treat plugin crashes as high risk because they terminate the Stata session.
+    critical_gotchas: []
+    interface:
+      display_name: Stata C Plugins
+      short_description: Build, package, and validate Stata C and C++ plugins
+      default_prompt: Use $stata-c-plugins for Stata C or C++ plugin work, routing by API aliases and the requested build, packaging, or validation intent.
+
+route_aliases:
+  - from_skill: packages
+    from_route: packages/diagnostics.md
+    aliases:
+      - diagnostics
+      - estat vif
+      - ovtest
+      - linktest
+      - rvfplot
+    task_intent: Built-in regression diagnostics and postestimation checks belong to Stata Core.
+    to_skill: core
+    to_slug: regression-diagnostics

@@ -1,42 +1,69 @@
 slug: string-functions
 skill: core
 section: Data Operations
-title: String Functions in Stata
-trigger: Use when the user needs built-in Stata help with string functions in stata.
-commands: &id001
+order: 150
+title: String and Unicode Functions in Stata
+trigger: >-
+  Use for cleaning, splitting, searching, matching, normalizing, and measuring text with string and Unicode
+  functions, including split, substr(), strpos(), regexm(), ustrregexm(), and ustrlen().
+commands:
+- split
+- substr()
+- strpos()
+- regexm()
+- regexs()
+- ustrregexm()
+- ustrnormalize()
+- ustrlen()
+aliases: [string cleaning, text parsing, regular expression, regex, Unicode, split string]
+source_topics:
 - string_functions
 - split
-- regexm
-- ustrlen
-source_topics: *id001
-syntax_patterns: []
+- f_regexm
+- f_ustrlen
+syntax_patterns:
+- split full_name, parse(" ") generate(name_)
+- generate byte valid = regexm(code, "^[A-Z][0-9]{3}$")
+- generate int characters = ustrlen(ustrnormalize(label, "nfc"))
+assumptions:
+- Text encoding, case sensitivity, normalization, delimiters, and the intended language rules are known.
+- The regular expression or parsing rule is validated against representative valid and invalid examples.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- substr() counts bytes for Unicode text; use Unicode-aware ustr* functions when characters may be multibyte.
+- regexs() returns captures from the most recent successful regexm() evaluation, so generate captures immediately.
+- split may create a variable number of outputs and silently expose inconsistent delimiters or repeated spaces.
 workflows:
-- Start with the official help topics attached to String Functions in Stata, then tailor the syntax to
-  the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises string_functions and inspect the resulting
-  log.
+- Preserve the original text, normalize case and Unicode in a new variable, then validate transformations with frequency tables.
+- Define an anchored regular expression, generate a match flag, inspect nonmatches, and only then extract capture groups.
+validation_case: >-
+  Split a small name field, validate an anchored identifier pattern, and confirm Unicode-aware character lengths.
+validation_mode: stata
 related_refs:
 - data-management
 - date-time-functions
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  input str20 full_name str4 code
+  "Ada Lovelace" "A123"
+  "Grace Hopper" "bad"
+  end
+  split full_name, parse(" ") generate(name_)
+  generate byte valid = regexm(code, "^[A-Z][0-9][0-9][0-9]$")
+  generate int characters = ustrlen(full_name)
+  assert valid[1] == 1
+  assert valid[2] == 0
+  assert name_1[1] == "Ada"
 provenance:
-  local_help_topics:
-  - string_functions
-  - split
-  - regexm
-  - ustrlen
+  local_help_topics: [string_functions, split, f_regexm, f_ustrlen]
+  local_help_globs: []
   local_help_files:
   - ado/base/s/string_functions.sthlp
   - ado/base/s/split.sthlp
   - ado/base/f/f_regexm.sthlp
-  - ado/base/f/f_regexmatch.sthlp
-  - ado/base/f/f_ustrregexm.sthlp
   - ado/base/f/f_ustrlen.sthlp
-  - ado/base/m/mf_ustrlen.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/string-functions.md
   upstream_only: false
+  package_only: false
+  reviewed: true

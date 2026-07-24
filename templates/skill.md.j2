@@ -7,25 +7,46 @@ description: "{{ skill.description }}"
 
 {{ skill.summary }}
 
-## Working Rules
+## Working rules
+
 {% for rule in skill.rules %}
 - {{ rule }}
 {% endfor %}
-
 {% if skill.critical_gotchas %}
-## Critical Gotchas
+
+## Critical gotchas
+
 {% for item in skill.critical_gotchas %}
 - **{{ item.title }}**: {{ item.body }}
 {% endfor %}
 {% endif %}
 
-## Routing Table
+## Routing by aliases and task intent
+
+Choose a route only when both its aliases and task intent fit the request.
+
 {% for section in sections %}
 ### {{ section.name }}
-| File | When to load |
-|------|--------------|
+
+| Route | Aliases | Task intent |
+|---|---|---|
 {% for entry in section.entries %}
-| `{{ entry.route_path }}` | {{ entry.trigger }} |
+| `{{ entry.route_path }}` | {{ entry.routing_aliases | join(", ") }} | {{ entry.trigger }} |
 {% endfor %}
 
 {% endfor %}
+{% if route_aliases %}
+### Compatibility aliases
+
+These routes exist only to redirect older references to their canonical skill.
+
+| Legacy route | Aliases | Canonical route | Task intent |
+|---|---|---|---|
+{% for alias in route_aliases %}
+| `{{ alias.from_route }}` | {{ alias.aliases | join(", ") }} | `{{ alias.target_skill_name }}/{{ alias.target_route }}` | {{ alias.task_intent }} |
+{% endfor %}
+
+{% endif %}
+## Provenance
+
+See `PROVENANCE.md` for the compact source and lock index.

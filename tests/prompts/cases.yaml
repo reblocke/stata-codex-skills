@@ -1,0 +1,689 @@
+schema_version: 1
+cases:
+- id: core-advanced-programming
+  prompt: I need task-specific guidance for ado programming. Use for defining ado-style programs, parsing
+    syntax, respecting if/in and weights, returning r() or e() results, managing program versions, preserving
+    data, and writing estimation-command interfaces.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/advanced-programming.md
+  forbidden_routes: []
+  boundary: false
+- id: core-basics-getting-started
+  prompt: I need task-specific guidance for Stata basics. Use for opening, inspecting, browsing, saving,
+    and reloading Stata datasets, including use, sysuse, describe, summarize, list, browse, save, clear,
+    and first-session orientation.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/basics-getting-started.md
+  forbidden_routes: []
+  boundary: false
+- id: core-bootstrap-simulation
+  prompt: I need task-specific guidance for bootstrap. Use for resampling standard errors or confidence
+    intervals, Monte Carlo studies, repeated data generation, and randomization inference with bootstrap,
+    simulate, permute, postfile, and seeded random draws.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/bootstrap-simulation.md
+  forbidden_routes: []
+  boundary: false
+- id: core-data-import-export
+  prompt: I need task-specific guidance for CSV import. Use for moving data between Stata and CSV, delimited
+    text, Excel, SAS, SPSS, or other supported formats, including import delimited, import excel, export
+    delimited, and export excel.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/data-import-export.md
+  forbidden_routes: []
+  boundary: false
+- id: core-data-management
+  prompt: I need task-specific guidance for merge data. Use for generating or replacing variables, validating
+    keys, merging or appending datasets, reshaping, collapsing, detecting duplicates, and constructing
+    grouped variables with egen.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/data-management.md
+  forbidden_routes: []
+  boundary: false
+- id: core-date-time-functions
+  prompt: I need task-specific guidance for Stata date. Use for converting string dates or timestamps
+    to Stata numeric datetimes, applying %td/%tc formats, extracting components, calculating intervals,
+    and working with daily, monthly, quarterly, or clock time.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/date-time-functions.md
+  forbidden_routes: []
+  boundary: false
+- id: core-descriptive-statistics
+  prompt: I need task-specific guidance for summary statistics. Use for means, medians, ranges, percentiles,
+    frequency tables, cross-tabulations, correlations, codebooks, and distribution checks with summarize,
+    tabulate, tabstat, codebook, correlate, and pwcorr.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/descriptive-statistics.md
+  forbidden_routes: []
+  boundary: false
+- id: core-difference-in-differences
+  prompt: I need task-specific guidance for difference in differences. Use for canonical or panel difference-in-differences
+    with didregress or xtdidregress, treatment timing, group and time definitions, aggregate treatment
+    effects, parallel-trends checks, and Granger-type tests.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/difference-in-differences.md
+  forbidden_routes: []
+  boundary: false
+- id: core-external-tools-integration
+  prompt: I need task-specific guidance for Python integration. Use for calling Python from Stata, PyStata
+    integration, shell commands, Java plugins, environment discovery, quoting paths, subprocess return
+    codes, and controlled data exchange with external tools.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/external-tools-integration.md
+  forbidden_routes: []
+  boundary: false
+- id: core-gmm-estimation
+  prompt: I need task-specific guidance for GMM. Use for one- or multiple-equation moment-condition models,
+    instrument sets, one- and two-step GMM, robust weighting matrices, overidentification tests, and postestimation
+    with gmm.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/gmm-estimation.md
+  forbidden_routes: []
+  boundary: false
+- id: core-graphics
+  prompt: I need task-specific guidance for Stata graph. Use for scatterplots, line and fitted plots,
+    histograms, distributions, confidence intervals, graph combination, schemes, direct labels, axis control,
+    and deterministic graph export.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/graphics.md
+  forbidden_routes: []
+  boundary: false
+- id: core-limited-dependent-variables
+  prompt: I need task-specific guidance for logistic regression. Use for binary, ordinal, multinomial,
+    count, overdispersed-count, and censored outcomes with logit, probit, ologit, mlogit, poisson, nbreg,
+    tobit, margins, and predicted probabilities.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/limited-dependent-variables.md
+  forbidden_routes: []
+  boundary: false
+- id: core-linear-regression
+  prompt: I need task-specific guidance for reg. Use for ordinary least squares, robust or clustered standard
+    errors, factor-variable interactions, instrumental-variables regression, adjusted predictions, marginal
+    effects, and fitted values.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/linear-regression.md
+  forbidden_routes: []
+  boundary: false
+- id: core-machine-learning
+  prompt: I need task-specific guidance for machine learning. Use for penalized linear, logit, probit,
+    or Poisson models; cross-validation or plugin selection; lasso predictions; elastic net; H2O random
+    forests or gradient boosting; and inferential double selection with dsregress.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/machine-learning.md
+  forbidden_routes: []
+  boundary: false
+- id: core-mata-data-access
+  prompt: I need task-specific guidance for Mata Stata interface. Use for reading Stata observations into
+    Mata views or copies, adding variables, writing results back, respecting if/in samples, and exchanging
+    scalars, macros, and matrices through st_*() functions.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/mata-data-access.md
+  forbidden_routes: []
+  boundary: false
+- id: core-mata-introduction
+  prompt: I need task-specific guidance for Mata basics. Use for entering Mata, creating scalars and matrices,
+    elementwise versus matrix operators, inspecting objects, clearing the workspace, and deciding when
+    Mata is preferable to Stata commands.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/mata-introduction.md
+  forbidden_routes: []
+  boundary: false
+- id: core-mata-matrix-operations
+  prompt: I need task-specific guidance for matrix algebra. Use for constructing, naming, subsetting,
+    transposing, joining, solving, decomposing, and transferring matrices between Stata and Mata.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/mata-matrix-operations.md
+  forbidden_routes: []
+  boundary: false
+- id: core-mata-programming
+  prompt: I need task-specific guidance for Mata programming. Use for declaring typed Mata functions,
+    arguments and return values, loops and conditionals, pointers, structures, source files, compiled
+    object files, and reusable Mata libraries.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/mata-programming.md
+  forbidden_routes: []
+  boundary: false
+- id: core-matching-methods
+  prompt: I need task-specific guidance for propensity-score matching. Use for treatment-effects matching
+    with teffects psmatch or teffects nnmatch, propensity scores, overlap, common support, balance assessment,
+    average treatment effects, and matched-sample diagnostics.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/matching-methods.md
+  forbidden_routes: []
+  boundary: false
+- id: core-mathematical-functions
+  prompt: I need task-specific guidance for math function. Use for arithmetic transformations, logarithms,
+    powers, probability distributions, rowwise calculations, and reproducible random-number generation
+    in generate, replace, scalar, or Mata expressions.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/mathematical-functions.md
+  forbidden_routes: []
+  boundary: false
+- id: core-maximum-likelihood
+  prompt: I need task-specific guidance for maximum likelihood. Use for specifying, evaluating, maximizing,
+    and diagnosing custom likelihoods with ml or mlexp, parameter constraints, starting values, evaluator
+    programs, and likelihood-based inference.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/maximum-likelihood.md
+  forbidden_routes: []
+  boundary: false
+- id: core-missing-data-handling
+  prompt: I need task-specific guidance for missing data. Use for missingness summaries, complete-case
+    denominators, Stata mi setup, variable registration, chained or regression imputation, passive variables,
+    mi estimate, and sensitivity planning.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/missing-data-handling.md
+  forbidden_routes: []
+  boundary: false
+- id: core-nonparametric-methods
+  prompt: I need task-specific guidance for nonparametric regression. Use for locally weighted smoothers,
+    kernel regression, series regression, bandwidth selection, derivative estimation, and visual assessment
+    of nonlinear relationships with lowess and npregress.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/nonparametric-methods.md
+  forbidden_routes: []
+  boundary: false
+- id: core-panel-data
+  prompt: I need task-specific guidance for panel data. Use for declaring panel-time structure, checking
+    duplicate panel periods, fixed- or random-effects models, between estimators, population-averaged
+    models, and panel-aware lags with xtset and xtreg.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/panel-data.md
+  forbidden_routes: []
+  boundary: false
+- id: core-programming-basics
+  prompt: I need task-specific guidance for Stata programming. Use for local and global macros, foreach
+    and forvalues loops, do-file arguments, comments, command delimiters, temporary names, quietly/noisily,
+    capture, and basic reusable automation.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/programming-basics.md
+  forbidden_routes: []
+  boundary: false
+- id: core-regression-diagnostics
+  prompt: I need task-specific guidance for VIF. Use after regress for multicollinearity, heteroskedasticity,
+    functional-form, specification, residual, leverage, and influence checks with estat vif, estat hettest,
+    estat ovtest, linktest, rvfplot, and predict.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/regression-diagnostics.md
+  forbidden_routes: []
+  boundary: false
+- id: core-regression-discontinuity
+  prompt: I need task-specific guidance for regression discontinuity. Use for a transparent built-in sharp
+    or fuzzy regression-discontinuity workflow using regress, lpoly, and twoway; includes cutoff coding,
+    local bandwidths, side-specific slopes, sensitivity, placebo cutoffs, density inspection, and covariate-continuity
+    checks. Route robust bias-corrected inference to rdrobust.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/regression-discontinuity.md
+  forbidden_routes: []
+  boundary: false
+- id: core-sample-selection
+  prompt: I need task-specific guidance for sample selection. Use when an outcome is observed only after
+    a nonrandom selection process and the task calls for heckman or heckprobit, a selection equation,
+    exclusion restrictions, inverse Mills ratios, or selection correction.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/sample-selection.md
+  forbidden_routes: []
+  boundary: false
+- id: core-sem-factor-analysis
+  prompt: I need task-specific guidance for factor analysis. Use for exploratory factor analysis, latent-variable
+    measurement models, path models, SEM, generalized SEM, identification constraints, standardized estimates,
+    fit statistics, and latent-variable predictions.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/sem-factor-analysis.md
+  forbidden_routes: []
+  boundary: false
+- id: core-spatial-analysis
+  prompt: I need task-specific guidance for spatial analysis. Use for declaring spatial data, coordinate
+    systems, spatial identifiers, creating or importing weight matrices, spatial lags, cross-sectional
+    spatial autoregression, and spatial-regression diagnostics.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/spatial-analysis.md
+  forbidden_routes: []
+  boundary: false
+- id: core-string-functions
+  prompt: I need task-specific guidance for string cleaning. Use for cleaning, splitting, searching, matching,
+    normalizing, and measuring text with string and Unicode functions, including split, substr(), strpos(),
+    regexm(), ustrregexm(), and ustrlen().
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/string-functions.md
+  forbidden_routes: []
+  boundary: false
+- id: core-survey-data-analysis
+  prompt: I need task-specific guidance for survey weights. Use for probability weights, strata, primary
+    sampling units, finite-population corrections, subpopulation analyses, design-based means or proportions,
+    and svy-prefixed regression.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/survey-data-analysis.md
+  forbidden_routes: []
+  boundary: false
+- id: core-survival-analysis
+  prompt: I need task-specific guidance for survival analysis. Use for time-to-event data, censoring,
+    delayed entry, multiple-record survival data, Kaplan-Meier curves, log-rank tests, Cox regression,
+    proportional-hazards diagnostics, and stset validation.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/survival-analysis.md
+  forbidden_routes: []
+  boundary: false
+- id: core-tables-reporting
+  prompt: I need task-specific guidance for reporting table. Use for descriptive or model tables with
+    table and etable, collection layout and styling, previewing results, and exporting controlled outputs
+    with collect, putexcel, putdocx, or putpdf.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/tables-reporting.md
+  forbidden_routes: []
+  boundary: false
+- id: core-time-series
+  prompt: I need task-specific guidance for time series. Use for declaring time-series data, lags and
+    differences, ARIMA models, vector autoregressions, lag-order selection, forecasts, and impulse-response
+    functions with tsset, arima, var, and irf.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/time-series.md
+  forbidden_routes: []
+  boundary: false
+- id: core-treatment-effects
+  prompt: I need task-specific guidance for treatment effects. Use for ATE or ATET estimation with teffects
+    ra, ipw, aipw, or ipwra; includes outcome and treatment models, overlap, potential-outcome means,
+    robust inference, and postestimation balance.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/treatment-effects.md
+  forbidden_routes: []
+  boundary: false
+- id: core-variables-operators
+  prompt: I need task-specific guidance for variable type. Use for generate and replace expressions, numeric
+    and string storage types, missing values, if qualifiers, logical and arithmetic operators, factor-variable
+    notation, and observation subscripting.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/variables-operators.md
+  forbidden_routes: []
+  boundary: false
+- id: core-workflow-best-practices
+  prompt: I need task-specific guidance for reproducible workflow. Use for versioned do-files, project-relative
+    paths, logs, deterministic seeds, temporary files, assertions, error handling, modular execution,
+    clean-session reproduction, and artifact separation.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/workflow-best-practices.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-asdoc
+  prompt: I need task-specific guidance for asdoc. Use when the user names asdoc or wants to prefix summarize,
+    tabstat, correlate, regress, or other supported Stata commands to build a sequential Word, LaTeX,
+    HTML, or text report.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/asdoc.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-binsreg
+  prompt: I need task-specific guidance for binsreg. Use when the user asks for binsreg, binslogit, binsprobit,
+    binsqreg, binstest, binspwc, binsregselect, a binscatter replacement, data-driven bin selection, or
+    inference for a binned relationship.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/binsreg.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-coefplot
+  prompt: I need task-specific guidance for coefplot. Use when the user asks for coefplot, a forest-style
+    coefficient plot, comparison of stored models, confidence-interval plotting, standardized coefficients,
+    plotted margins, or direct labeling of regression estimates.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/coefplot.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-data-manipulation
+  prompt: I need task-specific guidance for gtools. Use when the user asks for gtools, gcollapse, gegen,
+    greshape, gisid, gquantiles, rangestat, egenmore, distinct, missings, carryforward, or faster grouped
+    aggregation, reshape, rolling-window, and missing-data utilities.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/data-manipulation.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-did
+  prompt: I need task-specific guidance for csdid. Use when the user asks for csdid, csdid_plot, drdid,
+    did_multiplegt, did_imputation, bacondecomp, heterogeneous or staggered treatment timing, group-time
+    effects, not-yet-treated controls, or modern alternatives to two-way fixed effects.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/did.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-estout
+  prompt: I need task-specific guidance for estout. Use when the user asks for estout, esttab, eststo,
+    estadd, model storage, side-by-side regression tables, or export of stored estimates to LaTeX, CSV,
+    HTML, or RTF.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/estout.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-event-study
+  prompt: I need task-specific guidance for eventstudyinteract. Use when the user asks for eventstudyinteract,
+    eventdd, event_plot, a Sun-Abraham interaction-weighted estimator, dynamic treatment effects, lead/lag
+    plots, endpoint binning, pretrend tests, or modern event studies under staggered adoption.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/event-study.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-graph-schemes
+  prompt: I need task-specific guidance for grstyle. Use when the user asks for grstyle, schemepack, blindschemes,
+    palettes, colorpalette, colrspace, plotplain, colorblind-safe Stata graphs, reusable graph styling,
+    or a project-level scheme.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/graph-schemes.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-ivreg2
+  prompt: I need task-specific guidance for ivreg2. Use when the user asks for ivreg2, xtivreg2, ivreghdfe,
+    ranktest, weak-instrument diagnostics, first-stage statistics, LIML, GMM, overidentification tests,
+    endogenous-regressor tests, HAC inference, or IV with high-dimensional fixed effects.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/ivreg2.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-nprobust
+  prompt: I need task-specific guidance for nprobust. Use when the user asks for nprobust, lprobust, lpbwselect,
+    kdrobust, kdbwselect, local-polynomial regression, kernel-density inference, robust bias correction,
+    derivative estimation, or data-driven nonparametric bandwidths.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/nprobust.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-outreg2
+  prompt: I need task-specific guidance for outreg2. Use when the user names outreg2 or wants to export
+    each estimation result immediately to Word/RTF, Excel, LaTeX, text, or CSV without first storing a
+    model collection.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/outreg2.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-package-management
+  prompt: I need task-specific guidance for package management. Use when the user asks how to search,
+    inspect, install, pin, update, remove, isolate, or troubleshoot community-contributed Stata packages
+    with findit, search, ssc, net, ado, which, adopath, sysdir, or net set ado.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/package-management.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-psmatch2
+  prompt: I need task-specific guidance for psmatch2. Use when the user asks for psmatch2, pstest, nearest-neighbor,
+    caliper, radius, kernel, local-linear, or Mahalanobis matching, common-support diagnostics, matched-sample
+    weights, ATT/ATE/ATU, or balance assessment after matching.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/psmatch2.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-rdrobust
+  prompt: I need task-specific guidance for rdrobust. Use when the user asks for rdrobust, rdbwselect,
+    rdplot, rddensity, the rdlocrand package and its rdrandinf or rdwinselect commands, rdmulti, sharp
+    or fuzzy regression discontinuity, robust bias-corrected inference, bandwidth selection, manipulation
+    testing, or multi-cutoff RD.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/rdrobust.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-reghdfe
+  prompt: I need task-specific guidance for reghdfe. Use when the user asks for reghdfe, absorb(), multiple
+    high-dimensional fixed effects, interacted fixed effects, singleton handling, multi-way clustering,
+    absorbed-effect recovery, or fast within-transformation. Route instrumental-variable models with ivreghdfe
+    to the ivreg2 reference.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/reghdfe.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-synth
+  prompt: I need task-specific guidance for synth. Use when the user asks for synth, synthetic control,
+    donor weights, predictor weights, pre-treatment RMSPE, placebo/permutation inference, leave-one-out
+    donor sensitivity, or treatment gaps.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/synth.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-tabout
+  prompt: I need task-specific guidance for tabout. Use when the user names tabout or needs one-way, two-way,
+    survey-weighted, panelled, or summary-statistic tables exported as text, CSV, LaTeX, or HTML.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/tabout.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-winsor
+  prompt: I need task-specific guidance for winsor. Use when the user asks for winsor, winsor2, winsorization,
+    percentile capping, trimming, by-group outlier treatment, cuts(), suffix(), or sensitivity analyses
+    for extreme observations.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/winsor.md
+  forbidden_routes: []
+  boundary: false
+- id: packages-xtabond2
+  prompt: I need task-specific guidance for xtabond2. Use when the user asks for xtabond2, Arellano-Bond
+    difference GMM, Blundell-Bond system GMM, dynamic panels, gmmstyle()/ivstyle() instruments, collapsed
+    instruments, Windmeijer-corrected two-step errors, AR tests, or Hansen and difference-in-Hansen diagnostics.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/xtabond2.md
+  forbidden_routes: []
+  boundary: false
+- id: plugins-cpp_plugins
+  prompt: I need task-specific guidance for C++ Stata plugin. Use when a Stata plugin needs C++, extern
+    "C", STL containers, exception containment, a vendored C++ backend, separate C/C++ compilation, cross-platform
+    linking, or investigation of name-mangling and loader errors.
+  expected_skill: stata-c-plugins
+  expected_refs:
+  - stata-c-plugins/references/cpp_plugins.md
+  forbidden_routes: []
+  boundary: false
+- id: plugins-packaging_and_help
+  prompt: I need task-specific guidance for stata.toc. Use when a plugin project needs stata.toc, .pkg
+    manifests, .ado wrappers, .sthlp help, platform-specific binaries, net install layout, version metadata,
+    local-install testing, or release packaging.
+  expected_skill: stata-c-plugins
+  expected_refs:
+  - stata-c-plugins/references/packaging_and_help.md
+  forbidden_routes: []
+  boundary: false
+- id: plugins-performance_patterns
+  prompt: I need task-specific guidance for plugin performance. Use when profiling or optimizing a Stata
+    plugin with presorted indices, buffer reuse, dense arrays, partial sorting/quickselect, precomputed
+    norms, pthreads, deterministic thread-local random number generators, cache locality, or missing-data
+    fast paths.
+  expected_skill: stata-c-plugins
+  expected_refs:
+  - stata-c-plugins/references/performance_patterns.md
+  forbidden_routes: []
+  boundary: false
+- id: plugins-plugin-sdk-basics
+  prompt: I need task-specific guidance for Stata plugin SDK. Use when the task involves the Stata C plugin
+    SDK, stplugin.h/stplugin.c, stata_call, SF_* data APIs, compiling a minimal plugin, loading a .plugin
+    binary, or deciding whether native code is appropriate.
+  expected_skill: stata-c-plugins
+  expected_refs:
+  - stata-c-plugins/references/plugin-sdk-basics.md
+  forbidden_routes: []
+  boundary: false
+- id: plugins-testing_strategy
+  prompt: I need task-specific guidance for plugin testing. Use when designing plugin tests, reference-output
+    fixtures, batch smoke tests, source-language parity tests, error-path tests, stress tests, cross-platform
+    validation, exact completion markers, or acceptance tolerances for a translated Stata command.
+  expected_skill: stata-c-plugins
+  expected_refs:
+  - stata-c-plugins/references/testing_strategy.md
+  forbidden_routes: []
+  boundary: false
+- id: plugins-translation_workflow
+  prompt: I need task-specific guidance for Python to Stata. Use when scoping or auditing a port from
+    Python/R to Stata, inventorying feature parity, choosing ado/Mata versus wrapping a compiled backend,
+    mapping APIs and licenses, pinning source versions, generating reference fixtures, or conducting a
+    final fidelity audit.
+  expected_skill: stata-c-plugins
+  expected_refs:
+  - stata-c-plugins/references/translation_workflow.md
+  forbidden_routes: []
+  boundary: false
+- id: boundary-built-in-regression-diagnostics
+  prompt: After regress, run VIF, heteroskedasticity, RESET, link, and residual diagnostics using built-in
+    Stata commands.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/regression-diagnostics.md
+  forbidden_routes:
+  - stata-packages/packages/diagnostics.md
+  boundary: true
+- id: boundary-reghdfe-package
+  prompt: Estimate a model with reghdfe, two absorbed fixed effects, and clustered standard errors.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/reghdfe.md
+  forbidden_routes:
+  - stata-core/references/linear-regression.md
+  boundary: true
+- id: boundary-built-in-didregress-versus-csdid
+  prompt: Use Stata's built-in didregress for a standard group-and-time difference-in-differences design;
+    do not use csdid.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/difference-in-differences.md
+  forbidden_routes:
+  - stata-packages/packages/did.md
+  boundary: true
+- id: boundary-csdid-versus-built-in-didregress
+  prompt: Use csdid for staggered treatment timing and group-time effects; do not substitute built-in
+    didregress.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/did.md
+  forbidden_routes:
+  - stata-core/references/difference-in-differences.md
+  boundary: true
+- id: boundary-manual-rd-versus-rdrobust
+  prompt: Implement a regression-discontinuity analysis manually with built-in regress, bandwidth restrictions,
+    and cutoff interactions; do not use rdrobust.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/regression-discontinuity.md
+  forbidden_routes:
+  - stata-packages/packages/rdrobust.md
+  boundary: true
+- id: boundary-rdrobust-versus-manual-rd
+  prompt: Use rdrobust with robust bias-corrected inference and rdbwselect; do not replace it with a hand-coded
+    built-in RD regression.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/rdrobust.md
+  forbidden_routes:
+  - stata-core/references/regression-discontinuity.md
+  boundary: true
+- id: boundary-built-in-table-versus-estout
+  prompt: Create a table with Stata's built-in collect and table commands, without estout.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/tables-reporting.md
+  forbidden_routes:
+  - stata-packages/packages/estout.md
+  boundary: true
+- id: boundary-esttab-versus-built-in-table
+  prompt: Export stored regression estimates with esttab to LaTeX; do not rewrite this as a built-in table
+    or collect workflow.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/estout.md
+  forbidden_routes:
+  - stata-core/references/tables-reporting.md
+  boundary: true
+- id: boundary-ivreghdfe-versus-ivregress-or-reghdfe
+  prompt: Estimate IV with high-dimensional absorbed fixed effects using ivreghdfe; do not route to built-in
+    ivregress or plain reghdfe.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/ivreg2.md
+  forbidden_routes:
+  - stata-core/references/linear-regression.md
+  - stata-packages/packages/reghdfe.md
+  boundary: true
+- id: boundary-ado-programming-versus-native-plugin
+  prompt: Define an ado-style rclass program with program define and syntax; no native C plugin or stata_call
+    entry point is needed.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/advanced-programming.md
+  forbidden_routes:
+  - stata-c-plugins/references/plugin-sdk-basics.md
+  boundary: true
+- id: boundary-native-plugin-sdk
+  prompt: Compile a native C plugin with stplugin.h and a stata_call entry point because an ado-style
+    Stata program is not sufficient.
+  expected_skill: stata-c-plugins
+  expected_refs:
+  - stata-c-plugins/references/plugin-sdk-basics.md
+  forbidden_routes:
+  - stata-core/references/advanced-programming.md
+  - stata-core/references/external-tools-integration.md
+  boundary: true
+- id: boundary-community-package-lifecycle
+  prompt: Inspect and pin a community ado package with which, ado describe, ssc, and net install; this
+    is package lifecycle work, not native plugin packaging.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/package-management.md
+  forbidden_routes:
+  - stata-c-plugins/references/packaging_and_help.md
+  boundary: true
+- id: boundary-native-plugin-package-manifest
+  prompt: Package a compiled Stata plugin with stata.toc, a .pkg manifest, an ado wrapper, help, and platform-specific
+    binaries; this is not ordinary community ado-package lifecycle management.
+  expected_skill: stata-c-plugins
+  expected_refs:
+  - stata-c-plugins/references/packaging_and_help.md
+  forbidden_routes:
+  - stata-packages/packages/package-management.md
+  boundary: true

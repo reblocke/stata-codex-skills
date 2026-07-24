@@ -1,29 +1,47 @@
 slug: gmm-estimation
 skill: core
 section: Statistics and Econometrics
-title: GMM Estimation in Stata
-trigger: Use when the user needs built-in Stata help with gmm estimation in stata.
-commands: &id001
-- gmm
-source_topics: *id001
-syntax_patterns: []
+order: 310
+title: Generalized Method of Moments Estimation
+trigger: >-
+  Use for one- or multiple-equation moment-condition models, instrument sets, one- and two-step GMM,
+  robust weighting matrices, overidentification tests, and postestimation with gmm.
+commands: [gmm, estat overid, predict]
+aliases: [GMM, generalized method of moments, moment conditions, instruments, overidentification]
+source_topics: [gmm, gmm_postestimation]
+syntax_patterns:
+- gmm (outcome - {b1}*x1 - {b2}*x2 - {b0}), instruments(x1 x2)
+- "gmm (equation1) (equation2), instruments(1: z1 z2) instruments(2: z1 z3) twostep"
+assumptions:
+- Population moment conditions are correctly specified and instruments are exogenous for the stated structural error.
+- Parameters are identified with instruments strong enough for the intended asymptotic approximation.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Moment validity is a substantive assumption; adding instruments can worsen finite-sample bias even when precision rises.
+- Weak or many instruments can make conventional GMM inference unreliable.
+- One-step and two-step estimates use different weighting matrices, and finite-sample corrections should be reported.
 workflows:
-- Start with the official help topics attached to GMM Estimation in Stata, then tailor the syntax to the
-  current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises gmm and inspect the resulting log.
-related_refs:
-- maximum-likelihood
-- linear-regression
+- State each orthogonality condition and instrument source before encoding the moment equations.
+- Fit a parsimonious one-step model, inspect convergence and moments, then evaluate two-step and overidentification diagnostics.
+validation_case: >-
+  Estimate a linear moment-condition model on bundled data, verify convergence and sample size, and inspect
+  postestimation overidentification output when degrees of freedom permit.
+validation_mode: stata
+related_refs: [maximum-likelihood, linear-regression]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  sysuse auto, clear
+  gmm (mpg - {b1}*gear_ratio - {b2}*turn - {b0}), instruments(gear_ratio turn)
+  assert e(converged) == 1
+  assert e(N) == 74
 provenance:
-  local_help_topics:
-  - gmm
+  local_help_topics: [gmm, gmm_postestimation]
+  local_help_globs: []
   local_help_files:
   - ado/base/g/gmm.sthlp
+  - ado/base/g/gmm_postestimation.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/gmm-estimation.md
   upstream_only: false
+  package_only: false
+  reviewed: true

@@ -1,0 +1,16 @@
+# Provenance index
+
+Generated deterministically from reviewed `content/{{ skill.content_dir }}/` entries.
+Manifests and locks record provenance but do not control publication.
+
+| Canonical route | Validation | Local Stata help | Upstream inventory |
+|---|---|---|---|
+{% for entry in entries %}
+| `{{ entry.route_path }}` | `{{ entry.validation_mode }}` | {% if entry.provenance.local_help_files %}{{ entry.provenance.local_help_files | join("<br>") }}{% else %}—{% endif %} | {% if entry.provenance.upstream_files %}{{ entry.provenance.upstream_files | join("<br>") }}{% else %}—{% endif %} |
+{% endfor %}
+
+## Embedded lock identifiers
+
+{% for lock in lock_index %}
+- **{{ lock.label }}**: {{ lock.identity }}; lock SHA-256 `{{ lock.sha256 }}`
+{% endfor %}

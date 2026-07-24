@@ -1,31 +1,48 @@
 slug: survival-analysis
 skill: core
 section: Advanced Methods
-title: Survival Analysis in Stata
-trigger: Use when the user needs built-in Stata help with survival analysis in stata.
-commands: &id001
-- stset
-- stcox
-- sts
-source_topics: *id001
-syntax_patterns: []
+order: 610
+title: Survival-Time Setup, Kaplan-Meier Analysis, and Cox Models
+trigger: >-
+  Use for time-to-event data, censoring, delayed entry, multiple-record survival data, Kaplan-Meier curves,
+  log-rank tests, Cox regression, proportional-hazards diagnostics, and stset validation.
+commands: [stset, stdescribe, stsum, sts graph, sts test, stcox, estat phtest]
+aliases: [survival analysis, time to event, Kaplan-Meier, Cox regression, hazard ratio, censoring]
+source_topics: [stset, stcox, sts]
+syntax_patterns:
+- stset followup_time, failure(event == 1) id(patient_id) enter(time entry_time)
+- sts graph, by(group) risktable
+- sts test group
+- stcox c.exposure##i.group covariates, vce(cluster patient_id)
+assumptions:
+- Event, censoring, entry, and exit times are correctly ordered and censoring is conditionally noninformative.
+- Cox-model hazard ratios are interpreted under proportional hazards unless time-varying effects are modeled.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- stset choices define the risk sets; an incorrect failure code or time scale invalidates every downstream result.
+- Treating competing events as ordinary censoring changes the estimand and may be inappropriate.
+- A hazard ratio is neither a risk ratio nor a ratio of median survival times.
 workflows:
-- Start with the official help topics attached to Survival Analysis in Stata, then tailor the syntax to
-  the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises stset and inspect the resulting log.
-related_refs:
-- limited-dependent-variables
-- maximum-likelihood
+- Audit time origins, event codes, delayed entry, repeated records, and exclusions; then inspect stdescribe and stsum.
+- Plot survival by key groups, fit the prespecified model, assess proportional hazards, and report absolute survival where useful.
+validation_case: >-
+  Declare synthetic censored survival data, verify the number of failures, fit a Cox model, and inspect proportional-hazards diagnostics.
+validation_mode: stata
+related_refs: [limited-dependent-variables, graphics]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  set seed 271828
+  set obs 80
+  generate double exposure = mod(_n, 2)
+  generate double followup = 1 + runiform()*10
+  generate byte event = mod(_n, 4) != 0
+  stset followup, failure(event == 1)
+  assert r(N_fail) > 0
+  stcox exposure
+  assert e(N) == 80
 provenance:
-  local_help_topics:
-  - stset
-  - stcox
-  - sts
+  local_help_topics: [stset, stcox, sts]
+  local_help_globs: []
   local_help_files:
   - ado/base/s/stset.sthlp
   - ado/base/s/stcox.sthlp
@@ -33,3 +50,5 @@ provenance:
   upstream_files:
   - plugins/stata/skills/stata/references/survival-analysis.md
   upstream_only: false
+  package_only: false
+  reviewed: true

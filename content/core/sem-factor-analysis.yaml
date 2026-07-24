@@ -1,53 +1,49 @@
 slug: sem-factor-analysis
 skill: core
 section: Advanced Methods
-title: Structural Equation Modeling and Factor Analysis in Stata
-trigger: Use when the user needs built-in Stata help with structural equation modeling and factor analysis
-  in stata.
-commands: &id001
-- sem
-- gsem
-- factor
-source_topics: *id001
-syntax_patterns: []
+order: 620
+title: Factor Analysis and Structural Equation Models
+trigger: >-
+  Use for exploratory factor analysis, latent-variable measurement models, path models, SEM, generalized SEM,
+  identification constraints, standardized estimates, fit statistics, and latent-variable predictions.
+commands: [factor, rotate, predict, sem, gsem, estat gof, estat mindices]
+aliases: [factor analysis, EFA, confirmatory factor analysis, CFA, SEM, GSEM, latent variable, path analysis]
+source_topics: [sem, gsem_command, factor]
+syntax_patterns:
+- factor item1-item6, factors(2) pcf
+- sem (Latent -> item1 item2 item3) (outcome <- Latent covariates)
+- estat gof, stats(all)
+assumptions:
+- The latent-variable structure is identified through adequate indicators, scale constraints, and substantively justified paths.
+- Distributional, link-function, and missing-data assumptions match the selected factor, sem, or gsem estimator.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Good global fit does not validate causal direction or rescue a model chosen by modification indices alone.
+- Latent-variable scales depend on marker or variance constraints, which affect coefficient interpretation.
+- Factor retention should not rely on eigenvalues greater than one without scree, parallel, and substantive evidence.
 workflows:
-- Start with the official help topics attached to Structural Equation Modeling and Factor Analysis in
-  Stata, then tailor the syntax to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises sem and inspect the resulting log.
-related_refs:
-- maximum-likelihood
-- descriptive-statistics
+- Inspect item distributions and correlations, prespecify the measurement structure, and check identification before estimation.
+- Evaluate loadings, residuals, fit, and theoretically plausible alternatives while separating exploratory from confirmatory changes.
+validation_case: >-
+  Fit a one-factor model to three related bundled variables, verify convergence, and inspect standardized loadings.
+validation_mode: stata
+related_refs: [maximum-likelihood, descriptive-statistics]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  sysuse auto, clear
+  factor weight length turn, factors(1)
+  sem (Size -> weight length turn)
+  assert e(converged) == 1
+  assert e(N) == 74
 provenance:
-  local_help_topics:
-  - sem
-  - gsem
-  - factor
+  local_help_topics: [sem, gsem_command, factor]
+  local_help_globs: []
   local_help_files:
   - ado/base/s/sem.sthlp
-  - ado/base/g/gsem_builder.sthlp
   - ado/base/g/gsem_command.sthlp
-  - ado/base/g/gsem_estimation_options.sthlp
-  - ado/base/g/gsem_family_and_link_options.sthlp
-  - ado/base/g/gsem_fvstandard.sthlp
-  - ado/base/g/gsem_group_options.sthlp
-  - ado/base/g/gsem_lclass_options.sthlp
-  - ado/base/g/gsem_model_options.sthlp
-  - ado/base/g/gsem_path_notation_extensions.sthlp
-  - ado/base/g/gsem_postestimation.sthlp
-  - ado/base/g/gsem_predict.sthlp
-  - ado/base/g/gsem_reporting_options.sthlp
-  - ado/base/s/sem_and_gsem_option_constraints.sthlp
-  - ado/base/s/sem_and_gsem_option_covstructure.sthlp
-  - ado/base/s/sem_and_gsem_option_from.sthlp
-  - ado/base/s/sem_and_gsem_option_reliability.sthlp
-  - ado/base/s/sem_and_gsem_path_notation.sthlp
-  - ado/base/s/sem_and_gsem_syntax_options.sthlp
   - ado/base/f/factor.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/sem-factor-analysis.md
   upstream_only: false
+  package_only: false
+  reviewed: true

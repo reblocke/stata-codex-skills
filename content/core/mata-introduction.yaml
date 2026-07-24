@@ -1,29 +1,50 @@
 slug: mata-introduction
 skill: core
 section: Programming and Mata
-title: Mata Introduction
-trigger: Use when the user needs built-in Stata help with mata introduction.
-commands: &id001
-- mata
-source_topics: *id001
-syntax_patterns: []
+order: 30
+title: Mata Workspace, Types, and Interactive Expressions
+trigger: >-
+  Use for entering Mata, creating scalars and matrices, elementwise versus matrix operators,
+  inspecting objects, clearing the workspace, and deciding when Mata is preferable to Stata commands.
+commands: [mata, mata describe, mata clear, rows(), cols(), mean(), st_matrix()]
+aliases: [Mata basics, Mata workspace, matrix language, colon operators]
+source_topics: [mata, m2_intro]
+syntax_patterns:
+- "mata: x = (1, 2, 3)"
+- "mata: y = x:^2"
+- "mata: rows(x)"
+assumptions:
+- Object dimensions and numeric or string types are known before matrix operations.
+- The task benefits from matrix/vector computation rather than a clearer built-in Stata command.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Matrix multiplication uses *, while elementwise multiplication uses :*; the distinction also applies to powers and division.
+- Mata objects persist in the session until dropped or cleared and can affect reruns.
+- Stata missing values are very large numeric values in Mata, so comparisons need explicit missing-value handling.
 workflows:
-- Start with the official help topics attached to Mata Introduction, then tailor the syntax to the current
-  dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises mata and inspect the resulting log.
-related_refs:
-- mata-programming
-- mata-matrix-operations
+- Prototype dimensions and elementwise operations interactively, assert expected shapes, then move stable code into a function.
+- Keep Stata data access at a narrow boundary and perform repeated numerical work in Mata arrays.
+validation_case: >-
+  Create a row vector, apply an elementwise transformation, and assert its dimensions and mean in a clean Mata workspace.
+validation_mode: stata
+related_refs: [mata-matrix-operations, mata-programming]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  mata:
+  x = (1, 2, 3)
+  y = x:^2
+  assert(rows(y) == 1)
+  assert(cols(y) == 3)
+  assert(mean(x') == 2)
+  end
 provenance:
-  local_help_topics:
-  - mata
+  local_help_topics: [mata, m2_intro]
+  local_help_globs: []
   local_help_files:
   - ado/base/m/mata.sthlp
+  - ado/base/m/m2_intro.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/mata-introduction.md
   upstream_only: false
+  package_only: false
+  reviewed: true

@@ -1,32 +1,87 @@
 slug: graph-schemes
 skill: packages
 section: Graphics and Diagnostics
-title: 'Graph Schemes: Professional Visualization Design'
-trigger: Use when the user asks about grstyle or a related community-package workflow.
+order: 230
+title: Graph Schemes, grstyle, and Accessible Palettes
+trigger: Use when the user asks for grstyle, schemepack, blindschemes, palettes, colorpalette, colrspace, plotplain, colorblind-safe Stata graphs, reusable graph styling, or a project-level scheme.
+aliases:
+- grstyle
+- schemepack
+- blindschemes
+- palettes
+- colorpalette
+- colrspace
+- plotplain
+- graph scheme
+- set scheme
+- graph query
 commands:
 - grstyle
+- colorpalette
 - set scheme
+- graph query
 source_topics:
 - grstyle
-syntax_patterns: []
+- schemepack
+- blindschemes
+- palettes
+- colrspace
+syntax_patterns:
+- capture noisily grstyle init
+- grstyle set plain, box
+- grstyle set color tableau
+- colorpalette viridis, n(5)
+- set scheme plotplain
+assumptions:
+- The target medium, final graph dimensions, journal color constraints, and accessibility requirements are known before styling choices are locked.
+- Scheme changes are scoped to the project or session unless the user explicitly requests a permanent Stata preference.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- set scheme ..., permanently changes future sessions; do not make that persistent change without explicit authorization.
+- grstyle init must precede grstyle set commands, and grstyle clear is needed when stale settings contaminate a new figure.
+- Color alone is insufficient for accessibility; reinforce groups with line patterns, marker shapes, direct labels, or luminance contrast.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises grstyle and inspect the resulting log.
+- Preflight requested style packages with which and ado describe; ask before installing them or changing permanent settings.
+- Start from a clean session-scoped scheme, define typography and grayscale-safe encodings, then apply consistent styling across related figures.
+- Render at final size and inspect labels, legends, line weights, uncertainty displays, grayscale, and common color-vision deficiencies.
+validation_case: Initialize grstyle in a temporary Stata session, apply a plain boxed style, draw an auto.dta scatter plot, and require an error-free log without changing permanent settings.
+validation_mode: stata
 related_refs:
 - graphics
-- tables-reporting
+- workflow-best-practices
+preflight_commands:
+- which grstyle
+- which colorpalette
+- ado describe grstyle
 install_commands:
-- ssc install grstyle, replace
-smoke_test: grstyle init
+- ssc install grstyle
+- ssc install palettes
+- ssc install colrspace
+- ssc install schemepack
+- ssc install blindschemes
+smoke_test: |
+  sysuse auto, clear
+  grstyle clear
+  set scheme s2color
+  grstyle init
+  grstyle set plain, box
+  scatter price mpg, name(grstyle_smoke, replace) nodraw
+  graph describe grstyle_smoke
+  assert "`r(ft)'" == "live"
+  graph drop grstyle_smoke
+  grstyle clear
+  local grstyle_scheme = c(sysdir_personal) + "scheme-_GRSTYLE_.scheme"
+  capture erase "`grstyle_scheme'"
 provenance:
+  reviewed: true
   local_help_topics:
   - grstyle
+  - schemepack
+  - blindschemes
+  - palettes
+  - colrspace
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/graph-schemes.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

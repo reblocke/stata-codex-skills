@@ -1,33 +1,49 @@
 slug: workflow-best-practices
 skill: core
 section: Output and Workflow
-title: Stata Workflow Best Practices
-trigger: Use when the user needs built-in Stata help with stata workflow best practices.
-commands: &id001
-- log
-- version
-- pwd
-- cd
-source_topics: *id001
-syntax_patterns: []
+order: 530
+title: Reproducible Stata Project and Do-File Workflow
+trigger: >-
+  Use for versioned do-files, project-relative paths, logs, deterministic seeds, temporary files,
+  assertions, error handling, modular execution, clean-session reproduction, and artifact separation.
+commands: [version, pwd, cd, log using, do, run, assert, tempfile, set seed, exit]
+aliases: [reproducible workflow, Stata project, do-file organization, batch mode, logging, clean run]
+source_topics: [log, version, cd]
+syntax_patterns:
+- cd "`project_root'"
+- log using "`output_dir'/analysis.log", text replace name(analysis)
+- assert _N == expected_rows
+- do "scripts/01_build_cohort.do"
+assumptions:
+- Raw inputs are immutable, and every generated file has an explicit derived-data or output destination.
+- The declared Stata version, package environment, paths, seeds, and execution order are sufficient for a clean rerun.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- cd and globals create session state that can make a do-file work only after an undocumented manual setup.
+- version controls command behavior but does not pin community packages, operating-system tools, or external data.
+- capture without checking _rc can convert a failed pipeline step into an apparently successful run.
 workflows:
-- Start with the official help topics attached to Stata Workflow Best Practices, then tailor the syntax
-  to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises log and inspect the resulting log.
-related_refs:
-- basics-getting-started
-- programming-basics
+- Start from a clean session, declare version and paths, open a run-specific log, and fail early on missing inputs or schema violations.
+- Separate immutable inputs, intermediate data, reports, and temporary files; rerun end to end and inspect logs and artifacts.
+validation_case: >-
+  Execute a temporary-data workflow twice from a clean session with fixed version and assertions, confirming identical key results.
+validation_mode: stata
+related_refs: [programming-basics, basics-getting-started]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  version 18
+  pwd
+  set seed 271828
+  tempfile derived
+  set obs 10
+  generate double value = runiform()
+  save `derived'
+  use `derived', clear
+  assert _N == 10
+  assert !missing(value)
 provenance:
-  local_help_topics:
-  - log
-  - version
-  - pwd
-  - cd
+  local_help_topics: [log, version, cd]
+  local_help_globs: []
   local_help_files:
   - ado/base/l/log.sthlp
   - ado/base/v/version.sthlp
@@ -35,3 +51,5 @@ provenance:
   upstream_files:
   - plugins/stata/skills/stata/references/workflow-best-practices.md
   upstream_only: false
+  package_only: false
+  reviewed: true

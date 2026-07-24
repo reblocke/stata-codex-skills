@@ -1,31 +1,55 @@
 slug: mata-programming
 skill: core
 section: Programming and Mata
-title: Mata Programming
-trigger: Use when the user needs built-in Stata help with mata programming.
-commands: &id001
-- mata
-- m2_functions
-source_topics: *id001
-syntax_patterns: []
+order: 50
+title: Typed Mata Functions, Control Flow, and Libraries
+trigger: >-
+  Use for declaring typed Mata functions, arguments and return values, loops and conditionals,
+  pointers, structures, source files, compiled object files, and reusable Mata libraries.
+commands: [mata, function, for, if, return, mata mosave, mata mlib]
+aliases: [Mata programming, Mata function, Mata library, mlib, typed function]
+source_topics: [m2_declarations, m2_for, m2_return, m2_syntax]
+syntax_patterns:
+- real matrix function transform(real matrix X)
+- for (i=1; i<=rows(X); i++) { X[i,.] = X[i,.] :- mean(X[i,.]) }
+- mata mosave function_name(), replace
+- mata mlib create library_name, dir(path)
+assumptions:
+- Function argument and return types, allowed dimensions, missing-value behavior, and error contract are specified.
+- Persistent compiled functions are versioned and rebuilt when their source or Stata/Mata compatibility changes.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Mata passes many objects efficiently, but in-place mutation can surprise callers when ownership is unclear.
+- A broadly typed transmorphic argument trades compile-time checks for flexibility and needs stronger runtime validation.
+- Saved object code can shadow updated source during testing if old libraries remain on the Mata path.
 workflows:
-- Start with the official help topics attached to Mata Programming, then tailor the syntax to the current
-  dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises mata and inspect the resulting log.
-related_refs:
-- mata-introduction
-- advanced-programming
+- Write a small typed pure function, assert boundary cases interactively, then add state or Stata integration only when necessary.
+- Keep source under version control, rebuild libraries deterministically, and test in a fresh Mata session.
+validation_case: >-
+  Define a typed scalar function, exercise multiple inputs, and drop it so rerunning the smoke test is idempotent.
+validation_mode: stata
+related_refs: [mata-introduction, advanced-programming]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  mata:
+  real scalar codex_square(real scalar x)
+  {
+      return(x^2)
+  }
+  assert(codex_square(3) == 9)
+  assert(codex_square(-2) == 4)
+  mata drop codex_square()
+  end
 provenance:
-  local_help_topics:
-  - mata
-  - m2_functions
+  local_help_topics: [m2_declarations, m2_for, m2_return, m2_syntax]
+  local_help_globs: []
   local_help_files:
-  - ado/base/m/mata.sthlp
+  - ado/base/m/m2_declarations.sthlp
+  - ado/base/m/m2_for.sthlp
+  - ado/base/m/m2_return.sthlp
+  - ado/base/m/m2_syntax.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/mata-programming.md
   upstream_only: false
+  package_only: false
+  reviewed: true
