@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import errno
@@ -29,6 +30,9 @@ RECEIPT_FUTURE_TOLERANCE = timedelta(minutes=1)
 TRANSACTION_PREFIX = ".stata-codex-skills-publish-"
 TRANSACTION_LOCK_NAME = ".stata-codex-skills-publish.lock"
 TRANSACTION_LOCK_PAYLOAD = b"stata-codex-skills-publish-lock-v1\n"
+CLEANUP_QUARANTINE_PREFIX = ".stata-codex-skills-cleanup-"
+CLEANUP_FILE_PREFIX = "file-"
+CLEANUP_DIRECTORY_PREFIX = "directory-"
 
 
 class PublishError(RuntimeError):
@@ -90,6 +94,17 @@ class DestinationRootIdentity:
     path: Path
     device: int
     inode: int
+
+
+@dataclass(frozen=True)
+class TransactionCleanupPlan:
+    stage_device: int
+    stage_inode: int
+    backup_device: int
+    backup_inode: int
+    quarantine_device: int
+    quarantine_inode: int
+    backup_states: tuple[tuple[str, DestinationState], ...]
 
 
 def default_skills_dir() -> Path:
@@ -662,8 +677,48 @@ def _create_transaction_workspace(
     )
 
 
-def _same_or_descendant(path: Path, root: Path) -> bool:
-    return path == root or root in path.parents
+def _filesystem_identity(path: Path) -> tuple[int, int]:
+    """Return the filesystem identity of an existing path."""
+
+    metadata = path.stat()
+    return metadata.st_dev, metadata.st_ino
+
+
+def _existing_ancestor_identities(
+    path: Path,
+) -> tuple[bool, tuple[tuple[int, int], ...]]:
+    """Return whether ``path`` exists and identities through its existing root.
+
+    Looking up the deepest existing ancestor through the filesystem, instead of
+    comparing path spellings, makes containment checks honor case-insensitive
+    aliases while retaining case-sensitive behavior on Linux.
+    """
+
+    current = path
+    path_exists = True
+    while True:
+        try:
+            current.stat()
+            break
+        except FileNotFoundError:
+            path_exists = False
+            parent = current.parent
+            if parent == current:
+                raise
+            current = parent
+        except NotADirectoryError as error:
+            raise PublishError(
+                f"Publication path has a non-directory ancestor: {path}"
+            ) from error
+
+    identities: list[tuple[int, int]] = []
+    while True:
+        identities.append(_filesystem_identity(current))
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return path_exists, tuple(identities)
 
 
 def preflight_publication_paths(
@@ -685,24 +740,109 @@ def preflight_publication_paths(
         canonical_source = source.resolve(strict=True)
         canonical_destination = destination.resolve(strict=False)
         canonical_repo = REPO_ROOT.resolve(strict=True)
+        source_identity = _filesystem_identity(canonical_source)
+        repo_identity = _filesystem_identity(canonical_repo)
+        source_exists, source_ancestors = _existing_ancestor_identities(
+            canonical_source
+        )
+        destination_exists, destination_ancestors = (
+            _existing_ancestor_identities(canonical_destination)
+        )
     except (OSError, RuntimeError) as error:
         raise PublishError(f"Could not resolve publication paths: {error}") from error
 
+    if not source_exists:
+        raise PublishError(f"Publication source root does not exist: {source}")
+    destination_identity = (
+        destination_ancestors[0] if destination_exists else None
+    )
     if (
-        _same_or_descendant(canonical_destination, canonical_source)
-        or _same_or_descendant(canonical_source, canonical_destination)
+        source_identity in destination_ancestors
+        or (
+            destination_identity is not None
+            and destination_identity in source_ancestors
+        )
     ):
         raise PublishError(
             "Publication source and destination must not be equal or contain "
             f"one another: source={canonical_source}; "
             f"destination={canonical_destination}"
         )
-    if _same_or_descendant(canonical_destination, canonical_repo):
+    if repo_identity in destination_ancestors:
         raise PublishError(
             "Publication destination must be outside the repository: "
             f"{canonical_destination}"
         )
     return canonical_source, canonical_destination
+
+
+def _atomic_rename_no_replace(
+    source: str | bytes,
+    destination: str | bytes,
+    *,
+    src_dir_fd: int,
+    dst_dir_fd: int,
+) -> None:
+    """Atomically rename one directory entry only if the target is absent."""
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    if sys.platform == "darwin":
+        try:
+            rename_exclusive = libc.renameatx_np
+        except AttributeError as error:
+            raise PublishError(
+                "This macOS runtime lacks atomic no-replace rename support"
+            ) from error
+        rename_exclusive.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename_exclusive.restype = ctypes.c_int
+        result = rename_exclusive(
+            src_dir_fd,
+            source_bytes,
+            dst_dir_fd,
+            destination_bytes,
+            0x00000004,  # RENAME_EXCL from <sys/stdio.h>
+        )
+    elif sys.platform.startswith("linux"):
+        try:
+            rename_exclusive = libc.renameat2
+        except AttributeError as error:
+            raise PublishError(
+                "This Linux runtime lacks atomic no-replace rename support"
+            ) from error
+        rename_exclusive.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename_exclusive.restype = ctypes.c_int
+        result = rename_exclusive(
+            src_dir_fd,
+            source_bytes,
+            dst_dir_fd,
+            destination_bytes,
+            1,  # RENAME_NOREPLACE from <linux/fs.h>
+        )
+    else:
+        raise PublishError(
+            "Atomic publication replacement is supported only on macOS and Linux"
+        )
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(
+            error_number,
+            os.strerror(error_number),
+            os.fsdecode(destination_bytes),
+        )
 
 
 def _ensure_destination_root(destination_root: Path) -> None:
@@ -894,7 +1034,21 @@ def _read_regular_file_at(
             raise PublishError(
                 f"File changed or is hard-linked while reading: {display_path}"
             )
-        return _read_all(file_descriptor)
+        payload = _read_all(file_descriptor)
+        after = os.fstat(file_descriptor)
+        if (
+            not stat.S_ISREG(after.st_mode)
+            or after.st_dev != observed.st_dev
+            or after.st_ino != observed.st_ino
+            or after.st_nlink != observed.st_nlink
+            or after.st_size != observed.st_size
+            or after.st_mtime_ns != observed.st_mtime_ns
+            or after.st_ctime_ns != observed.st_ctime_ns
+        ):
+            raise PublishError(
+                f"File changed while reading: {display_path}"
+            )
+        return payload
     except PublishError:
         raise
     except OSError as error:
@@ -979,13 +1133,20 @@ def _walk_directory_handle(
     return records
 
 
-def _destination_tree_digest_handle(handle: DirectoryHandle) -> str:
+def _destination_tree_digest_records(
+    records: tuple[tuple[str, bytes, bytes], ...]
+    | list[tuple[str, bytes, bytes]],
+) -> str:
     digest = hashlib.sha256()
-    for relative, kind, payload in _walk_directory_handle(handle):
+    for relative, kind, payload in records:
         _update_digest_field(digest, relative.encode("utf-8"))
         _update_digest_field(digest, kind)
         _update_digest_field(digest, payload)
     return digest.hexdigest()
+
+
+def _destination_tree_digest_handle(handle: DirectoryHandle) -> str:
+    return _destination_tree_digest_records(_walk_directory_handle(handle))
 
 
 def _skill_tree_digest_handle(handle: DirectoryHandle) -> str:
@@ -1069,7 +1230,10 @@ def _assert_no_recovery_transactions(
         recovery_names = sorted(
             name
             for name in os.listdir(root_descriptor)
-            if name.startswith(TRANSACTION_PREFIX)
+            if (
+                name.startswith(TRANSACTION_PREFIX)
+                or name.startswith(CLEANUP_QUARANTINE_PREFIX)
+            )
         )
     except OSError as error:
         raise PublishError(
@@ -1275,7 +1439,321 @@ def _skill_digest_at(
             )
 
 
-def _clear_directory_handle(handle: DirectoryHandle) -> None:
+def _remove_verified_file_via_quarantine(
+    source_descriptor: int,
+    source_name: str,
+    source_path: Path,
+    expected_metadata: os.stat_result,
+    expected_payload: bytes,
+    cleanup_quarantine: DirectoryHandle,
+) -> None:
+    """Move, re-verify, and remove one file without unlinking its source name."""
+
+    quarantine_descriptor = _require_directory_descriptor(cleanup_quarantine)
+    quarantine_name = f"{CLEANUP_FILE_PREFIX}{secrets.token_hex(16)}"
+    quarantine_path = cleanup_quarantine.display_path / quarantine_name
+    try:
+        _atomic_rename_no_replace(
+            source_name,
+            quarantine_name,
+            src_dir_fd=source_descriptor,
+            dst_dir_fd=quarantine_descriptor,
+        )
+        _fsync_directory_descriptor(
+            quarantine_descriptor,
+            cleanup_quarantine.display_path,
+            preserve_transaction=True,
+        )
+        _fsync_directory_descriptor(
+            source_descriptor,
+            source_path.parent,
+            preserve_transaction=True,
+        )
+    except BaseException as error:
+        raise PublishError(
+            "Could not durably move a verified cleanup file into its private "
+            f"quarantine; preserving transaction state for {source_path}: "
+            f"{error}",
+            preserve_transaction=True,
+        ) from error
+
+    mismatch: str | None = None
+    try:
+        moved_metadata = os.stat(
+            quarantine_name,
+            dir_fd=quarantine_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISREG(moved_metadata.st_mode)
+            or moved_metadata.st_dev != expected_metadata.st_dev
+            or moved_metadata.st_ino != expected_metadata.st_ino
+        ):
+            mismatch = (
+                "cleanup quarantine received a different file identity"
+            )
+        else:
+            moved_payload = _read_regular_file_at(
+                quarantine_descriptor,
+                quarantine_name,
+                quarantine_path,
+                moved_metadata,
+            )
+            if moved_payload != expected_payload:
+                mismatch = "cleanup quarantine received different file bytes"
+            else:
+                revalidated_metadata = os.stat(
+                    quarantine_name,
+                    dir_fd=quarantine_descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    not stat.S_ISREG(revalidated_metadata.st_mode)
+                    or revalidated_metadata.st_dev != expected_metadata.st_dev
+                    or revalidated_metadata.st_ino != expected_metadata.st_ino
+                ):
+                    mismatch = (
+                        "cleanup quarantine file identity changed before "
+                        "deletion"
+                    )
+                else:
+                    revalidated_payload = _read_regular_file_at(
+                        quarantine_descriptor,
+                        quarantine_name,
+                        quarantine_path,
+                        revalidated_metadata,
+                    )
+                    if revalidated_payload != expected_payload:
+                        mismatch = (
+                            "cleanup quarantine file bytes changed before "
+                            "deletion"
+                        )
+                    else:
+                        final_metadata = os.stat(
+                            quarantine_name,
+                            dir_fd=quarantine_descriptor,
+                            follow_symlinks=False,
+                        )
+                        if (
+                            not stat.S_ISREG(final_metadata.st_mode)
+                            or final_metadata.st_dev
+                            != revalidated_metadata.st_dev
+                            or final_metadata.st_ino
+                            != revalidated_metadata.st_ino
+                            or final_metadata.st_nlink
+                            != revalidated_metadata.st_nlink
+                            or final_metadata.st_size
+                            != revalidated_metadata.st_size
+                            or final_metadata.st_mtime_ns
+                            != revalidated_metadata.st_mtime_ns
+                            or final_metadata.st_ctime_ns
+                            != revalidated_metadata.st_ctime_ns
+                        ):
+                            mismatch = (
+                                "cleanup quarantine file changed immediately "
+                                "before deletion"
+                            )
+    except BaseException as error:
+        mismatch = f"cleanup quarantine verification failed: {error}"
+
+    if mismatch is not None:
+        restoration = "the moved entry remains in the cleanup quarantine"
+        try:
+            os.stat(
+                source_name,
+                dir_fd=source_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            try:
+                _atomic_rename_no_replace(
+                    quarantine_name,
+                    source_name,
+                    src_dir_fd=quarantine_descriptor,
+                    dst_dir_fd=source_descriptor,
+                )
+                _fsync_directory_descriptor(
+                    source_descriptor,
+                    source_path.parent,
+                    preserve_transaction=True,
+                )
+                _fsync_directory_descriptor(
+                    quarantine_descriptor,
+                    cleanup_quarantine.display_path,
+                    preserve_transaction=True,
+                )
+                restoration = "the moved entry was restored to its source name"
+            except BaseException as restore_error:
+                restoration = (
+                    "restoration was not safe and the recovery entry was "
+                    f"preserved: {restore_error}"
+                )
+        except OSError as source_error:
+            restoration = (
+                "the source name could not be checked, so the recovery entry "
+                f"was preserved: {source_error}"
+            )
+        raise PublishError(
+            "Transaction cleanup detected a per-file replacement after "
+            f"verification at {source_path}: {mismatch}; {restoration}",
+            preserve_transaction=True,
+        )
+
+    # POSIX has no inode-conditional unlink. The name is now inside a freshly
+    # created 0700 random quarantine and has passed two identity/content reads
+    # plus a final metadata check; mutation after this point requires a
+    # same-user process deliberately racing the private quarantine.
+    try:
+        os.unlink(
+            quarantine_name,
+            dir_fd=quarantine_descriptor,
+        )
+        _fsync_directory_descriptor(
+            quarantine_descriptor,
+            cleanup_quarantine.display_path,
+            preserve_transaction=True,
+        )
+    except BaseException as error:
+        raise PublishError(
+            "Could not remove a post-verified private cleanup entry; "
+            f"preserving transaction state at {quarantine_path}: {error}",
+            preserve_transaction=True,
+        ) from error
+
+
+def _expected_subtree_records(
+    expected_records: tuple[tuple[str, bytes, bytes], ...],
+    prefix: str,
+) -> tuple[tuple[str, bytes, bytes], ...]:
+    prefix_with_separator = f"{prefix}/"
+    return tuple(
+        (
+            relative[len(prefix_with_separator) :],
+            kind,
+            payload,
+        )
+        for relative, kind, payload in expected_records
+        if relative.startswith(prefix_with_separator)
+    )
+
+
+def _quarantine_open_verified_directory(
+    source_descriptor: int,
+    source_name: str,
+    source_path: Path,
+    source_handle: DirectoryHandle,
+    expected_records: tuple[tuple[str, bytes, bytes], ...],
+    cleanup_quarantine: DirectoryHandle,
+) -> tuple[str, Path]:
+    """Move an open directory into quarantine and verify it before recursion."""
+
+    quarantine_descriptor = _require_directory_descriptor(cleanup_quarantine)
+    quarantine_name = f"{CLEANUP_DIRECTORY_PREFIX}{secrets.token_hex(16)}"
+    quarantine_path = cleanup_quarantine.display_path / quarantine_name
+    try:
+        _atomic_rename_no_replace(
+            source_name,
+            quarantine_name,
+            src_dir_fd=source_descriptor,
+            dst_dir_fd=quarantine_descriptor,
+        )
+        _fsync_directory_descriptor(
+            quarantine_descriptor,
+            cleanup_quarantine.display_path,
+            preserve_transaction=True,
+        )
+        _fsync_directory_descriptor(
+            source_descriptor,
+            source_path.parent,
+            preserve_transaction=True,
+        )
+    except BaseException as error:
+        raise PublishError(
+            "Could not durably move a verified cleanup directory into its "
+            f"private quarantine; preserving transaction state for "
+            f"{source_path}: {error}",
+            preserve_transaction=True,
+        ) from error
+
+    mismatch: str | None = None
+    try:
+        moved_metadata = os.stat(
+            quarantine_name,
+            dir_fd=quarantine_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(moved_metadata.st_mode)
+            or moved_metadata.st_dev != source_handle.device
+            or moved_metadata.st_ino != source_handle.inode
+        ):
+            mismatch = (
+                "cleanup quarantine received a different directory identity"
+            )
+        elif tuple(_walk_directory_handle(source_handle)) != expected_records:
+            mismatch = (
+                "cleanup quarantine received different directory contents"
+            )
+    except BaseException as error:
+        mismatch = f"cleanup quarantine verification failed: {error}"
+
+    if mismatch is not None:
+        restoration = "the moved directory remains in the cleanup quarantine"
+        try:
+            os.stat(
+                source_name,
+                dir_fd=source_descriptor,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            try:
+                _atomic_rename_no_replace(
+                    quarantine_name,
+                    source_name,
+                    src_dir_fd=quarantine_descriptor,
+                    dst_dir_fd=source_descriptor,
+                )
+                _fsync_directory_descriptor(
+                    source_descriptor,
+                    source_path.parent,
+                    preserve_transaction=True,
+                )
+                _fsync_directory_descriptor(
+                    quarantine_descriptor,
+                    cleanup_quarantine.display_path,
+                    preserve_transaction=True,
+                )
+                restoration = (
+                    "the moved directory was restored to its source name"
+                )
+            except BaseException as restore_error:
+                restoration = (
+                    "restoration was not safe and the recovery directory was "
+                    f"preserved: {restore_error}"
+                )
+        except OSError as source_error:
+            restoration = (
+                "the source name could not be checked, so the recovery "
+                f"directory was preserved: {source_error}"
+            )
+        raise PublishError(
+            "Transaction cleanup detected a directory replacement after "
+            f"verification at {source_path}: {mismatch}; {restoration}",
+            preserve_transaction=True,
+        )
+
+    source_handle.name = quarantine_name
+    source_handle.display_path = quarantine_path
+    return quarantine_name, quarantine_path
+
+
+def _clear_directory_handle(
+    handle: DirectoryHandle,
+    *,
+    expected_records: tuple[tuple[str, bytes, bytes], ...] | None = None,
+    prefix: str = "",
+    cleanup_quarantine: DirectoryHandle | None = None,
+) -> None:
     file_descriptor = _require_directory_descriptor(handle)
     try:
         current_mode = stat.S_IMODE(os.fstat(file_descriptor).st_mode)
@@ -1294,8 +1772,27 @@ def _clear_directory_handle(handle: DirectoryHandle) -> None:
         raise PublishError(
             f"Could not list transaction directory {handle.display_path}: {error}"
         ) from error
+    expected_entries: dict[str, tuple[str, bytes, bytes]] = {}
+    if expected_records is not None:
+        prefix_with_separator = f"{prefix}/" if prefix else ""
+        for relative, kind, payload in expected_records:
+            if prefix_with_separator:
+                if not relative.startswith(prefix_with_separator):
+                    continue
+                remainder = relative[len(prefix_with_separator) :]
+            else:
+                remainder = relative
+            if "/" not in remainder:
+                expected_entries[remainder] = (relative, kind, payload)
+        if tuple(names) != tuple(sorted(expected_entries)):
+            raise PublishError(
+                "Transaction cleanup tree gained unrecognized content; "
+                f"preserving {handle.display_path}",
+                preserve_transaction=True,
+            )
     for name in names:
         display_path = handle.display_path / name
+        expected_entry = expected_entries.get(name)
         try:
             metadata = os.stat(
                 name,
@@ -1307,6 +1804,14 @@ def _clear_directory_handle(handle: DirectoryHandle) -> None:
                 f"Could not inspect transaction entry {display_path}: {error}"
             ) from error
         if stat.S_ISDIR(metadata.st_mode):
+            if expected_records is not None and (
+                expected_entry is None or expected_entry[1] != b"directory"
+            ):
+                raise PublishError(
+                    "Transaction cleanup entry type changed; preserving "
+                    f"{display_path}",
+                    preserve_transaction=True,
+                )
             child = _open_directory_handle_at(
                 file_descriptor,
                 name,
@@ -1314,9 +1819,41 @@ def _clear_directory_handle(handle: DirectoryHandle) -> None:
             )
             child_device = child.device
             child_inode = child.inode
+            cleanup_name: str | None = None
+            cleanup_path = display_path
             recursive_error: BaseException | None = None
             try:
-                _clear_directory_handle(child)
+                if expected_records is not None:
+                    if cleanup_quarantine is None:
+                        raise PublishError(
+                            "Verified transaction cleanup lacks a private "
+                            f"quarantine; preserving {display_path}",
+                            preserve_transaction=True,
+                        )
+                    assert expected_entry is not None
+                    cleanup_name, cleanup_path = (
+                        _quarantine_open_verified_directory(
+                            file_descriptor,
+                            name,
+                            display_path,
+                            child,
+                            _expected_subtree_records(
+                                expected_records,
+                                expected_entry[0],
+                            ),
+                            cleanup_quarantine,
+                        )
+                    )
+                _clear_directory_handle(
+                    child,
+                    expected_records=expected_records,
+                    prefix=(
+                        expected_entry[0]
+                        if expected_entry is not None
+                        else ""
+                    ),
+                    cleanup_quarantine=cleanup_quarantine,
+                )
             except BaseException as error:
                 recursive_error = error
             close_errors = _close_directory_handle(child)
@@ -1331,13 +1868,22 @@ def _clear_directory_handle(handle: DirectoryHandle) -> None:
                 raise recursive_error
             if close_errors:
                 raise PublishError(
-                    f"Could not close transaction directory {display_path}: "
+                    f"Could not close transaction directory {cleanup_path}: "
                     + "; ".join(close_errors),
                     preserve_transaction=True,
                 )
+            removal_descriptor = file_descriptor
+            removal_name = name
+            if expected_records is not None:
+                assert cleanup_quarantine is not None
+                assert cleanup_name is not None
+                removal_descriptor = _require_directory_descriptor(
+                    cleanup_quarantine
+                )
+                removal_name = cleanup_name
             observed = os.stat(
-                name,
-                dir_fd=file_descriptor,
+                removal_name,
+                dir_fd=removal_descriptor,
                 follow_symlinks=False,
             )
             if (
@@ -1347,11 +1893,90 @@ def _clear_directory_handle(handle: DirectoryHandle) -> None:
             ):
                 raise PublishError(
                     "Transaction directory changed before removal: "
-                    f"{display_path}"
+                    f"{cleanup_path}",
+                    preserve_transaction=expected_records is not None,
                 )
-            os.rmdir(name, dir_fd=file_descriptor)
+            try:
+                os.rmdir(removal_name, dir_fd=removal_descriptor)
+            except OSError as error:
+                if expected_records is not None and error.errno in {
+                    errno.EEXIST,
+                    errno.ENOTEMPTY,
+                }:
+                    raise PublishError(
+                        "Transaction cleanup directory gained unrecognized "
+                        f"content; preserving {cleanup_path}",
+                        preserve_transaction=True,
+                    ) from error
+                raise
+            if expected_records is not None:
+                assert cleanup_quarantine is not None
+                _fsync_directory_descriptor(
+                    removal_descriptor,
+                    cleanup_quarantine.display_path,
+                    preserve_transaction=True,
+                )
+            continue
+        if expected_records is not None:
+            if (
+                expected_entry is None
+                or expected_entry[1] != b"file"
+                or not stat.S_ISREG(metadata.st_mode)
+            ):
+                raise PublishError(
+                    "Transaction cleanup entry type changed; preserving "
+                    f"{display_path}",
+                    preserve_transaction=True,
+                )
+            observed_payload = _read_regular_file_at(
+                file_descriptor,
+                name,
+                display_path,
+                metadata,
+            )
+            if observed_payload != expected_entry[2]:
+                raise PublishError(
+                    "Transaction cleanup file changed; preserving "
+                    f"{display_path}",
+                    preserve_transaction=True,
+                )
+            observed = os.stat(
+                name,
+                dir_fd=file_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISREG(observed.st_mode)
+                or observed.st_dev != metadata.st_dev
+                or observed.st_ino != metadata.st_ino
+            ):
+                raise PublishError(
+                    "Transaction cleanup file identity changed; preserving "
+                    f"{display_path}",
+                    preserve_transaction=True,
+                )
+            if cleanup_quarantine is None:
+                raise PublishError(
+                    "Verified transaction cleanup lacks a private quarantine; "
+                    f"preserving {display_path}",
+                    preserve_transaction=True,
+                )
+            _remove_verified_file_via_quarantine(
+                file_descriptor,
+                name,
+                display_path,
+                metadata,
+                expected_entry[2],
+                cleanup_quarantine,
+            )
             continue
         os.unlink(name, dir_fd=file_descriptor)
+    if expected_records is not None and os.listdir(file_descriptor):
+        raise PublishError(
+            "Transaction cleanup tree gained unrecognized content; "
+            f"preserving {handle.display_path}",
+            preserve_transaction=True,
+        )
     _fsync_directory_descriptor(
         file_descriptor,
         handle.display_path,
@@ -1363,38 +1988,767 @@ def _remove_transaction_workspace(
     transaction_root: DirectoryHandle,
     destination_root: DestinationRootIdentity,
     transaction_lock: TransactionLock,
+    cleanup_plan: TransactionCleanupPlan | None = None,
 ) -> None:
     _assert_mutation_authorized(destination_root, transaction_lock)
     root_descriptor = transaction_lock.file_descriptor
     if root_descriptor is None:
         raise PublishError("Publication destination lock descriptor is missing")
-    _clear_directory_handle(transaction_root)
+    if cleanup_plan is not None:
+        _verify_success_cleanup_state(transaction_root, cleanup_plan)
+        _clear_verified_success_workspace(transaction_root, cleanup_plan)
+    else:
+        _clear_directory_handle(transaction_root)
     _assert_mutation_authorized(destination_root, transaction_lock)
+    cleanup_name = (
+        f"{CLEANUP_QUARANTINE_PREFIX}{secrets.token_hex(16)}"
+    )
+    cleanup_path = destination_root.path / cleanup_name
+    root_cleanup = _create_directory_handle_at(
+        root_descriptor,
+        cleanup_name,
+        cleanup_path,
+    )
+    cleanup_device = root_cleanup.device
+    cleanup_inode = root_cleanup.inode
+    close_errors = _close_directory_handle(transaction_root)
+    if close_errors:
+        root_cleanup_close_errors = _close_directory_handle(root_cleanup)
+        close_suffix = (
+            "; root cleanup quarantine closure also reported: "
+            + "; ".join(root_cleanup_close_errors)
+            if root_cleanup_close_errors
+            else ""
+        )
+        raise PublishError(
+            "Could not close transaction workspace before removal: "
+            + "; ".join(close_errors)
+            + close_suffix,
+            preserve_transaction=True,
+        )
+    operation_error: BaseException | None = None
+    try:
+        _remove_verified_empty_directory_at(
+            root_descriptor,
+            transaction_root.name,
+            transaction_root.display_path,
+            transaction_root.device,
+            transaction_root.inode,
+            root_cleanup,
+        )
+    except BaseException as error:
+        operation_error = error
+    root_cleanup_close_errors = _close_directory_handle(root_cleanup)
+    if operation_error is not None:
+        if root_cleanup_close_errors:
+            raise PublishError(
+                f"{operation_error}; root cleanup quarantine closure also "
+                f"reported: {'; '.join(root_cleanup_close_errors)}",
+                preserve_transaction=True,
+            ) from operation_error
+        raise operation_error
+    if root_cleanup_close_errors:
+        raise PublishError(
+            "Could not close root cleanup quarantine: "
+            + "; ".join(root_cleanup_close_errors),
+            preserve_transaction=True,
+        )
+    _remove_fresh_private_empty_directory_at(
+        root_descriptor,
+        cleanup_name,
+        cleanup_path,
+        cleanup_device,
+        cleanup_inode,
+    )
+    # The transaction's original name is a public recovery boundary. A
+    # concurrent same-name entry may appear after the accepted directory moves
+    # into private quarantine, so verify all recovery prefixes again while the
+    # destination lock is still held.
+    _assert_no_recovery_transactions(
+        destination_root,
+        transaction_lock,
+    )
+
+
+def _verify_owned_cleanup_directory(
+    transaction_descriptor: int,
+    name: str,
+    expected_device: int,
+    expected_inode: int,
+    display_path: Path,
+) -> DirectoryHandle:
+    handle = _open_directory_handle_at(
+        transaction_descriptor,
+        name,
+        display_path,
+    )
+    if handle.device != expected_device or handle.inode != expected_inode:
+        close_errors = _close_directory_handle(handle)
+        close_suffix = (
+            "; descriptor cleanup also reported: " + "; ".join(close_errors)
+            if close_errors
+            else ""
+        )
+        raise PublishError(
+            "Transaction cleanup directory identity changed; preserving "
+            f"unrecognized content at {display_path}{close_suffix}",
+            preserve_transaction=True,
+        )
+    return handle
+
+
+def _verify_success_cleanup_state(
+    transaction_root: DirectoryHandle,
+    cleanup_plan: TransactionCleanupPlan,
+) -> None:
+    """Refuse committed cleanup unless every remaining entry is recognized."""
+
+    transaction_descriptor = _require_directory_descriptor(transaction_root)
+    expected_root_entries = ("backups", "quarantine", "stage")
+    observed_root_entries = tuple(sorted(os.listdir(transaction_descriptor)))
+    if observed_root_entries != expected_root_entries:
+        raise PublishError(
+            "Transaction workspace contains unrecognized entries after "
+            "publication; preserving it for review: "
+            f"{transaction_root.display_path}",
+            preserve_transaction=True,
+        )
+
+    expected_directories = (
+        (
+            "stage",
+            cleanup_plan.stage_device,
+            cleanup_plan.stage_inode,
+        ),
+        (
+            "backups",
+            cleanup_plan.backup_device,
+            cleanup_plan.backup_inode,
+        ),
+        (
+            "quarantine",
+            cleanup_plan.quarantine_device,
+            cleanup_plan.quarantine_inode,
+        ),
+    )
+    handles: dict[str, DirectoryHandle] = {}
+    try:
+        for name, device, inode in expected_directories:
+            handles[name] = _verify_owned_cleanup_directory(
+                transaction_descriptor,
+                name,
+                device,
+                inode,
+                transaction_root.display_path / name,
+            )
+
+        for name in ("stage", "quarantine"):
+            descriptor = _require_directory_descriptor(handles[name])
+            if os.listdir(descriptor):
+                raise PublishError(
+                    "Transaction cleanup found unrecognized committed "
+                    f"content in {handles[name].display_path}; preserving it "
+                    "for review",
+                    preserve_transaction=True,
+                )
+
+        backup_handle = handles["backups"]
+        backup_descriptor = _require_directory_descriptor(backup_handle)
+        expected_backups = dict(cleanup_plan.backup_states)
+        observed_backup_names = tuple(sorted(os.listdir(backup_descriptor)))
+        if observed_backup_names != tuple(sorted(expected_backups)):
+            raise PublishError(
+                "Transaction cleanup found unrecognized backup entries in "
+                f"{backup_handle.display_path}; preserving them for review",
+                preserve_transaction=True,
+            )
+        for folder, expected_state in expected_backups.items():
+            observed_state = _capture_destination_state_at(
+                backup_descriptor,
+                folder,
+                backup_handle.display_path / folder,
+            )
+            if observed_state != expected_state:
+                raise PublishError(
+                    "Transaction cleanup found changed backup content at "
+                    f"{backup_handle.display_path / folder}; preserving it "
+                    "for review",
+                    preserve_transaction=True,
+                )
+    finally:
+        close_errors: list[str] = []
+        for handle in handles.values():
+            close_errors.extend(_close_directory_handle(handle))
+        if close_errors and sys.exc_info()[0] is None:
+            raise PublishError(
+                "Could not close transaction cleanup verification "
+                "directories: " + "; ".join(close_errors),
+                preserve_transaction=True,
+            )
+
+
+def _remove_verified_directory_tree_at(
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+    expected_state: DestinationState,
+    cleanup_quarantine: DirectoryHandle,
+) -> None:
+    observed_state = _capture_destination_state_at(
+        parent_descriptor,
+        name,
+        display_path,
+    )
+    if observed_state != expected_state:
+        raise PublishError(
+            "Transaction cleanup tree changed; preserving unrecognized "
+            f"content at {display_path}",
+            preserve_transaction=True,
+        )
+    handle = _open_directory_handle_at(
+        parent_descriptor,
+        name,
+        display_path,
+    )
+    if (
+        handle.device != expected_state.device
+        or handle.inode != expected_state.inode
+    ):
+        close_errors = _close_directory_handle(handle)
+        close_suffix = (
+            "; descriptor cleanup also reported: " + "; ".join(close_errors)
+            if close_errors
+            else ""
+        )
+        raise PublishError(
+            "Transaction cleanup tree identity changed; preserving "
+            f"unrecognized content at {display_path}{close_suffix}",
+            preserve_transaction=True,
+        )
+    cleanup_name: str | None = None
+    cleanup_path = display_path
+    recursive_error: BaseException | None = None
+    try:
+        cleanup_records = tuple(_walk_directory_handle(handle))
+        cleanup_digest = _destination_tree_digest_records(cleanup_records)
+        if cleanup_digest != expected_state.tree_sha256:
+            raise PublishError(
+                "Transaction cleanup tree changed before deletion; preserving "
+                f"unrecognized content at {display_path}",
+                preserve_transaction=True,
+            )
+        cleanup_name, cleanup_path = _quarantine_open_verified_directory(
+            parent_descriptor,
+            name,
+            display_path,
+            handle,
+            cleanup_records,
+            cleanup_quarantine,
+        )
+        _clear_directory_handle(
+            handle,
+            expected_records=cleanup_records,
+            cleanup_quarantine=cleanup_quarantine,
+        )
+    except BaseException as error:
+        recursive_error = error
+    close_errors = _close_directory_handle(handle)
+    if recursive_error is not None:
+        if close_errors:
+            raise PublishError(
+                f"{recursive_error}; cleanup descriptor closure also "
+                f"reported at {cleanup_path}: "
+                + "; ".join(close_errors),
+                preserve_transaction=True,
+            ) from recursive_error
+        raise recursive_error
+    if close_errors:
+        raise PublishError(
+            f"Could not close verified cleanup tree {cleanup_path}: "
+            + "; ".join(close_errors),
+            preserve_transaction=True,
+        )
+    if cleanup_name is None:
+        raise PublishError(
+            "Verified cleanup tree was not moved into private quarantine; "
+            f"preserving {display_path}",
+            preserve_transaction=True,
+        )
+    quarantine_descriptor = _require_directory_descriptor(cleanup_quarantine)
     observed = os.stat(
-        transaction_root.name,
-        dir_fd=root_descriptor,
+        cleanup_name,
+        dir_fd=quarantine_descriptor,
         follow_symlinks=False,
     )
     if (
         not stat.S_ISDIR(observed.st_mode)
-        or observed.st_dev != transaction_root.device
-        or observed.st_ino != transaction_root.inode
+        or observed.st_dev != expected_state.device
+        or observed.st_ino != expected_state.inode
     ):
         raise PublishError(
-            "Transaction workspace changed before removal: "
-            f"{transaction_root.display_path}"
+            "Transaction cleanup tree changed before removal; preserving "
+            f"unrecognized content at {cleanup_path}",
+            preserve_transaction=True,
         )
-    close_errors = _close_directory_handle(transaction_root)
+    try:
+        os.rmdir(cleanup_name, dir_fd=quarantine_descriptor)
+    except OSError as error:
+        if error.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+            raise PublishError(
+                "Transaction cleanup directory gained unrecognized content; "
+                f"preserving {cleanup_path}",
+                preserve_transaction=True,
+            ) from error
+        raise
+    _fsync_directory_descriptor(
+        quarantine_descriptor,
+        cleanup_quarantine.display_path,
+        preserve_transaction=True,
+    )
+
+
+def _remove_verified_empty_directory_at(
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+    expected_device: int,
+    expected_inode: int,
+    cleanup_quarantine: DirectoryHandle,
+) -> None:
+    """Move an expected empty directory into private quarantine before removal."""
+
+    handle = _verify_owned_cleanup_directory(
+        parent_descriptor,
+        name,
+        expected_device,
+        expected_inode,
+        display_path,
+    )
+    quarantine_descriptor = _require_directory_descriptor(cleanup_quarantine)
+    quarantine_name = f"{CLEANUP_DIRECTORY_PREFIX}{secrets.token_hex(16)}"
+    quarantine_path = cleanup_quarantine.display_path / quarantine_name
+    operation_error: BaseException | None = None
+    try:
+        if os.listdir(_require_directory_descriptor(handle)):
+            raise PublishError(
+                "Transaction cleanup found unrecognized content in "
+                f"{display_path}; preserving it for review",
+                preserve_transaction=True,
+            )
+        _atomic_rename_no_replace(
+            name,
+            quarantine_name,
+            src_dir_fd=parent_descriptor,
+            dst_dir_fd=quarantine_descriptor,
+        )
+        _fsync_directory_descriptor(
+            parent_descriptor,
+            display_path.parent,
+            preserve_transaction=True,
+        )
+        _fsync_directory_descriptor(
+            quarantine_descriptor,
+            cleanup_quarantine.display_path,
+            preserve_transaction=True,
+        )
+
+        moved = os.stat(
+            quarantine_name,
+            dir_fd=quarantine_descriptor,
+            follow_symlinks=False,
+        )
+        moved_handle = os.fstat(_require_directory_descriptor(handle))
+        if (
+            not stat.S_ISDIR(moved.st_mode)
+            or moved.st_dev != expected_device
+            or moved.st_ino != expected_inode
+            or moved_handle.st_dev != expected_device
+            or moved_handle.st_ino != expected_inode
+            or os.listdir(_require_directory_descriptor(handle))
+        ):
+            restoration = (
+                "the moved directory remains in the private cleanup quarantine"
+            )
+            try:
+                os.stat(
+                    name,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                try:
+                    _atomic_rename_no_replace(
+                        quarantine_name,
+                        name,
+                        src_dir_fd=quarantine_descriptor,
+                        dst_dir_fd=parent_descriptor,
+                    )
+                    _fsync_directory_descriptor(
+                        parent_descriptor,
+                        display_path.parent,
+                        preserve_transaction=True,
+                    )
+                    _fsync_directory_descriptor(
+                        quarantine_descriptor,
+                        cleanup_quarantine.display_path,
+                        preserve_transaction=True,
+                    )
+                    restoration = (
+                        "the moved directory was restored to its public name"
+                    )
+                except BaseException as restore_error:
+                    restoration = (
+                        "restoration was not safe and the moved directory "
+                        f"remains preserved: {restore_error}"
+                    )
+            except OSError as source_error:
+                restoration = (
+                    "the public name could not be checked, so the moved "
+                    f"directory remains preserved: {source_error}"
+                )
+            raise PublishError(
+                "Transaction cleanup moved a substituted empty directory; "
+                f"{restoration}: {display_path}",
+                preserve_transaction=True,
+            )
+        handle.name = quarantine_name
+        handle.display_path = quarantine_path
+    except BaseException as error:
+        operation_error = error
+
+    close_errors = _close_directory_handle(handle)
+    if operation_error is not None:
+        if close_errors:
+            raise PublishError(
+                f"{operation_error}; empty-directory cleanup descriptor "
+                f"closure also reported at {quarantine_path}: "
+                + "; ".join(close_errors),
+                preserve_transaction=True,
+            ) from operation_error
+        if (
+            isinstance(operation_error, PublishError)
+            and operation_error.preserve_transaction
+        ):
+            raise operation_error
+        raise PublishError(
+            "Could not move an empty transaction directory into private "
+            f"cleanup quarantine; preserving {display_path}: {operation_error}",
+            preserve_transaction=True,
+        ) from operation_error
     if close_errors:
         raise PublishError(
-            "Could not close transaction workspace before removal: "
-            + "; ".join(close_errors)
+            f"Could not close privately quarantined empty directory "
+            f"{quarantine_path}: " + "; ".join(close_errors),
+            preserve_transaction=True,
         )
-    os.rmdir(transaction_root.name, dir_fd=root_descriptor)
+
+    observed = os.stat(
+        quarantine_name,
+        dir_fd=quarantine_descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISDIR(observed.st_mode)
+        or observed.st_dev != expected_device
+        or observed.st_ino != expected_inode
+    ):
+        raise PublishError(
+            "Private cleanup directory changed before removal; preserving "
+            f"{quarantine_path}",
+            preserve_transaction=True,
+        )
+    # As with file unlink, POSIX has no inode-conditional rmdir. The directory
+    # is empty and now has a random name inside a fresh 0700 quarantine; a
+    # remaining substitution window requires a deliberate same-user race.
+    try:
+        os.rmdir(quarantine_name, dir_fd=quarantine_descriptor)
+    except OSError as error:
+        if error.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+            raise PublishError(
+                "Privately quarantined cleanup directory gained unrecognized "
+                f"content; preserving {quarantine_path}",
+                preserve_transaction=True,
+            ) from error
+        raise
     _fsync_directory_descriptor(
-        root_descriptor,
-        destination_root.path,
+        quarantine_descriptor,
+        cleanup_quarantine.display_path,
         preserve_transaction=True,
+    )
+
+
+def _remove_fresh_private_empty_directory_at(
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+    expected_device: int,
+    expected_inode: int,
+) -> None:
+    """Remove a newly created 0700 cleanup quarantine after final verification."""
+
+    handle = _verify_owned_cleanup_directory(
+        parent_descriptor,
+        name,
+        expected_device,
+        expected_inode,
+        display_path,
+    )
+    try:
+        if os.listdir(_require_directory_descriptor(handle)):
+            raise PublishError(
+                "Private cleanup quarantine retained recovery content; "
+                f"preserving {display_path}",
+                preserve_transaction=True,
+            )
+    finally:
+        close_errors = _close_directory_handle(handle)
+        if close_errors and sys.exc_info()[0] is None:
+            raise PublishError(
+                f"Could not close private cleanup quarantine {display_path}: "
+                + "; ".join(close_errors),
+                preserve_transaction=True,
+            )
+    observed = os.stat(
+        name,
+        dir_fd=parent_descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISDIR(observed.st_mode)
+        or observed.st_dev != expected_device
+        or observed.st_ino != expected_inode
+    ):
+        raise PublishError(
+            "Private cleanup quarantine changed before removal; preserving "
+            f"{display_path}",
+            preserve_transaction=True,
+        )
+    try:
+        os.rmdir(name, dir_fd=parent_descriptor)
+    except OSError as error:
+        if error.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+            raise PublishError(
+                "Private cleanup quarantine gained recovery content; "
+                f"preserving {display_path}",
+                preserve_transaction=True,
+            ) from error
+        raise
+    _fsync_directory_descriptor(
+        parent_descriptor,
+        display_path.parent,
+        preserve_transaction=True,
+    )
+
+
+def _clear_verified_success_workspace_entries(
+    transaction_root: DirectoryHandle,
+    cleanup_plan: TransactionCleanupPlan,
+    workspace_cleanup: DirectoryHandle,
+) -> None:
+    """Remove only entries recorded by the successful transaction."""
+
+    transaction_descriptor = _require_directory_descriptor(transaction_root)
+    _remove_verified_empty_directory_at(
+        transaction_descriptor,
+        "stage",
+        transaction_root.display_path / "stage",
+        cleanup_plan.stage_device,
+        cleanup_plan.stage_inode,
+        workspace_cleanup,
+    )
+
+    backup_path = transaction_root.display_path / "backups"
+    backup_handle = _verify_owned_cleanup_directory(
+        transaction_descriptor,
+        "backups",
+        cleanup_plan.backup_device,
+        cleanup_plan.backup_inode,
+        backup_path,
+    )
+    backup_descriptor = _require_directory_descriptor(backup_handle)
+    backup_error: BaseException | None = None
+    cleanup_quarantine: DirectoryHandle | None = None
+    try:
+        expected_backups = dict(cleanup_plan.backup_states)
+        if tuple(sorted(os.listdir(backup_descriptor))) != tuple(
+            sorted(expected_backups)
+        ):
+            raise PublishError(
+                "Transaction cleanup found unrecognized backup entries in "
+                f"{backup_path}; preserving them for review",
+                preserve_transaction=True,
+            )
+        if expected_backups:
+            cleanup_name = (
+                f"{CLEANUP_QUARANTINE_PREFIX}{secrets.token_hex(16)}"
+            )
+            cleanup_path = backup_path / cleanup_name
+            cleanup_quarantine = _create_directory_handle_at(
+                backup_descriptor,
+                cleanup_name,
+                cleanup_path,
+            )
+            cleanup_device = cleanup_quarantine.device
+            cleanup_inode = cleanup_quarantine.inode
+            for folder, expected_state in expected_backups.items():
+                _remove_verified_directory_tree_at(
+                    backup_descriptor,
+                    folder,
+                    backup_path / folder,
+                    expected_state,
+                    cleanup_quarantine,
+                )
+            if os.listdir(
+                _require_directory_descriptor(cleanup_quarantine)
+            ):
+                raise PublishError(
+                    "Private cleanup quarantine retained recovery entries; "
+                    f"preserving {cleanup_path}",
+                    preserve_transaction=True,
+                )
+            cleanup_close_errors = _close_directory_handle(
+                cleanup_quarantine
+            )
+            if cleanup_close_errors:
+                raise PublishError(
+                    "Could not close private cleanup quarantine before "
+                    f"removal: {'; '.join(cleanup_close_errors)}",
+                    preserve_transaction=True,
+                )
+            observed_cleanup = os.stat(
+                cleanup_name,
+                dir_fd=backup_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISDIR(observed_cleanup.st_mode)
+                or observed_cleanup.st_dev != cleanup_device
+                or observed_cleanup.st_ino != cleanup_inode
+            ):
+                raise PublishError(
+                    "Private cleanup quarantine changed before removal; "
+                    f"preserving {cleanup_path}",
+                    preserve_transaction=True,
+                )
+            try:
+                os.rmdir(cleanup_name, dir_fd=backup_descriptor)
+            except OSError as error:
+                if error.errno in {errno.EEXIST, errno.ENOTEMPTY}:
+                    raise PublishError(
+                        "Private cleanup quarantine gained recovery entries; "
+                        f"preserving {cleanup_path}",
+                        preserve_transaction=True,
+                    ) from error
+                raise
+            _fsync_directory_descriptor(
+                backup_descriptor,
+                backup_path,
+                preserve_transaction=True,
+            )
+        if os.listdir(backup_descriptor):
+            raise PublishError(
+                "Transaction backup directory changed during cleanup; "
+                f"preserving {backup_path}",
+                preserve_transaction=True,
+            )
+        _fsync_directory_descriptor(
+            backup_descriptor,
+            backup_path,
+            preserve_transaction=True,
+        )
+    except BaseException as error:
+        backup_error = error
+    cleanup_close_errors = _close_directory_handle(cleanup_quarantine)
+    backup_close_errors = (
+        cleanup_close_errors + _close_directory_handle(backup_handle)
+    )
+    if backup_error is not None:
+        if backup_close_errors:
+            raise PublishError(
+                f"{backup_error}; backup cleanup descriptor closure also "
+                f"reported: {'; '.join(backup_close_errors)}",
+                preserve_transaction=True,
+            ) from backup_error
+        raise backup_error
+    if backup_close_errors:
+        raise PublishError(
+            "Could not close verified backup directory: "
+            + "; ".join(backup_close_errors),
+            preserve_transaction=True,
+        )
+    _remove_verified_empty_directory_at(
+        transaction_descriptor,
+        "backups",
+        backup_path,
+        cleanup_plan.backup_device,
+        cleanup_plan.backup_inode,
+        workspace_cleanup,
+    )
+
+    _remove_verified_empty_directory_at(
+        transaction_descriptor,
+        "quarantine",
+        transaction_root.display_path / "quarantine",
+        cleanup_plan.quarantine_device,
+        cleanup_plan.quarantine_inode,
+        workspace_cleanup,
+    )
+    _fsync_directory_descriptor(
+        transaction_descriptor,
+        transaction_root.display_path,
+        preserve_transaction=True,
+    )
+
+
+def _clear_verified_success_workspace(
+    transaction_root: DirectoryHandle,
+    cleanup_plan: TransactionCleanupPlan,
+) -> None:
+    """Remove committed transaction entries through a fresh private quarantine."""
+
+    transaction_descriptor = _require_directory_descriptor(transaction_root)
+    cleanup_name = (
+        f"{CLEANUP_QUARANTINE_PREFIX}{secrets.token_hex(16)}"
+    )
+    cleanup_path = transaction_root.display_path / cleanup_name
+    workspace_cleanup = _create_directory_handle_at(
+        transaction_descriptor,
+        cleanup_name,
+        cleanup_path,
+    )
+    cleanup_device = workspace_cleanup.device
+    cleanup_inode = workspace_cleanup.inode
+    operation_error: BaseException | None = None
+    try:
+        _clear_verified_success_workspace_entries(
+            transaction_root,
+            cleanup_plan,
+            workspace_cleanup,
+        )
+    except BaseException as error:
+        operation_error = error
+
+    close_errors = _close_directory_handle(workspace_cleanup)
+    if operation_error is not None:
+        if close_errors:
+            raise PublishError(
+                f"{operation_error}; workspace cleanup quarantine closure also "
+                f"reported: {'; '.join(close_errors)}",
+                preserve_transaction=True,
+            ) from operation_error
+        raise operation_error
+    if close_errors:
+        raise PublishError(
+            "Could not close workspace cleanup quarantine: "
+            + "; ".join(close_errors),
+            preserve_transaction=True,
+        )
+    _remove_fresh_private_empty_directory_at(
+        transaction_descriptor,
+        cleanup_name,
+        cleanup_path,
+        cleanup_device,
+        cleanup_inode,
     )
 
 
@@ -1409,8 +2763,11 @@ def _rollback(
     root_descriptor = transaction_lock.file_descriptor
     if root_descriptor is None:
         return ["publication destination lock descriptor is missing"]
-    backup_descriptor = _require_directory_descriptor(backup_root)
-    quarantine_descriptor = _require_directory_descriptor(quarantine_root)
+    try:
+        backup_descriptor = _require_directory_descriptor(backup_root)
+        quarantine_descriptor = _require_directory_descriptor(quarantine_root)
+    except BaseException as error:
+        return [f"rollback setup could not anchor recovery directories: {error}"]
     for state in reversed(states):
         folder = state.destination.name
         try:
@@ -1465,7 +2822,7 @@ def _rollback(
                         preserve_transaction=True,
                     )
                 _assert_mutation_authorized(destination_root, transaction_lock)
-                os.replace(
+                _atomic_rename_no_replace(
                     folder,
                     folder,
                     src_dir_fd=root_descriptor,
@@ -1497,7 +2854,7 @@ def _rollback(
                             state.destination,
                         )
                         if destination_state == DestinationState(kind="absent"):
-                            os.replace(
+                            _atomic_rename_no_replace(
                                 folder,
                                 folder,
                                 src_dir_fd=quarantine_descriptor,
@@ -1556,7 +2913,7 @@ def _rollback(
                         destination_root,
                         transaction_lock,
                     )
-                    os.replace(
+                    _atomic_rename_no_replace(
                         folder,
                         folder,
                         src_dir_fd=backup_descriptor,
@@ -1631,7 +2988,7 @@ def _swap_all(
     expected_destination_states: dict[str, DestinationState],
     transaction_lock: TransactionLock,
     destination_root: DestinationRootIdentity,
-) -> None:
+) -> TransactionCleanupPlan:
     root_descriptor = transaction_lock.file_descriptor
     if root_descriptor is None:
         raise PublishError("Publication destination lock descriptor is missing")
@@ -1662,6 +3019,7 @@ def _swap_all(
     quarantine_root: DirectoryHandle | None = None
     states: list[ReplacementState] = []
     committed = False
+    cleanup_plan: TransactionCleanupPlan | None = None
     try:
         quarantine_root = _create_directory_handle_at(
             transaction_descriptor,
@@ -1695,7 +3053,7 @@ def _swap_all(
             if state.original_existed:
                 _assert_mutation_authorized(destination_root, transaction_lock)
                 state.backup_attempted = True
-                os.replace(
+                _atomic_rename_no_replace(
                     folder,
                     folder,
                     src_dir_fd=root_descriptor,
@@ -1717,6 +3075,18 @@ def _swap_all(
                     folder,
                     state.backup,
                 )
+                if (
+                    observed_backup.kind != "directory"
+                    or observed_backup.device != original_state.device
+                    or observed_backup.inode != original_state.inode
+                ):
+                    raise PublishError(
+                        "Skill destination identity changed during backup; "
+                        "publication will preserve the transaction without "
+                        "treating the observed backup as the original: "
+                        f"{destination}",
+                        preserve_transaction=True,
+                    )
                 state.backup_state_after_move = observed_backup
                 if observed_backup != original_state:
                     raise PublishError(
@@ -1758,7 +3128,7 @@ def _swap_all(
                 )
             _assert_mutation_authorized(destination_root, transaction_lock)
             state.install_attempted = True
-            os.replace(
+            _atomic_rename_no_replace(
                 folder,
                 folder,
                 src_dir_fd=stage_descriptor,
@@ -1820,6 +3190,19 @@ def _swap_all(
                 "installed skills differ from their staged bytes: "
                 + ", ".join(folder for folder, _ in mismatched)
             )
+        cleanup_plan = TransactionCleanupPlan(
+            stage_device=stage_root.device,
+            stage_inode=stage_root.inode,
+            backup_device=backup_root.device,
+            backup_inode=backup_root.inode,
+            quarantine_device=quarantine_root.device,
+            quarantine_inode=quarantine_root.inode,
+            backup_states=tuple(
+                (state.destination.name, state.original_state)
+                for state in states
+                if state.original_existed
+            ),
+        )
         committed = True
     except BaseException as error:
         preserve_conflict = (
@@ -1860,7 +3243,10 @@ def _swap_all(
                 preserve_transaction=True,
             ) from error
         raise PublishError(
-            f"Publication failed and all destinations were rolled back: {error}"
+            "Publication failed and all destinations were rolled back. "
+            "The transaction was preserved for review instead of applying "
+            f"manifest-less cleanup: {error}",
+            preserve_transaction=True,
         ) from error
     finally:
         quarantine_close_errors = _close_directory_handle(quarantine_root)
@@ -1886,6 +3272,12 @@ def _swap_all(
                 + "; ".join(close_errors),
                 file=sys.stderr,
             )
+    if cleanup_plan is None:
+        raise PublishError(
+            "Publication completed without a verified transaction cleanup plan",
+            preserve_transaction=True,
+        )
+    return cleanup_plan
 
 
 def publish_skills(
@@ -1925,6 +3317,7 @@ def publish_skills(
     transaction_root: DirectoryHandle | None = None
     stage_root: DirectoryHandle | None = None
     destination_identity: DestinationRootIdentity | None = None
+    cleanup_plan: TransactionCleanupPlan | None = None
     try:
         _ensure_destination_root(destination_root)
         destination_identity = _capture_destination_root_identity(
@@ -1979,7 +3372,7 @@ def publish_skills(
             )
             for folder in SKILL_FOLDERS
         }
-        _swap_all(
+        cleanup_plan = _swap_all(
             stage_root,
             destination_root,
             transaction_root,
@@ -1989,42 +3382,7 @@ def publish_skills(
             destination_identity,
         )
     except BaseException as error:
-        preserve_transaction = (
-            isinstance(error, PublishError) and error.preserve_transaction
-        )
-        if (
-            not preserve_transaction
-            and transaction_root is not None
-        ):
-            try:
-                if destination_identity is None or transaction_lock is None:
-                    raise PublishError(
-                        "Publication destination authorization context is missing"
-                    )
-                _assert_mutation_authorized(
-                    destination_identity,
-                    transaction_lock,
-                )
-                stage_close_errors = _close_directory_handle(stage_root)
-                if stage_close_errors:
-                    raise PublishError(
-                        "Could not close staged tree before cleanup: "
-                        + "; ".join(stage_close_errors)
-                    )
-                _remove_transaction_workspace(
-                    transaction_root,
-                    destination_identity,
-                    transaction_lock,
-                )
-            except (OSError, PublishError) as cleanup_error:
-                raise PublishError(
-                    "Publication failed and transaction cleanup also failed. "
-                    "Recovery files may remain at "
-                    f"{transaction_root.display_path}: {cleanup_error}. "
-                    "Kernel-lock release will be attempted by the finalizer.",
-                    preserve_transaction=True,
-                ) from error
-        if not preserve_transaction and transaction_lock is not None:
+        if transaction_lock is not None:
             try:
                 if destination_identity is None:
                     raise PublishError(
@@ -2036,16 +3394,31 @@ def publish_skills(
                 )
             except (OSError, PublishError) as cleanup_error:
                 raise PublishError(
-                    "Publication failed and transaction-lock cleanup also "
+                    f"{error}; transaction-lock cleanup also "
                     "failed; publication recovery state may remain beside "
                     f"{transaction_lock.path}: "
                     f"{cleanup_error}",
                     preserve_transaction=True,
                 ) from error
         if isinstance(error, PublishError):
+            if transaction_root is not None and not error.preserve_transaction:
+                raise PublishError(
+                    f"{error} Transaction recovery state was preserved for "
+                    f"review at {transaction_root.display_path}.",
+                    preserve_transaction=True,
+                ) from error
             raise
         if isinstance(error, OSError):
-            raise PublishError(f"Publication staging failed: {error}") from error
+            recovery_suffix = (
+                " Transaction recovery state was preserved for review at "
+                f"{transaction_root.display_path}."
+                if transaction_root is not None
+                else ""
+            )
+            raise PublishError(
+                f"Publication staging failed: {error}.{recovery_suffix}",
+                preserve_transaction=transaction_root is not None,
+            ) from error
         raise
     else:
         if transaction_root is not None:
@@ -2068,6 +3441,7 @@ def publish_skills(
                     transaction_root,
                     destination_identity,
                     transaction_lock,
+                    cleanup_plan,
                 )
             except DestinationAuthorizationError as cleanup_error:
                 raise PublishError(
@@ -2078,6 +3452,17 @@ def publish_skills(
                     preserve_transaction=True,
                 ) from cleanup_error
             except (OSError, PublishError) as cleanup_error:
+                if (
+                    isinstance(cleanup_error, PublishError)
+                    and cleanup_error.preserve_transaction
+                ):
+                    raise PublishError(
+                        "Publication committed and verified, but transaction "
+                        "cleanup found unrecognized state. Recovery files were "
+                        f"preserved at {transaction_root.display_path}: "
+                        f"{cleanup_error}",
+                        preserve_transaction=True,
+                    ) from cleanup_error
                 print(
                     "WARNING: publication committed and verified, but obsolete "
                     "transaction backup cleanup failed; recovery files remain at "

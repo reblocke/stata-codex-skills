@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 import argparse
 import ctypes
+import hashlib
 import os
 import re
 import stat
@@ -40,11 +42,23 @@ class RenderTransactionError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class RenderTreeEntry:
+    """Identity of one accepted entry beneath a rendered-tree root."""
+
+    relative_path: str
+    kind: str
+    device: int
+    inode: int
+    content_sha256: str | None = None
+
+
+@dataclass(frozen=True)
 class RenderOutputState:
     exists: bool
     device: int | None = None
     inode: int | None = None
     tree_sha256: str | None = None
+    entries: tuple[RenderTreeEntry, ...] = ()
 
 
 REQUIRED_SKILL_KEYS = ("core", "packages", "plugins")
@@ -121,6 +135,34 @@ def _safe_render_path(root: Path, *parts: str | Path) -> Path:
     return resolved_candidate
 
 
+def _existing_ancestor_identities(path: Path) -> tuple[tuple[int, int], ...]:
+    """Return filesystem identities from the deepest existing ancestor upward."""
+
+    current = path
+    while True:
+        try:
+            current.stat()
+            break
+        except FileNotFoundError:
+            parent = current.parent
+            if parent == current:
+                raise
+            current = parent
+        except NotADirectoryError as error:
+            raise ValueError(
+                f"render output path has a non-directory ancestor: {path}"
+            ) from error
+
+    identities: list[tuple[int, int]] = []
+    while True:
+        metadata = current.stat()
+        identities.append((metadata.st_dev, metadata.st_ino))
+        parent = current.parent
+        if parent == current:
+            return tuple(identities)
+        current = parent
+
+
 def _resolved_output_root(output_root: Path) -> Path:
     """Canonicalize a render target while rejecting ambiguous destinations."""
 
@@ -130,11 +172,16 @@ def _resolved_output_root(output_root: Path) -> Path:
     resolved = requested.resolve(strict=False)
     if resolved.parent == resolved:
         raise ValueError("refusing to render over a filesystem root")
-    repository_root = REPO_ROOT.resolve()
-    if (
-        resolved.is_relative_to(repository_root)
-        and resolved != BUILD_ROOT.resolve()
-    ):
+    repository_root = REPO_ROOT.resolve(strict=True)
+    canonical_build_root = BUILD_ROOT.resolve(strict=False)
+    if resolved == canonical_build_root:
+        return resolved
+    repository_metadata = repository_root.stat()
+    repository_identity = (
+        repository_metadata.st_dev,
+        repository_metadata.st_ino,
+    )
+    if repository_identity in _existing_ancestor_identities(resolved):
         raise ValueError(
             "in-repository render output must be build/generated; "
             f"refusing {resolved}"
@@ -212,6 +259,88 @@ def preflight_existing_output_root(output_root: Path) -> None:
         )
 
 
+def _sha256_regular_file_no_follow(
+    name: str | Path,
+    *,
+    dir_fd: int | None = None,
+    expected_metadata: os.stat_result | None = None,
+) -> str:
+    """Hash one regular file through a no-follow descriptor."""
+
+    descriptor = os.open(
+        name,
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        dir_fd=dir_fd,
+    )
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise RenderTransactionError(
+                f"refusing to hash a non-regular render entry: {name}"
+            )
+        if expected_metadata is not None and (
+            before.st_dev != expected_metadata.st_dev
+            or before.st_ino != expected_metadata.st_ino
+            or before.st_size != expected_metadata.st_size
+            or before.st_mtime_ns != expected_metadata.st_mtime_ns
+            or before.st_ctime_ns != expected_metadata.st_ctime_ns
+        ):
+            raise RenderTransactionError(
+                f"render entry changed before content hashing: {name}"
+            )
+        digest = hashlib.sha256()
+        while chunk := os.read(descriptor, 1024 * 1024):
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        if (
+            after.st_dev != before.st_dev
+            or after.st_ino != before.st_ino
+            or after.st_size != before.st_size
+            or after.st_mtime_ns != before.st_mtime_ns
+            or after.st_ctime_ns != before.st_ctime_ns
+        ):
+            raise RenderTransactionError(
+                f"render entry changed during content hashing: {name}"
+            )
+        return digest.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def _capture_tree_entries(root: Path) -> tuple[RenderTreeEntry, ...]:
+    """Capture path and inode identity without following tree symlinks."""
+
+    entries: list[RenderTreeEntry] = []
+    for path in sorted(root.rglob("*")):
+        metadata = path.lstat()
+        if stat.S_ISDIR(metadata.st_mode):
+            kind = "directory"
+        elif stat.S_ISREG(metadata.st_mode):
+            kind = "file"
+        else:
+            kind = "other"
+        content_sha256 = (
+            _sha256_regular_file_no_follow(
+                path,
+                expected_metadata=metadata,
+            )
+            if kind == "file"
+            else None
+        )
+        entries.append(
+            RenderTreeEntry(
+                relative_path=path.relative_to(root).as_posix(),
+                kind=kind,
+                device=metadata.st_dev,
+                inode=metadata.st_ino,
+                content_sha256=content_sha256,
+            )
+        )
+    return tuple(entries)
+
+
 def capture_output_root_state(output_root: Path) -> RenderOutputState:
     """Fingerprint an accepted target so staging cannot hide a later change."""
 
@@ -221,13 +350,15 @@ def capture_output_root_state(output_root: Path) -> RenderOutputState:
         return RenderOutputState(exists=False)
 
     preflight_existing_output_root(output_root)
-    before = output_root.stat()
+    before = output_root.lstat()
+    before_entries = _capture_tree_entries(output_root)
     digest = tree_digest(output_root)
     preflight_existing_output_root(output_root)
-    after = output_root.stat()
+    after_entries = _capture_tree_entries(output_root)
+    after = output_root.lstat()
     before_identity = (before.st_dev, before.st_ino)
     after_identity = (after.st_dev, after.st_ino)
-    if before_identity != after_identity:
+    if before_identity != after_identity or before_entries != after_entries:
         raise RenderTransactionError(
             "render output root changed while its ownership was being checked"
         )
@@ -236,6 +367,7 @@ def capture_output_root_state(output_root: Path) -> RenderOutputState:
         device=after.st_dev,
         inode=after.st_ino,
         tree_sha256=digest,
+        entries=after_entries,
     )
 
 
@@ -676,6 +808,61 @@ def _atomic_rename_no_replace(source: Path, destination: Path) -> None:
         )
 
 
+def _atomic_rename_at_no_replace(
+    source_descriptor: int,
+    source_name: str,
+    destination_descriptor: int,
+    destination_name: str,
+) -> None:
+    """Atomically move one descriptor-relative entry without replacement."""
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source_name)
+    destination_bytes = os.fsencode(destination_name)
+    if sys.platform == "darwin":
+        try:
+            rename_exclusive = libc.renameatx_np
+        except AttributeError as error:
+            raise RenderTransactionError(
+                "This macOS runtime lacks descriptor-relative atomic "
+                "no-replace rename support"
+            ) from error
+    elif sys.platform.startswith("linux"):
+        try:
+            rename_exclusive = libc.renameat2
+        except AttributeError as error:
+            raise RenderTransactionError(
+                "This Linux runtime lacks descriptor-relative atomic "
+                "no-replace rename support"
+            ) from error
+    else:
+        raise RenderTransactionError(
+            "Atomic render cleanup is supported only on macOS and Linux"
+        )
+    rename_exclusive.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    rename_exclusive.restype = ctypes.c_int
+    result = rename_exclusive(
+        source_descriptor,
+        source_bytes,
+        destination_descriptor,
+        destination_bytes,
+        0x00000004 if sys.platform == "darwin" else 1,
+    )
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(
+            error_number,
+            os.strerror(error_number),
+            destination_name,
+        )
+
+
 def _open_directory_at(
     parent_descriptor: int,
     name: str,
@@ -698,7 +885,14 @@ def _open_directory_at(
         | getattr(os, "O_NOFOLLOW", 0),
         dir_fd=parent_descriptor,
     )
-    opened = os.fstat(descriptor)
+    try:
+        opened = os.fstat(descriptor)
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        raise
     if (
         not stat.S_ISDIR(opened.st_mode)
         or opened.st_dev != metadata.st_dev
@@ -711,53 +905,522 @@ def _open_directory_at(
     return descriptor, opened
 
 
+def _entry_kind(metadata: os.stat_result) -> str:
+    if stat.S_ISDIR(metadata.st_mode):
+        return "directory"
+    if stat.S_ISREG(metadata.st_mode):
+        return "file"
+    return "other"
+
+
+def _entry_matches(
+    metadata: os.stat_result,
+    expected: RenderTreeEntry,
+) -> bool:
+    return (
+        _entry_kind(metadata) == expected.kind
+        and metadata.st_dev == expected.device
+        and metadata.st_ino == expected.inode
+    )
+
+
+def _entry_metadata_at(
+    descriptor: int,
+    name: str,
+) -> os.stat_result | None:
+    try:
+        return os.stat(
+            name,
+            dir_fd=descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return None
+
+
+def _restore_quarantined_entry(
+    quarantine_descriptor: int,
+    directory_descriptor: int,
+    name: str,
+    moved_metadata: os.stat_result,
+    display_path: Path,
+) -> None:
+    """Restore or preserve a mismatched entry without deleting its bytes."""
+
+    try:
+        _atomic_rename_at_no_replace(
+            quarantine_descriptor,
+            name,
+            directory_descriptor,
+            name,
+        )
+    except BaseException as restore_error:
+        restored = _entry_metadata_at(directory_descriptor, name)
+        quarantined = _entry_metadata_at(quarantine_descriptor, name)
+        moved_identity = (moved_metadata.st_dev, moved_metadata.st_ino)
+        if (
+            restored is not None
+            and (restored.st_dev, restored.st_ino) == moved_identity
+            and quarantined is None
+        ):
+            return
+        raise RenderTransactionError(
+            "render cleanup moved a changed entry into private quarantine and "
+            f"could not restore it at {display_path}; its bytes remain preserved"
+        ) from restore_error
+
+
+def _remove_verified_empty_directory_via_quarantine(
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+    expected_metadata: os.stat_result,
+) -> None:
+    """Move an empty verified name into a private directory before removal."""
+
+    def matches_expected(metadata: os.stat_result) -> bool:
+        return (
+            stat.S_ISDIR(metadata.st_mode)
+            and metadata.st_dev == expected_metadata.st_dev
+            and metadata.st_ino == expected_metadata.st_ino
+        )
+
+    cleanup_name = f".render-cleanup-{uuid.uuid4().hex}"
+    cleanup_path = display_path.parent / cleanup_name
+    os.mkdir(cleanup_name, mode=0o700, dir_fd=parent_descriptor)
+    cleanup_descriptor: int | None = None
+    cleanup_opened: os.stat_result | None = None
+    try:
+        cleanup_descriptor, cleanup_opened = _open_directory_at(
+            parent_descriptor,
+            cleanup_name,
+            cleanup_path,
+        )
+        os.fchmod(cleanup_descriptor, 0o700)
+        try:
+            _atomic_rename_at_no_replace(
+                parent_descriptor,
+                name,
+                cleanup_descriptor,
+                name,
+            )
+        except BaseException as move_error:
+            moved_after_error = _entry_metadata_at(cleanup_descriptor, name)
+            source_after_error = _entry_metadata_at(parent_descriptor, name)
+            if moved_after_error is None:
+                raise RenderTransactionError(
+                    "verified empty render directory could not be moved into "
+                    f"private cleanup quarantine: {display_path}"
+                ) from move_error
+            if source_after_error is not None:
+                raise RenderTransactionError(
+                    "verified empty render directory moved into private cleanup "
+                    "quarantine, but its public name gained concurrent state; "
+                    f"both were preserved: {display_path}"
+                ) from move_error
+            if not matches_expected(moved_after_error):
+                _restore_quarantined_entry(
+                    cleanup_descriptor,
+                    parent_descriptor,
+                    name,
+                    moved_after_error,
+                    display_path,
+                )
+                raise RenderTransactionError(
+                    "verified empty render directory changed while moving into "
+                    f"private cleanup quarantine and was preserved: {display_path}"
+                ) from move_error
+
+        moved = os.stat(
+            name,
+            dir_fd=cleanup_descriptor,
+            follow_symlinks=False,
+        )
+        source_after_move = _entry_metadata_at(parent_descriptor, name)
+        if not matches_expected(moved):
+            if source_after_move is None:
+                _restore_quarantined_entry(
+                    cleanup_descriptor,
+                    parent_descriptor,
+                    name,
+                    moved,
+                    display_path,
+                )
+            raise RenderTransactionError(
+                "verified empty render directory changed while moving into "
+                f"private cleanup quarantine and was preserved: {display_path}"
+            )
+        if source_after_move is not None:
+            raise RenderTransactionError(
+                "verified empty render directory public name gained concurrent "
+                f"state; both entries were preserved: {display_path}"
+            )
+
+        try:
+            moved_descriptor, opened = _open_directory_at(
+                cleanup_descriptor,
+                name,
+                display_path,
+            )
+            try:
+                if not matches_expected(opened) or os.listdir(moved_descriptor):
+                    raise RenderTransactionError(
+                        "verified empty render directory changed in private "
+                        f"cleanup quarantine: {display_path}"
+                    )
+            finally:
+                os.close(moved_descriptor)
+        except BaseException as verification_error:
+            current = _entry_metadata_at(cleanup_descriptor, name)
+            if (
+                current is not None
+                and _entry_metadata_at(parent_descriptor, name) is None
+            ):
+                _restore_quarantined_entry(
+                    cleanup_descriptor,
+                    parent_descriptor,
+                    name,
+                    current,
+                    display_path,
+                )
+            raise RenderTransactionError(
+                "verified empty render directory changed in private cleanup "
+                f"quarantine and was preserved: {display_path}"
+            ) from verification_error
+
+        observed = os.stat(
+            name,
+            dir_fd=cleanup_descriptor,
+            follow_symlinks=False,
+        )
+        if not matches_expected(observed):
+            if _entry_metadata_at(parent_descriptor, name) is None:
+                _restore_quarantined_entry(
+                    cleanup_descriptor,
+                    parent_descriptor,
+                    name,
+                    observed,
+                    display_path,
+                )
+            raise RenderTransactionError(
+                "verified empty render directory changed before private removal "
+                f"and was preserved: {display_path}"
+            )
+        try:
+            os.rmdir(name, dir_fd=cleanup_descriptor)
+        except BaseException as removal_error:
+            current = _entry_metadata_at(cleanup_descriptor, name)
+            if (
+                current is not None
+                and _entry_metadata_at(parent_descriptor, name) is None
+            ):
+                _restore_quarantined_entry(
+                    cleanup_descriptor,
+                    parent_descriptor,
+                    name,
+                    current,
+                    display_path,
+                )
+            raise RenderTransactionError(
+                "verified empty render directory could not be removed from "
+                f"private cleanup quarantine and was preserved: {display_path}"
+            ) from removal_error
+        os.fsync(cleanup_descriptor)
+    finally:
+        if cleanup_descriptor is not None:
+            os.close(cleanup_descriptor)
+
+    if cleanup_opened is None:
+        raise RenderTransactionError(
+            f"render cleanup quarantine was not opened for {display_path}"
+        )
+    observed_cleanup = os.stat(
+        cleanup_name,
+        dir_fd=parent_descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISDIR(observed_cleanup.st_mode)
+        or observed_cleanup.st_dev != cleanup_opened.st_dev
+        or observed_cleanup.st_ino != cleanup_opened.st_ino
+    ):
+        raise RenderTransactionError(
+            f"private render cleanup quarantine changed for {display_path}"
+        )
+    os.rmdir(cleanup_name, dir_fd=parent_descriptor)
+    os.fsync(parent_descriptor)
+
+
 def _clear_directory_descriptor(
     descriptor: int,
     display_path: Path,
+    expected_entries: dict[str, RenderTreeEntry],
+    relative_parts: tuple[str, ...] = (),
 ) -> None:
     current_mode = stat.S_IMODE(os.fstat(descriptor).st_mode)
     os.fchmod(
         descriptor,
         current_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR,
     )
-    for name in sorted(os.listdir(descriptor)):
-        child_path = display_path / name
-        metadata = os.stat(
-            name,
-            dir_fd=descriptor,
-            follow_symlinks=False,
+    observed_names = set(os.listdir(descriptor))
+    expected_names = {
+        Path(relative_path).name
+        for relative_path in expected_entries
+        if Path(relative_path).parts[:-1] == relative_parts
+    }
+    if observed_names != expected_names:
+        unexpected = sorted(observed_names - expected_names)
+        missing = sorted(expected_names - observed_names)
+        details: list[str] = []
+        if unexpected:
+            details.append(f"unexpected entries: {', '.join(unexpected)}")
+        if missing:
+            details.append(f"missing entries: {', '.join(missing)}")
+        raise RenderTransactionError(
+            "render backup changed before cleanup at "
+            f"{display_path}: {'; '.join(details)}"
         )
-        if stat.S_ISDIR(metadata.st_mode):
-            child_descriptor, opened = _open_directory_at(
-                descriptor,
-                name,
-                child_path,
-            )
-            try:
-                _clear_directory_descriptor(child_descriptor, child_path)
-            finally:
-                os.close(child_descriptor)
-            observed = os.stat(
+
+    quarantine_name = f".render-cleanup-{uuid.uuid4().hex}"
+    os.mkdir(quarantine_name, mode=0o700, dir_fd=descriptor)
+    quarantine_descriptor: int | None = None
+    quarantine_opened: os.stat_result | None = None
+    try:
+        quarantine_descriptor, quarantine_opened = _open_directory_at(
+            descriptor,
+            quarantine_name,
+            display_path / quarantine_name,
+        )
+        os.fchmod(quarantine_descriptor, 0o700)
+
+        for name in sorted(expected_names):
+            child_path = display_path / name
+            child_parts = (*relative_parts, name)
+            relative_path = Path(*child_parts).as_posix()
+            metadata = os.stat(
                 name,
                 dir_fd=descriptor,
                 follow_symlinks=False,
             )
-            if (
-                not stat.S_ISDIR(observed.st_mode)
-                or observed.st_dev != opened.st_dev
-                or observed.st_ino != opened.st_ino
-            ):
+            expected_entry = expected_entries.get(relative_path)
+            if expected_entry is None:
                 raise RenderTransactionError(
-                    "render backup directory changed before removal: "
+                    "render cleanup manifest is missing an entry for "
                     f"{child_path}"
                 )
-            os.rmdir(name, dir_fd=descriptor)
-            continue
-        if not stat.S_ISREG(metadata.st_mode):
-            raise RenderTransactionError(
-                f"refusing unexpected render backup entry: {child_path}"
+            if not _entry_matches(
+                metadata,
+                expected_entry,
+            ):
+                raise RenderTransactionError(
+                    "render backup entry changed before quarantine: "
+                    f"{child_path}"
+                )
+
+            try:
+                _atomic_rename_at_no_replace(
+                    descriptor,
+                    name,
+                    quarantine_descriptor,
+                    name,
+                )
+            except BaseException as move_error:
+                moved = _entry_metadata_at(quarantine_descriptor, name)
+                source = _entry_metadata_at(descriptor, name)
+                if moved is not None and not _entry_matches(
+                    moved,
+                    expected_entry,
+                ):
+                    _restore_quarantined_entry(
+                        quarantine_descriptor,
+                        descriptor,
+                        name,
+                        moved,
+                        child_path,
+                    )
+                    raise RenderTransactionError(
+                        "render backup entry changed while it was moved into "
+                        f"private quarantine: {child_path}"
+                    ) from move_error
+                if moved is None:
+                    raise RenderTransactionError(
+                        "render backup entry could not be moved into private "
+                        f"quarantine: {child_path}"
+                    ) from move_error
+                if source is not None:
+                    raise RenderTransactionError(
+                        "render backup entry moved into private quarantine, but "
+                        f"its source path gained concurrent state: {child_path}"
+                    ) from move_error
+
+            moved = os.stat(
+                name,
+                dir_fd=quarantine_descriptor,
+                follow_symlinks=False,
             )
-        os.unlink(name, dir_fd=descriptor)
+            if not _entry_matches(
+                moved,
+                expected_entry,
+            ):
+                _restore_quarantined_entry(
+                    quarantine_descriptor,
+                    descriptor,
+                    name,
+                    moved,
+                    child_path,
+                )
+                raise RenderTransactionError(
+                    "render backup entry changed while it was moved into "
+                    "private quarantine: "
+                    f"{child_path}"
+                )
+
+            if stat.S_ISDIR(moved.st_mode):
+                child_descriptor, opened = _open_directory_at(
+                    quarantine_descriptor,
+                    name,
+                    child_path,
+                )
+                try:
+                    _clear_directory_descriptor(
+                        child_descriptor,
+                        child_path,
+                        expected_entries,
+                        child_parts,
+                    )
+                finally:
+                    os.close(child_descriptor)
+                _remove_verified_empty_directory_via_quarantine(
+                    quarantine_descriptor,
+                    name,
+                    child_path,
+                    opened,
+                )
+                continue
+            if not stat.S_ISREG(moved.st_mode):
+                raise RenderTransactionError(
+                    f"refusing unexpected render backup entry: {child_path}"
+                )
+            try:
+                moved_digest = _sha256_regular_file_no_follow(
+                    name,
+                    dir_fd=quarantine_descriptor,
+                    expected_metadata=moved,
+                )
+            except BaseException as hash_error:
+                _restore_quarantined_entry(
+                    quarantine_descriptor,
+                    descriptor,
+                    name,
+                    moved,
+                    child_path,
+                )
+                raise RenderTransactionError(
+                    "render backup file changed while its quarantined bytes "
+                    f"were being verified: {child_path}"
+                ) from hash_error
+            if (
+                expected_entry.content_sha256 is None
+                or moved_digest != expected_entry.content_sha256
+            ):
+                _restore_quarantined_entry(
+                    quarantine_descriptor,
+                    descriptor,
+                    name,
+                    moved,
+                    child_path,
+                )
+                raise RenderTransactionError(
+                    "render backup file contents changed before deletion and "
+                    f"were preserved: {child_path}"
+                )
+            try:
+                final_metadata = os.stat(
+                    name,
+                    dir_fd=quarantine_descriptor,
+                    follow_symlinks=False,
+                )
+                final_digest = _sha256_regular_file_no_follow(
+                    name,
+                    dir_fd=quarantine_descriptor,
+                    expected_metadata=final_metadata,
+                )
+                final_observed = os.stat(
+                    name,
+                    dir_fd=quarantine_descriptor,
+                    follow_symlinks=False,
+                )
+            except BaseException as hash_error:
+                current_metadata = (
+                    _entry_metadata_at(quarantine_descriptor, name)
+                    or moved
+                )
+                _restore_quarantined_entry(
+                    quarantine_descriptor,
+                    descriptor,
+                    name,
+                    current_metadata,
+                    child_path,
+                )
+                raise RenderTransactionError(
+                    "render backup file changed during its final pre-delete "
+                    f"verification and was preserved: {child_path}"
+                ) from hash_error
+            final_version = (
+                final_metadata.st_dev,
+                final_metadata.st_ino,
+                final_metadata.st_size,
+                final_metadata.st_mtime_ns,
+                final_metadata.st_ctime_ns,
+            )
+            observed_version = (
+                final_observed.st_dev,
+                final_observed.st_ino,
+                final_observed.st_size,
+                final_observed.st_mtime_ns,
+                final_observed.st_ctime_ns,
+            )
+            if (
+                not _entry_matches(final_metadata, expected_entry)
+                or not _entry_matches(final_observed, expected_entry)
+                or final_version != observed_version
+                or expected_entry.content_sha256 is None
+                or final_digest != expected_entry.content_sha256
+            ):
+                _restore_quarantined_entry(
+                    quarantine_descriptor,
+                    descriptor,
+                    name,
+                    final_observed,
+                    child_path,
+                )
+                raise RenderTransactionError(
+                    "render backup file changed immediately before deletion "
+                    f"and was preserved: {child_path}"
+                )
+            os.unlink(name, dir_fd=quarantine_descriptor)
+
+        os.fsync(quarantine_descriptor)
+    finally:
+        if quarantine_descriptor is not None:
+            os.close(quarantine_descriptor)
+
+    if quarantine_opened is None:
+        raise RenderTransactionError(
+            f"render cleanup quarantine was not opened at {display_path}"
+        )
+    _remove_verified_empty_directory_via_quarantine(
+        descriptor,
+        quarantine_name,
+        display_path / quarantine_name,
+        quarantine_opened,
+    )
+    remaining_names = sorted(os.listdir(descriptor))
+    if remaining_names:
+        raise RenderTransactionError(
+            "render backup gained entries during cleanup at "
+            f"{display_path}: {', '.join(remaining_names)}"
+        )
     os.fsync(descriptor)
 
 
@@ -776,6 +1439,7 @@ def _remove_verified_backup(
         backup_root,
         expected.device,
         expected.inode,
+        expected.entries,
     )
 
 
@@ -783,6 +1447,7 @@ def _remove_owned_directory(
     directory: Path,
     expected_device: int,
     expected_inode: int,
+    expected_entries: tuple[RenderTreeEntry, ...],
 ) -> None:
     """Remove only the directory with the exact captured identity."""
 
@@ -808,41 +1473,49 @@ def _remove_owned_directory(
                 "directory no longer matches its captured identity; "
                 f"preserving {directory}"
             )
-        _clear_directory_descriptor(backup_descriptor, directory)
-        os.close(backup_descriptor)
-        backup_descriptor = None
-        observed = os.stat(
-            directory.name,
-            dir_fd=parent_descriptor,
-            follow_symlinks=False,
+        entries_by_path = {
+            entry.relative_path: entry
+            for entry in expected_entries
+        }
+        _clear_directory_descriptor(
+            backup_descriptor,
+            directory,
+            entries_by_path,
         )
-        if (
-            not stat.S_ISDIR(observed.st_mode)
-            or observed.st_dev != opened.st_dev
-            or observed.st_ino != opened.st_ino
-        ):
+        descriptor_to_close = backup_descriptor
+        backup_descriptor = None
+        os.close(descriptor_to_close)
+        _remove_verified_empty_directory_via_quarantine(
+            parent_descriptor,
+            directory.name,
+            directory,
+            opened,
+        )
+        if _entry_metadata_at(parent_descriptor, directory.name) is not None:
             raise RenderTransactionError(
-                "directory path changed before final removal; preserving "
-                f"the observed path {directory}"
+                "render backup public name reappeared during private cleanup; "
+                f"preserving concurrent state at {directory}"
             )
-        os.rmdir(directory.name, dir_fd=parent_descriptor)
-        os.fsync(parent_descriptor)
     finally:
-        if backup_descriptor is not None:
-            os.close(backup_descriptor)
-        os.close(parent_descriptor)
+        try:
+            if backup_descriptor is not None:
+                os.close(backup_descriptor)
+        finally:
+            os.close(parent_descriptor)
 
 
 def _cleanup_staged_root(
     staged_root: Path,
     expected_device: int,
     expected_inode: int,
+    expected_entries: tuple[RenderTreeEntry, ...],
 ) -> None:
     try:
         _remove_owned_directory(
             staged_root,
             expected_device,
             expected_inode,
+            expected_entries,
         )
     except FileNotFoundError:
         return
@@ -854,56 +1527,195 @@ def _cleanup_staged_root(
         )
 
 
+def _path_identity(path: Path) -> tuple[int, int] | None:
+    """Return a directory-entry identity without following symbolic links."""
+
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return None
+    return metadata.st_dev, metadata.st_ino
+
+
+def _state_root_identity(expected: RenderOutputState) -> tuple[int, int] | None:
+    if (
+        not expected.exists
+        or expected.device is None
+        or expected.inode is None
+    ):
+        return None
+    return expected.device, expected.inode
+
+
+def _preserve_installed_entry(
+    output_root: Path,
+    installed_identity: tuple[int, int],
+) -> Path:
+    """Move a rejected installed entry to a unique recovery path."""
+
+    if _path_identity(output_root) != installed_identity:
+        raise RenderTransactionError(
+            "the rejected installed entry changed before it could be moved "
+            f"from {output_root}"
+        )
+    recovery_root = output_root.parent / (
+        f".{output_root.name}.recovery-{uuid.uuid4().hex}"
+    )
+    try:
+        _atomic_rename_no_replace(output_root, recovery_root)
+    except BaseException as move_error:
+        if (
+            _path_identity(recovery_root) == installed_identity
+            and _path_identity(output_root) is None
+        ):
+            return recovery_root
+        raise RenderTransactionError(
+            "the rejected installed entry could not be moved from "
+            f"{output_root}"
+        ) from move_error
+    if (
+        _path_identity(recovery_root) != installed_identity
+        or _path_identity(output_root) is not None
+    ):
+        raise RenderTransactionError(
+            "the rejected installed entry changed while it was being "
+            f"preserved at {recovery_root}"
+        )
+    return recovery_root
+
+
+def _restore_prior_tree(
+    backup_root: Path,
+    output_root: Path,
+    expected_output_state: RenderOutputState,
+) -> None:
+    """Restore the exact accepted prior tree without replacing new state."""
+
+    _verify_moved_output_state(backup_root, expected_output_state)
+    if _path_identity(output_root) is not None:
+        raise RenderTransactionError(
+            "the output path gained concurrent state before rollback"
+        )
+    try:
+        _atomic_rename_no_replace(backup_root, output_root)
+    except BaseException:
+        if _state_root_identity(expected_output_state) != _path_identity(
+            output_root
+        ):
+            raise
+    verify_output_root_state(output_root, expected_output_state)
+
+
 def _replace_rendered_tree(
     staged_root: Path,
     output_root: Path,
     expected_output_state: RenderOutputState,
+    expected_staged_state: RenderOutputState,
+    validate_staged_tree: Callable[[Path], None],
 ) -> None:
     """Replace output_root and restore its prior state if the swap fails."""
 
     verify_output_root_state(output_root, expected_output_state)
+    verify_output_root_state(staged_root, expected_staged_state)
+    validate_staged_tree(staged_root)
+    verify_output_root_state(staged_root, expected_staged_state)
+
     backup_root: Path | None = None
-    if output_root.exists() or output_root.is_symlink():
+    installed_identity: tuple[int, int] | None = None
+    install_reported_success = False
+    if expected_output_state.exists:
         backup_root = output_root.parent / (
             f".{output_root.name}.backup-{uuid.uuid4().hex}"
         )
-        try:
-            _atomic_rename_no_replace(output_root, backup_root)
-        except BaseException as move_error:
-            if backup_root.exists() or backup_root.is_symlink():
-                raise RenderTransactionError(
-                    "The prior render-root move reported a failure after "
-                    f"creating {backup_root}; preserving it for review"
-                ) from move_error
-            raise
-        _verify_moved_output_state(backup_root, expected_output_state)
 
     try:
+        if backup_root is not None:
+            _atomic_rename_no_replace(output_root, backup_root)
+            _verify_moved_output_state(backup_root, expected_output_state)
+
+        verify_output_root_state(staged_root, expected_staged_state)
+        validate_staged_tree(staged_root)
+        verify_output_root_state(staged_root, expected_staged_state)
         _atomic_rename_no_replace(staged_root, output_root)
-    except BaseException as swap_error:
-        if backup_root is not None and backup_root.exists():
+        install_reported_success = True
+        installed_identity = _path_identity(output_root)
+        if installed_identity is None:
+            raise RenderTransactionError(
+                "the staged tree disappeared immediately after placement"
+            )
+        verify_output_root_state(output_root, expected_staged_state)
+        validate_staged_tree(output_root)
+        verify_output_root_state(output_root, expected_staged_state)
+    except BaseException as transaction_error:
+        recovery_root: Path | None = None
+        recovery_identity = installed_identity
+        if recovery_identity is None and (
+            _path_identity(output_root)
+            == _state_root_identity(expected_staged_state)
+        ):
+            recovery_identity = _state_root_identity(expected_staged_state)
+        if recovery_identity is not None:
             try:
-                _verify_moved_output_state(
-                    backup_root,
-                    expected_output_state,
+                recovery_root = _preserve_installed_entry(
+                    output_root,
+                    recovery_identity,
                 )
-                if output_root.exists() or output_root.is_symlink():
-                    raise RenderTransactionError(
-                        "Rendered-tree swap failed and the output path gained "
-                        "concurrent state. The accepted prior tree remains at "
-                        f"{backup_root}"
-                    )
-                _atomic_rename_no_replace(backup_root, output_root)
-                verify_output_root_state(
+            except BaseException as preserve_error:
+                backup_message = (
+                    f" The accepted prior tree remains at {backup_root}."
+                    if backup_root is not None
+                    and _path_identity(backup_root) is not None
+                    else ""
+                )
+                raise RenderTransactionError(
+                    "Rendered-tree replacement failed after placing an entry "
+                    "at the output path, and that entry could not be safely "
+                    f"preserved.{backup_message} {preserve_error}"
+                ) from transaction_error
+        elif _path_identity(output_root) is not None:
+            if (
+                not install_reported_success
+                and _path_identity(output_root)
+                == _state_root_identity(expected_output_state)
+            ):
+                raise
+            backup_message = (
+                f" The accepted prior tree remains at {backup_root}."
+                if backup_root is not None
+                and _path_identity(backup_root) is not None
+                else ""
+            )
+            raise RenderTransactionError(
+                "Rendered-tree replacement failed and the output path gained "
+                f"concurrent state; that state was preserved.{backup_message}"
+            ) from transaction_error
+
+        if backup_root is not None and _path_identity(backup_root) is not None:
+            try:
+                _restore_prior_tree(
+                    backup_root,
                     output_root,
                     expected_output_state,
                 )
             except BaseException as restore_error:
                 raise RenderTransactionError(
-                    "Rendered-tree swap failed and the prior tree could not be "
-                    f"restored. The prior tree remains at {backup_root}: "
+                    "Rendered-tree replacement failed and the prior tree could "
+                    "not be restored; the prior tree remains at "
+                    f"{backup_root}: "
                     f"{restore_error}"
-                ) from swap_error
+                ) from transaction_error
+
+        if recovery_root is not None:
+            prior_status = (
+                "the accepted prior tree was restored"
+                if expected_output_state.exists
+                else "the previously absent output path was restored"
+            )
+            raise RenderTransactionError(
+                "The placed staged tree failed identity or content validation; "
+                f"{prior_status}, and the rejected tree remains at "
+                f"{recovery_root}"
+            ) from transaction_error
         raise
     else:
         if backup_root is not None:
@@ -942,6 +1754,7 @@ def render_all(
         )
     )
     staged_metadata = staged_root.stat()
+    expected_staged_state: RenderOutputState | None = None
     try:
         _render_tree(staged_root, config, grouped, aliases_by_skill)
         validate_rendered_tree(
@@ -950,17 +1763,40 @@ def render_all(
             grouped,
             aliases_by_skill,
         )
+        expected_staged_state = capture_output_root_state(staged_root)
+
+        def validate_current_staged_tree(candidate: Path) -> None:
+            validate_rendered_tree(
+                candidate,
+                config,
+                grouped,
+                aliases_by_skill,
+            )
+
         _replace_rendered_tree(
             staged_root,
             output_root,
             expected_output_state,
+            expected_staged_state,
+            validate_current_staged_tree,
         )
     finally:
-        _cleanup_staged_root(
-            staged_root,
-            staged_metadata.st_dev,
-            staged_metadata.st_ino,
-        )
+        if expected_staged_state is None:
+            if _path_identity(staged_root) == (
+                staged_metadata.st_dev,
+                staged_metadata.st_ino,
+            ):
+                print(
+                    "WARNING: staged render cleanup was skipped because no "
+                    f"trusted entry manifest was captured: {staged_root}"
+                )
+        else:
+            _cleanup_staged_root(
+                staged_root,
+                staged_metadata.st_dev,
+                staged_metadata.st_ino,
+                expected_staged_state.entries,
+            )
 
     for skill in config["skills"].values():
         print(f"Rendered {output_root / skill['folder']}")
