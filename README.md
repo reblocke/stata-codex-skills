@@ -344,10 +344,10 @@ before compilation. Plugin execution remains an explicit integration test
 because the official sample currently hangs at the plugin call on this local
 Stata/macOS loader boundary.
 
-GitHub Actions pins the same uv version, checks lock freshness offline, performs
-`uv sync --frozen`, and then runs the same deterministic offline `make check`
-gate. Licensed Stata, package installation, and plugin runtime tests remain
-documented local integrations because CI has no Stata license.
+GitHub Actions pins the same uv version, performs `uv sync --frozen`, checks
+lock freshness offline, and then runs the same deterministic offline
+`make check` gate. Licensed Stata, package installation, and plugin runtime
+tests remain documented local integrations because CI has no Stata license.
 
 ## Current status as of July 24, 2026
 

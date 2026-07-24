@@ -20,8 +20,9 @@ DEST_ARG = $(if $(strip $(DEST)),--dest "$(DEST)",)
 lock-check:
 	UV_CACHE_DIR="$(UV_CACHE_DIR)" $(UV) lock --check --offline
 
-bootstrap: lock-check
+bootstrap:
 	UV_CACHE_DIR="$(UV_CACHE_DIR)" $(UV) sync --frozen
+	UV_CACHE_DIR="$(UV_CACHE_DIR)" $(UV) lock --check --offline
 
 doctor: lock-check
 	$(UV_RUN) python scripts/doctor.py

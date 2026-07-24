@@ -31,11 +31,11 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      - name: Verify frozen lock freshness
-        run: uv lock --check --offline
-
       - name: Install frozen dependencies
         run: uv sync --frozen
+
+      - name: Verify frozen lock freshness
+        run: uv lock --check --offline
 
       - name: Run deterministic offline checks
         run: make check
