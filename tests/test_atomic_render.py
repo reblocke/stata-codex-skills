@@ -91,6 +91,44 @@ class AtomicRenderTests(unittest.TestCase):
             self.assertEqual(before, self.snapshot(target))
             self.assertEqual([], self.transaction_artifacts(parent, target.name))
 
+    def test_substituted_stage_path_is_not_recursively_deleted(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            displaced_stage = parent / "displaced-stage"
+            unrelated = parent / "unrelated-stage"
+            unrelated.mkdir()
+            sentinel = unrelated / "valuable.txt"
+            sentinel.write_text("preserve stage-path bytes\n", encoding="utf-8")
+
+            def substitute_stage_then_fail(
+                staged_root: Path,
+                _output_root: Path,
+                _expected: render_skills.RenderOutputState,
+            ) -> None:
+                staged_root.rename(displaced_stage)
+                unrelated.rename(staged_root)
+                raise RuntimeError("forced failure after stage substitution")
+
+            output = io.StringIO()
+            with patch.object(
+                render_skills,
+                "_replace_rendered_tree",
+                side_effect=substitute_stage_then_fail,
+            ), redirect_stdout(output), self.assertRaisesRegex(
+                RuntimeError,
+                "forced failure after stage substitution",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertIn("staged render cleanup was skipped", output.getvalue())
+            surviving_values = [
+                path.read_text(encoding="utf-8")
+                for path in parent.rglob("valuable.txt")
+            ]
+            self.assertEqual(["preserve stage-path bytes\n"], surviving_values)
+            self.assertTrue(displaced_stage.is_dir())
+
     def test_validation_failure_preserves_previous_tree(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
@@ -152,7 +190,7 @@ class AtomicRenderTests(unittest.TestCase):
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             before = self.snapshot(target)
-            real_replace = os.replace
+            real_replace = render_skills._atomic_rename_no_replace
             replace_count = 0
 
             def fail_new_tree_swap(source: Path, destination: Path) -> None:
@@ -163,8 +201,8 @@ class AtomicRenderTests(unittest.TestCase):
                 real_replace(source, destination)
 
             with patch.object(
-                render_skills.os,
-                "replace",
+                render_skills,
+                "_atomic_rename_no_replace",
                 side_effect=fail_new_tree_swap,
             ):
                 with self.assertRaisesRegex(OSError, "forced swap failure"):
@@ -179,7 +217,7 @@ class AtomicRenderTests(unittest.TestCase):
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             before = self.snapshot(target)
-            real_replace = os.replace
+            real_replace = render_skills._atomic_rename_no_replace
             replace_count = 0
 
             def fail_swap_and_restore(source: Path, destination: Path) -> None:
@@ -190,8 +228,8 @@ class AtomicRenderTests(unittest.TestCase):
                 real_replace(source, destination)
 
             with patch.object(
-                render_skills.os,
-                "replace",
+                render_skills,
+                "_atomic_rename_no_replace",
                 side_effect=fail_swap_and_restore,
             ), self.assertRaisesRegex(
                 render_skills.RenderTransactionError,
@@ -215,17 +253,17 @@ class AtomicRenderTests(unittest.TestCase):
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             before = self.snapshot(target)
-            real_remove = render_skills._remove_path
 
-            def fail_backup_cleanup(path: Path) -> None:
-                if ".backup-" in path.name:
-                    raise PermissionError("forced backup cleanup failure")
-                real_remove(path)
+            def fail_backup_cleanup(
+                path: Path,
+                expected: render_skills.RenderOutputState,
+            ) -> None:
+                raise PermissionError("forced backup cleanup failure")
 
             output = io.StringIO()
             with patch.object(
                 render_skills,
-                "_remove_path",
+                "_remove_verified_backup",
                 side_effect=fail_backup_cleanup,
             ), redirect_stdout(output):
                 render_skills.render_all(output_root=target)
@@ -238,6 +276,180 @@ class AtomicRenderTests(unittest.TestCase):
             ]
             self.assertEqual(1, len(backups))
             self.assertEqual(before, self.snapshot(backups[0]))
+
+    def test_backup_substitution_during_cleanup_is_not_deleted(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            accepted_backup = parent / "accepted-backup"
+            concurrent = parent / "concurrent-backup"
+            concurrent.mkdir()
+            sentinel = concurrent / "valuable.txt"
+            sentinel.write_text("preserve concurrent bytes\n", encoding="utf-8")
+            prior = self.snapshot(target)
+            real_remove = render_skills._remove_verified_backup
+            substituted = False
+
+            def substitute_before_cleanup(
+                backup: Path,
+                expected: render_skills.RenderOutputState,
+            ) -> None:
+                nonlocal substituted
+                substituted = True
+                backup.rename(accepted_backup)
+                concurrent.rename(backup)
+                real_remove(backup, expected)
+
+            output = io.StringIO()
+            with patch.object(
+                render_skills,
+                "_remove_verified_backup",
+                side_effect=substitute_before_cleanup,
+            ), redirect_stdout(output):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(substituted)
+            self.assertIn("backup could not be removed", output.getvalue())
+            self.assertEqual(prior, self.snapshot(accepted_backup))
+            backups = [
+                path
+                for path in self.transaction_artifacts(parent, target.name)
+                if ".backup-" in path.name
+            ]
+            self.assertEqual(1, len(backups))
+            self.assertEqual(
+                "preserve concurrent bytes\n",
+                (backups[0] / "valuable.txt").read_text(encoding="utf-8"),
+            )
+
+    def test_swap_failure_does_not_overwrite_concurrent_output(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            real_replace = render_skills._atomic_rename_no_replace
+            replace_count = 0
+
+            def fail_install_after_concurrent_output(
+                source: Path,
+                destination: Path,
+            ) -> None:
+                nonlocal replace_count
+                replace_count += 1
+                if replace_count == 2:
+                    target.mkdir()
+                    (target / "valuable.txt").write_text(
+                        "preserve concurrent output\n",
+                        encoding="utf-8",
+                    )
+                    raise OSError("forced install failure")
+                real_replace(source, destination)
+
+            with patch.object(
+                render_skills,
+                "_atomic_rename_no_replace",
+                side_effect=fail_install_after_concurrent_output,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "output path gained concurrent state",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertEqual(
+                "preserve concurrent output\n",
+                (target / "valuable.txt").read_text(encoding="utf-8"),
+            )
+            backups = [
+                path
+                for path in self.transaction_artifacts(parent, target.name)
+                if ".backup-" in path.name
+            ]
+            self.assertEqual(1, len(backups))
+            self.assertEqual(prior, self.snapshot(backups[0]))
+
+    def test_install_no_replace_preserves_last_moment_output(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            real_rename = render_skills._atomic_rename_no_replace
+            rename_count = 0
+
+            def create_output_immediately_before_install(
+                source: Path,
+                destination: Path,
+            ) -> None:
+                nonlocal rename_count
+                rename_count += 1
+                if rename_count == 2:
+                    target.mkdir()
+                    (target / "valuable.txt").write_text(
+                        "last-moment output\n",
+                        encoding="utf-8",
+                    )
+                real_rename(source, destination)
+
+            with patch.object(
+                render_skills,
+                "_atomic_rename_no_replace",
+                side_effect=create_output_immediately_before_install,
+            ), self.assertRaises(render_skills.RenderTransactionError):
+                render_skills.render_all(output_root=target)
+
+            self.assertEqual(
+                "last-moment output\n",
+                (target / "valuable.txt").read_text(encoding="utf-8"),
+            )
+            backups = [
+                path
+                for path in self.transaction_artifacts(parent, target.name)
+                if ".backup-" in path.name
+            ]
+            self.assertEqual(1, len(backups))
+            self.assertEqual(prior, self.snapshot(backups[0]))
+
+    def test_rollback_no_replace_preserves_last_moment_output(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            real_rename = render_skills._atomic_rename_no_replace
+            rename_count = 0
+
+            def fail_install_then_race_rollback(
+                source: Path,
+                destination: Path,
+            ) -> None:
+                nonlocal rename_count
+                rename_count += 1
+                if rename_count == 2:
+                    raise OSError("forced install failure")
+                if rename_count == 3:
+                    target.mkdir()
+                    (target / "valuable.txt").write_text(
+                        "last-moment rollback output\n",
+                        encoding="utf-8",
+                    )
+                real_rename(source, destination)
+
+            with patch.object(
+                render_skills,
+                "_atomic_rename_no_replace",
+                side_effect=fail_install_then_race_rollback,
+            ), self.assertRaises(render_skills.RenderTransactionError):
+                render_skills.render_all(output_root=target)
+
+            self.assertEqual(
+                "last-moment rollback output\n",
+                (target / "valuable.txt").read_text(encoding="utf-8"),
+            )
+            backups = [
+                path
+                for path in self.transaction_artifacts(parent, target.name)
+                if ".backup-" in path.name
+            ]
+            self.assertEqual(1, len(backups))
+            self.assertEqual(prior, self.snapshot(backups[0]))
 
     def test_existing_file_is_rejected_and_preserved(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
@@ -331,6 +543,57 @@ class AtomicRenderTests(unittest.TestCase):
             )
             self.assertEqual(before, self.snapshot(accepted))
             self.assertEqual([], self.transaction_artifacts(parent, target.name))
+
+    def test_target_replacement_during_backup_move_is_preserved(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            accepted = parent / "accepted-tree"
+            concurrent = parent / "concurrent-tree"
+            concurrent.mkdir()
+            sentinel = concurrent / "unrelated.md"
+            sentinel.write_text("concurrent bytes\n", encoding="utf-8")
+            accepted_before = self.snapshot(target)
+            real_replace = render_skills._atomic_rename_no_replace
+            replaced = False
+
+            def substitute_immediately_before_backup(
+                source: Path,
+                destination: Path,
+            ) -> None:
+                nonlocal replaced
+                if (
+                    not replaced
+                    and Path(source).resolve(strict=False)
+                    == target.resolve(strict=False)
+                ):
+                    replaced = True
+                    target.rename(accepted)
+                    concurrent.rename(target)
+                real_replace(source, destination)
+
+            with patch.object(
+                render_skills,
+                "_atomic_rename_no_replace",
+                side_effect=substitute_immediately_before_backup,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "moved from the render output path",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(replaced)
+            self.assertEqual(accepted_before, self.snapshot(accepted))
+            backups = [
+                path
+                for path in self.transaction_artifacts(parent, target.name)
+                if ".backup-" in path.name
+            ]
+            self.assertEqual(1, len(backups))
+            self.assertEqual(
+                "concurrent bytes\n",
+                (backups[0] / "unrelated.md").read_text(encoding="utf-8"),
+            )
 
     def test_nonstandard_in_repository_output_root_is_rejected(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:

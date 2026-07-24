@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from contextlib import redirect_stderr
 from datetime import datetime, timedelta, timezone
+import errno
+import fcntl
 import io
 import json
 import os
 from pathlib import Path
 import shutil
+import stat
 from tempfile import TemporaryDirectory
 import sys
 import unittest
@@ -48,7 +51,10 @@ def snapshot(root: Path) -> dict[str, bytes]:
     return {
         path.relative_to(root).as_posix(): path.read_bytes()
         for path in sorted(root.rglob("*"))
-        if path.is_file()
+        if (
+            path.is_file()
+            and path != root / publish_local.TRANSACTION_LOCK_NAME
+        )
     }
 
 
@@ -257,6 +263,53 @@ class PublishTransactionTests(unittest.TestCase):
             lock_path = destination / publish_local.TRANSACTION_LOCK_NAME
             lock_path.write_text("concurrent lock\n", encoding="utf-8")
             before = snapshot(destination)
+            root_lock_descriptor = os.open(destination, os.O_RDONLY)
+            fcntl.flock(
+                root_lock_descriptor,
+                fcntl.LOCK_EX | fcntl.LOCK_NB,
+            )
+            try:
+                with patch.object(
+                    publish_local.os,
+                    "replace",
+                    side_effect=AssertionError("destination swap attempted"),
+                ), self.assertRaisesRegex(
+                    publish_local.PublishError,
+                    "publication transaction is active",
+                ):
+                    publish_local.publish_skills(
+                        source_root=generated,
+                        dest_root=destination,
+                        receipt_path=receipt,
+                    )
+            finally:
+                fcntl.flock(root_lock_descriptor, fcntl.LOCK_UN)
+                os.close(root_lock_descriptor)
+
+            self.assertEqual(before, snapshot(destination))
+            self.assertEqual("concurrent lock\n", lock_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                [],
+                list(destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")),
+            )
+
+    def test_unresolved_recovery_transaction_blocks_publication(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            recovery = (
+                destination
+                / f"{publish_local.TRANSACTION_PREFIX}manual-recovery"
+            )
+            recovery.mkdir()
+            marker = recovery / "README.txt"
+            marker.write_text("manual recovery required\n", encoding="utf-8")
+            before = snapshot(destination)
 
             with patch.object(
                 publish_local.os,
@@ -264,7 +317,7 @@ class PublishTransactionTests(unittest.TestCase):
                 side_effect=AssertionError("destination swap attempted"),
             ), self.assertRaisesRegex(
                 publish_local.PublishError,
-                "publication transaction is active",
+                "recovery transaction blocks publication",
             ):
                 publish_local.publish_skills(
                     source_root=generated,
@@ -273,7 +326,72 @@ class PublishTransactionTests(unittest.TestCase):
                 )
 
             self.assertEqual(before, snapshot(destination))
-            self.assertEqual("concurrent lock\n", lock_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                "manual recovery required\n",
+                marker.read_text(encoding="utf-8"),
+            )
+            self.assertTrue(
+                (destination / publish_local.TRANSACTION_LOCK_NAME).is_file()
+            )
+
+    def test_hard_linked_sentinel_is_rejected_without_mutating_victim(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            victim = root / "victim.txt"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            victim.write_text("owner bytes\n", encoding="utf-8")
+            sentinel = destination / publish_local.TRANSACTION_LOCK_NAME
+            os.link(victim, sentinel)
+            before = snapshot(destination)
+
+            with self.assertRaisesRegex(
+                publish_local.PublishError,
+                "singly linked regular file",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertEqual("owner bytes\n", victim.read_text(encoding="utf-8"))
+            self.assertEqual("owner bytes\n", sentinel.read_text(encoding="utf-8"))
+            self.assertEqual(before, snapshot(destination))
+            self.assertEqual(
+                [],
+                list(destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")),
+            )
+
+    def test_fifo_sentinel_is_rejected_without_blocking(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            sentinel = destination / publish_local.TRANSACTION_LOCK_NAME
+            os.mkfifo(sentinel)
+
+            with self.assertRaisesRegex(
+                publish_local.PublishError,
+                "singly linked regular file",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertTrue(stat.S_ISFIFO(sentinel.lstat().st_mode))
             self.assertEqual(
                 [],
                 list(destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")),
@@ -339,6 +457,53 @@ class PublishTransactionTests(unittest.TestCase):
                     )
                 ),
             )
+
+    def test_absent_destination_ancestor_swap_cannot_create_in_attacker_tree(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            parent = root / "destination-parent"
+            moved_parent = root / "moved-destination-parent"
+            attacker = root / "attacker"
+            destination = parent / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            parent.mkdir()
+            attacker.mkdir()
+            self.create_receipt(generated, receipt)
+            real_mkdir = os.mkdir
+            substituted = False
+
+            def substitute_parent_before_leaf_creation(
+                name: str | bytes,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> None:
+                nonlocal substituted
+                if name == "skills" and dir_fd is not None and not substituted:
+                    substituted = True
+                    parent.rename(moved_parent)
+                    parent.symlink_to(attacker, target_is_directory=True)
+                real_mkdir(name, mode, dir_fd=dir_fd)
+
+            with patch.object(
+                publish_local.os,
+                "mkdir",
+                side_effect=substitute_parent_before_leaf_creation,
+            ), self.assertRaises(publish_local.PublishError):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertTrue(substituted)
+            self.assertTrue(parent.is_symlink())
+            self.assertFalse((attacker / "skills").exists())
+            self.assertTrue((moved_parent / "skills").is_dir())
 
     def test_old_receipt_is_rejected_before_staging(self) -> None:
         with TemporaryDirectory(prefix="publish-test-") as temporary:
@@ -518,6 +683,45 @@ class PublishTransactionTests(unittest.TestCase):
                     snapshot(destination / folder),
                 )
             self.assertEqual("leave me alone\n", unrelated.read_text(encoding="utf-8"))
+            self.assertTrue(
+                (destination / publish_local.TRANSACTION_LOCK_NAME).is_file()
+            )
+            self.assertEqual(
+                [],
+                list(destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")),
+            )
+
+    def test_persistent_sentinel_allows_later_publication(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "first")
+            self.create_receipt(generated, receipt)
+            publish_local.publish_skills(
+                source_root=generated,
+                dest_root=destination,
+                receipt_path=receipt,
+            )
+
+            shutil.rmtree(generated)
+            write_skill_tree(generated, "second")
+            self.create_receipt(generated, receipt)
+            publish_local.publish_skills(
+                source_root=generated,
+                dest_root=destination,
+                receipt_path=receipt,
+            )
+
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(
+                    snapshot(generated / folder),
+                    snapshot(destination / folder),
+                )
+            self.assertTrue(
+                (destination / publish_local.TRANSACTION_LOCK_NAME).is_file()
+            )
             self.assertEqual(
                 [],
                 list(destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")),
@@ -534,15 +738,18 @@ class PublishTransactionTests(unittest.TestCase):
             self.create_receipt(generated, receipt)
             before = snapshot(destination)
             real_replace = os.replace
+            replace_calls = 0
 
-            def fail_second_install(source: str | Path, target: str | Path) -> None:
-                source_path = Path(source)
-                if (
-                    source_path.parent.name == "stage"
-                    and source_path.name == "stata-packages"
-                ):
+            def fail_second_install(
+                source: str | Path,
+                target: str | Path,
+                **kwargs: int,
+            ) -> None:
+                nonlocal replace_calls
+                replace_calls += 1
+                if replace_calls == 4:
                     raise OSError("forced second install failure")
-                real_replace(source, target)
+                real_replace(source, target, **kwargs)
 
             with patch.object(
                 publish_local.os,
@@ -562,6 +769,71 @@ class PublishTransactionTests(unittest.TestCase):
             self.assertEqual(
                 [],
                 list(destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")),
+            )
+
+    def test_backup_fsync_failure_restores_original_and_preserves_recovery(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            before = {
+                folder: snapshot(destination / folder)
+                for folder in release_state.SKILL_FOLDERS
+            }
+            real_fsync_directory = publish_local._fsync_directory_descriptor
+            failed = False
+
+            def fail_first_backup_fsync(
+                file_descriptor: int,
+                display_path: Path,
+                *,
+                preserve_transaction: bool = False,
+            ) -> None:
+                nonlocal failed
+                if display_path.name == "backups" and not failed:
+                    failed = True
+                    raise publish_local.PublishError(
+                        "forced backup directory fsync failure",
+                        preserve_transaction=True,
+                    )
+                real_fsync_directory(
+                    file_descriptor,
+                    display_path,
+                    preserve_transaction=preserve_transaction,
+                )
+
+            with patch.object(
+                publish_local,
+                "_fsync_directory_descriptor",
+                side_effect=fail_first_backup_fsync,
+            ), self.assertRaisesRegex(
+                publish_local.PublishError,
+                "destinations were restored",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertTrue(failed)
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(before[folder], snapshot(destination / folder))
+            self.assertEqual(
+                1,
+                len(
+                    list(
+                        destination.glob(
+                            f"{publish_local.TRANSACTION_PREFIX}*"
+                        )
+                    )
+                ),
             )
 
     def test_concurrent_destination_bytes_survive_without_any_swap(self) -> None:
@@ -615,7 +887,7 @@ class PublishTransactionTests(unittest.TestCase):
                     encoding="utf-8"
                 ),
             )
-            self.assertFalse(
+            self.assertTrue(
                 (destination / publish_local.TRANSACTION_LOCK_NAME).exists()
             )
             self.assertEqual(
@@ -677,7 +949,7 @@ class PublishTransactionTests(unittest.TestCase):
             )
             self.assertEqual("concurrent owner\n", target_file.read_text(encoding="utf-8"))
             self.assertTrue(moved_destination.is_dir())
-            self.assertFalse(
+            self.assertTrue(
                 (destination / publish_local.TRANSACTION_LOCK_NAME).exists()
             )
             self.assertEqual(
@@ -685,7 +957,9 @@ class PublishTransactionTests(unittest.TestCase):
                 list(destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")),
             )
 
-    def test_concurrent_lock_replacement_aborts_before_any_swap(self) -> None:
+    def test_sentinel_replacement_after_authorization_keeps_root_lock(
+        self,
+    ) -> None:
         with TemporaryDirectory(prefix="publish-test-") as temporary:
             root = Path(temporary)
             generated = root / "generated"
@@ -694,37 +968,38 @@ class PublishTransactionTests(unittest.TestCase):
             write_skill_tree(generated, "new")
             write_skill_tree(destination, "old")
             self.create_receipt(generated, receipt)
-            before = snapshot(destination)
-            real_preflight = publish_local.preflight_destinations
-            preflight_calls = 0
+            real_replace = os.replace
+            replace_calls = 0
 
-            def replace_lock_after_initial_assertion(
-                destination_root: Path,
-            ) -> dict[str, publish_local.DestinationState]:
-                nonlocal preflight_calls
-                states = real_preflight(destination_root)
-                preflight_calls += 1
-                if preflight_calls == 2:
-                    lock_path = (
-                        destination / publish_local.TRANSACTION_LOCK_NAME
-                    )
+            def replace_sentinel_before_first_swap(
+                source: str | Path,
+                target: str | Path,
+                **kwargs: int,
+            ) -> None:
+                nonlocal replace_calls
+                if replace_calls == 0:
+                    lock_path = destination / publish_local.TRANSACTION_LOCK_NAME
                     lock_path.unlink()
                     lock_path.write_text(
-                        "concurrent lock\n",
+                        "concurrent sentinel\n",
                         encoding="utf-8",
                     )
-                return states
+                    probe_descriptor = os.open(destination, os.O_RDONLY)
+                    try:
+                        with self.assertRaises(BlockingIOError):
+                            fcntl.flock(
+                                probe_descriptor,
+                                fcntl.LOCK_EX | fcntl.LOCK_NB,
+                            )
+                    finally:
+                        os.close(probe_descriptor)
+                replace_calls += 1
+                real_replace(source, target, **kwargs)
 
             with patch.object(
-                publish_local,
-                "preflight_destinations",
-                side_effect=replace_lock_after_initial_assertion,
-            ), patch.object(
                 publish_local.os,
                 "replace",
-                side_effect=AssertionError("destination swap attempted"),
-            ), self.assertRaises(
-                publish_local.PublishError,
+                side_effect=replace_sentinel_before_first_swap,
             ):
                 publish_local.publish_skills(
                     source_root=generated,
@@ -733,31 +1008,18 @@ class PublishTransactionTests(unittest.TestCase):
                 )
 
             lock_path = destination / publish_local.TRANSACTION_LOCK_NAME
-            self.assertEqual("concurrent lock\n", lock_path.read_text(encoding="utf-8"))
-            skill_prefixes = tuple(
-                f"{folder}/" for folder in release_state.SKILL_FOLDERS
-            )
             self.assertEqual(
-                {
-                    path: payload
-                    for path, payload in before.items()
-                    if path.startswith(skill_prefixes)
-                },
-                {
-                    path: payload
-                    for path, payload in snapshot(destination).items()
-                    if path.startswith(skill_prefixes)
-                },
+                "concurrent sentinel\n",
+                lock_path.read_text(encoding="utf-8"),
             )
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(
+                    snapshot(generated / folder),
+                    snapshot(destination / folder),
+                )
             self.assertEqual(
-                1,
-                len(
-                    list(
-                        destination.glob(
-                            f"{publish_local.TRANSACTION_PREFIX}*"
-                        )
-                    )
-                ),
+                [],
+                list(destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")),
             )
 
     def test_root_substitution_during_swap_prevents_rollback_mutations(
@@ -772,32 +1034,33 @@ class PublishTransactionTests(unittest.TestCase):
             receipt = root / "receipt.json"
             write_skill_tree(generated, "new")
             write_skill_tree(destination, "old")
-            unintended_target.mkdir()
+            write_skill_tree(unintended_target, "attacker")
             marker = unintended_target / "owner.txt"
             marker.write_text("concurrent owner\n", encoding="utf-8")
+            unintended_before = snapshot(unintended_target)
             self.create_receipt(generated, receipt)
             real_replace = os.replace
             replace_calls = 0
 
-            def substitute_root_on_third_replace(
+            def substitute_root_before_first_replace(
                 source: str | Path,
                 target: str | Path,
+                **kwargs: int,
             ) -> None:
                 nonlocal replace_calls
                 replace_calls += 1
-                if replace_calls == 3:
+                if replace_calls == 1:
                     destination.rename(moved_destination)
                     destination.symlink_to(
                         unintended_target,
                         target_is_directory=True,
                     )
-                    raise OSError("forced failure after root substitution")
-                real_replace(source, target)
+                real_replace(source, target, **kwargs)
 
             with patch.object(
                 publish_local.os,
                 "replace",
-                side_effect=substitute_root_on_third_replace,
+                side_effect=substitute_root_before_first_replace,
             ), self.assertRaisesRegex(
                 publish_local.PublishError,
                 "rollback was incomplete",
@@ -808,10 +1071,11 @@ class PublishTransactionTests(unittest.TestCase):
                     receipt_path=receipt,
                 )
 
-            self.assertEqual(3, replace_calls)
+            self.assertEqual(1, replace_calls)
             self.assertTrue(destination.is_symlink())
             self.assertEqual(unintended_target.resolve(), destination.resolve())
             self.assertEqual("concurrent owner\n", marker.read_text(encoding="utf-8"))
+            self.assertEqual(unintended_before, snapshot(unintended_target))
             self.assertFalse(
                 (unintended_target / publish_local.TRANSACTION_LOCK_NAME).exists()
             )
@@ -829,7 +1093,67 @@ class PublishTransactionTests(unittest.TestCase):
                 ),
             )
 
-    def test_later_child_change_after_first_swap_survives_and_preserves_recovery(
+    def test_edit_between_precheck_and_backup_is_restored_not_deleted(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            concurrent_file = destination / "stata-core" / "SKILL.md"
+            real_replace = os.replace
+            replace_calls = 0
+
+            def edit_before_first_backup(
+                source: str | Path,
+                target: str | Path,
+                **kwargs: int,
+            ) -> None:
+                nonlocal replace_calls
+                replace_calls += 1
+                if replace_calls == 1:
+                    concurrent_file.write_text(
+                        "# Concurrent pre-backup bytes\n",
+                        encoding="utf-8",
+                    )
+                real_replace(source, target, **kwargs)
+
+            with patch.object(
+                publish_local.os,
+                "replace",
+                side_effect=edit_before_first_backup,
+            ), self.assertRaisesRegex(
+                publish_local.PublishError,
+                "all destinations were rolled back",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertEqual(2, replace_calls)
+            self.assertEqual(
+                "# Concurrent pre-backup bytes\n",
+                concurrent_file.read_text(encoding="utf-8"),
+            )
+            for folder in ("stata-packages", "stata-c-plugins"):
+                self.assertIn(
+                    "old",
+                    (destination / folder / "SKILL.md").read_text(
+                        encoding="utf-8"
+                    ),
+                )
+            self.assertEqual(
+                [],
+                list(destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")),
+            )
+
+    def test_later_child_change_after_first_swap_survives_clean_rollback(
         self,
     ) -> None:
         with TemporaryDirectory(prefix="publish-test-") as temporary:
@@ -847,10 +1171,11 @@ class PublishTransactionTests(unittest.TestCase):
             def mutate_later_child_after_first_install(
                 source: str | Path,
                 target: str | Path,
+                **kwargs: int,
             ) -> None:
                 nonlocal replace_calls
                 replace_calls += 1
-                real_replace(source, target)
+                real_replace(source, target, **kwargs)
                 if replace_calls == 2:
                     concurrent_file.write_text(
                         "# Concurrent package bytes\n",
@@ -863,7 +1188,7 @@ class PublishTransactionTests(unittest.TestCase):
                 side_effect=mutate_later_child_after_first_install,
             ), self.assertRaisesRegex(
                 publish_local.PublishError,
-                "rollback was incomplete",
+                "all destinations were rolled back",
             ):
                 publish_local.publish_skills(
                     source_root=generated,
@@ -871,7 +1196,7 @@ class PublishTransactionTests(unittest.TestCase):
                     receipt_path=receipt,
                 )
 
-            self.assertEqual(3, replace_calls)
+            self.assertEqual(4, replace_calls)
             self.assertEqual(
                 "# Concurrent package bytes\n",
                 concurrent_file.read_text(encoding="utf-8"),
@@ -882,18 +1207,9 @@ class PublishTransactionTests(unittest.TestCase):
                     encoding="utf-8"
                 ),
             )
-            self.assertTrue(
-                (destination / publish_local.TRANSACTION_LOCK_NAME).is_file()
-            )
             self.assertEqual(
-                1,
-                len(
-                    list(
-                        destination.glob(
-                            f"{publish_local.TRANSACTION_PREFIX}*"
-                        )
-                    )
-                ),
+                [],
+                list(destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")),
             )
 
     def test_installed_child_change_before_rollback_is_never_removed(
@@ -914,10 +1230,11 @@ class PublishTransactionTests(unittest.TestCase):
             def mutate_first_installed_child_after_all_installs(
                 source: str | Path,
                 target: str | Path,
+                **kwargs: int,
             ) -> None:
                 nonlocal replace_calls
                 replace_calls += 1
-                real_replace(source, target)
+                real_replace(source, target, **kwargs)
                 if replace_calls == 6:
                     concurrent_file.write_text(
                         "# Concurrent installed bytes\n",
@@ -938,7 +1255,7 @@ class PublishTransactionTests(unittest.TestCase):
                     receipt_path=receipt,
                 )
 
-            self.assertEqual(8, replace_calls)
+            self.assertEqual(10, replace_calls)
             self.assertEqual(
                 "# Concurrent installed bytes\n",
                 concurrent_file.read_text(encoding="utf-8"),
@@ -977,17 +1294,28 @@ class PublishTransactionTests(unittest.TestCase):
             write_skill_tree(destination, "old")
             self.create_receipt(generated, receipt)
             before = snapshot(destination)
-            real_tree_digest = publish_local.tree_digest
+            real_skill_digest = publish_local._skill_digest_at
+            package_digest_calls = 0
 
-            def corrupt_installed_digest(path: Path) -> str:
-                candidate = Path(path)
-                if candidate == destination.resolve() / "stata-packages":
-                    return "0" * 64
-                return real_tree_digest(candidate)
+            def corrupt_installed_digest(
+                parent_descriptor: int,
+                name: str,
+                display_path: Path,
+            ) -> str:
+                nonlocal package_digest_calls
+                if name == "stata-packages":
+                    package_digest_calls += 1
+                    if package_digest_calls == 2:
+                        return "0" * 64
+                return real_skill_digest(
+                    parent_descriptor,
+                    name,
+                    display_path,
+                )
 
             with patch.object(
                 publish_local,
-                "tree_digest",
+                "_skill_digest_at",
                 side_effect=corrupt_installed_digest,
             ), self.assertRaisesRegex(
                 publish_local.PublishError,
@@ -1005,6 +1333,574 @@ class PublishTransactionTests(unittest.TestCase):
                 list(destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")),
             )
 
+    def test_foreign_quarantine_content_is_preserved_after_abort(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            real_replace = os.replace
+            replace_calls = 0
+            foreign_marker: Path | None = None
+
+            def inject_foreign_quarantine_content(
+                source: str | Path,
+                target: str | Path,
+                **kwargs: int,
+            ) -> None:
+                nonlocal foreign_marker, replace_calls
+                real_replace(source, target, **kwargs)
+                replace_calls += 1
+                if replace_calls == 1:
+                    transaction = next(
+                        destination.glob(
+                            f"{publish_local.TRANSACTION_PREFIX}*"
+                        )
+                    )
+                    foreign_root = (
+                        transaction / "quarantine" / "stata-core"
+                    )
+                    foreign_root.mkdir()
+                    foreign_marker = foreign_root / "owner.txt"
+                    foreign_marker.write_text(
+                        "preserve concurrent quarantine bytes\n",
+                        encoding="utf-8",
+                    )
+
+            with patch.object(
+                publish_local.os,
+                "replace",
+                side_effect=inject_foreign_quarantine_content,
+            ), self.assertRaises(publish_local.PublishError) as raised:
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertIn("rollback was incomplete", str(raised.exception))
+            self.assertIsNotNone(foreign_marker)
+            assert foreign_marker is not None
+            self.assertEqual(
+                "preserve concurrent quarantine bytes\n",
+                foreign_marker.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                1,
+                len(
+                    list(
+                        destination.glob(
+                            f"{publish_local.TRANSACTION_PREFIX}*"
+                        )
+                    )
+                ),
+            )
+
+    def test_root_substitution_after_verified_swaps_is_not_reported_as_success(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            moved_destination = root / "moved-skills"
+            unintended_target = root / "unintended"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            write_skill_tree(unintended_target, "attacker")
+            unintended_before = snapshot(unintended_target)
+            self.create_receipt(generated, receipt)
+            real_swap_all = publish_local._swap_all
+
+            def swap_then_substitute_root(
+                *args: object,
+                **kwargs: object,
+            ) -> None:
+                real_swap_all(*args, **kwargs)
+                destination.rename(moved_destination)
+                destination.symlink_to(
+                    unintended_target,
+                    target_is_directory=True,
+                )
+
+            stderr = io.StringIO()
+            with patch.object(
+                publish_local,
+                "_swap_all",
+                side_effect=swap_then_substitute_root,
+            ), redirect_stderr(stderr), self.assertRaises(
+                publish_local.PublishError
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertTrue(destination.is_symlink())
+            self.assertEqual(unintended_target.resolve(), destination.resolve())
+            self.assertEqual(unintended_before, snapshot(unintended_target))
+            self.assertIn(
+                "new",
+                (
+                    moved_destination / "stata-core" / "SKILL.md"
+                ).read_text(encoding="utf-8"),
+            )
+
+    def test_post_commit_directory_close_error_is_a_warning_not_failure(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            expected_receipt = self.create_receipt(generated, receipt)
+            real_close_directory = publish_local._close_directory_handle
+            injected = False
+
+            def report_post_commit_close_error(
+                handle: publish_local.DirectoryHandle | None,
+            ) -> list[str]:
+                nonlocal injected
+                close_errors = real_close_directory(handle)
+                if (
+                    handle is not None
+                    and handle.name == "quarantine"
+                    and not injected
+                ):
+                    injected = True
+                    close_errors.append(
+                        "forced post-commit directory close report"
+                    )
+                return close_errors
+
+            stderr = io.StringIO()
+            observed_receipt: dict | None = None
+            observed_error: publish_local.PublishError | None = None
+            with patch.object(
+                publish_local,
+                "_close_directory_handle",
+                side_effect=report_post_commit_close_error,
+            ), redirect_stderr(stderr):
+                try:
+                    observed_receipt = publish_local.publish_skills(
+                        source_root=generated,
+                        dest_root=destination,
+                        receipt_path=receipt,
+                    )
+                except publish_local.PublishError as error:
+                    observed_error = error
+
+            self.assertTrue(injected)
+            self.assertIsNone(observed_error)
+            self.assertEqual(expected_receipt, observed_receipt)
+            self.assertIn(
+                "forced post-commit directory close report",
+                stderr.getvalue(),
+            )
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(
+                    snapshot(generated / folder),
+                    snapshot(destination / folder),
+                )
+
+    def test_lock_release_warning_does_not_promise_an_unperformed_retry(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            expected_receipt = self.create_receipt(generated, receipt)
+            real_close_descriptor = publish_local._close_file_descriptor
+            failed_descriptor: int | None = None
+
+            def report_first_lock_close_error(
+                file_descriptor: int,
+                *,
+                unlock: bool = False,
+            ) -> list[str]:
+                nonlocal failed_descriptor
+                if unlock and failed_descriptor is None:
+                    failed_descriptor = file_descriptor
+                    return ["forced lock descriptor close failure"]
+                return real_close_descriptor(
+                    file_descriptor,
+                    unlock=unlock,
+                )
+
+            stderr = io.StringIO()
+            with patch.object(
+                publish_local,
+                "_close_file_descriptor",
+                side_effect=report_first_lock_close_error,
+            ), redirect_stderr(stderr):
+                observed_receipt = publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertEqual(expected_receipt, observed_receipt)
+            self.assertIsNotNone(failed_descriptor)
+            assert failed_descriptor is not None
+            try:
+                os.fstat(failed_descriptor)
+            except OSError as error:
+                self.assertEqual(errno.EBADF, error.errno)
+                descriptor_remained_open = False
+            else:
+                descriptor_remained_open = True
+                real_close_descriptor(failed_descriptor, unlock=True)
+
+            warning = stderr.getvalue()
+            self.assertIn("forced lock descriptor close failure", warning)
+            self.assertFalse(
+                descriptor_remained_open
+                and "finalizer will attempt" in warning,
+                "warning promised finalizer closure but the descriptor "
+                "remained open",
+            )
+
+    def test_sentinel_close_error_is_reported(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            real_open = os.open
+            real_close = os.close
+            sentinel_descriptor: int | None = None
+            close_failure_injected = False
+
+            def record_sentinel_open(
+                path: str | bytes | Path,
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                nonlocal sentinel_descriptor
+                file_descriptor = real_open(
+                    path,
+                    flags,
+                    mode,
+                    dir_fd=dir_fd,
+                )
+                if path == publish_local.TRANSACTION_LOCK_NAME:
+                    sentinel_descriptor = file_descriptor
+                return file_descriptor
+
+            def fail_sentinel_close(file_descriptor: int) -> None:
+                nonlocal close_failure_injected
+                if (
+                    file_descriptor == sentinel_descriptor
+                    and not close_failure_injected
+                ):
+                    close_failure_injected = True
+                    raise OSError("forced sentinel descriptor close failure")
+                real_close(file_descriptor)
+
+            stderr = io.StringIO()
+            observed_error: publish_local.PublishError | None = None
+            try:
+                with patch.object(
+                    publish_local.os,
+                    "open",
+                    side_effect=record_sentinel_open,
+                ), patch.object(
+                    publish_local.os,
+                    "close",
+                    side_effect=fail_sentinel_close,
+                ), redirect_stderr(stderr):
+                    try:
+                        publish_local.publish_skills(
+                            source_root=generated,
+                            dest_root=destination,
+                            receipt_path=receipt,
+                        )
+                    except publish_local.PublishError as error:
+                        observed_error = error
+            finally:
+                if sentinel_descriptor is not None:
+                    try:
+                        os.fstat(sentinel_descriptor)
+                    except OSError:
+                        pass
+                    else:
+                        real_close(sentinel_descriptor)
+
+            self.assertTrue(close_failure_injected)
+            surfaced_diagnostic = (
+                observed_error is not None
+                and "forced sentinel descriptor close failure"
+                in str(observed_error)
+            ) or (
+                "forced sentinel descriptor close failure"
+                in stderr.getvalue()
+            )
+            self.assertTrue(
+                surfaced_diagnostic,
+                "sentinel descriptor close failure was silently discarded",
+            )
+
+    def test_substituted_transaction_directory_is_not_recursively_deleted(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            external = root / "external"
+            displaced_created_directory = root / "created-transaction-directory"
+            valuable = external / "valuable.txt"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            external.mkdir()
+            valuable.write_text("preserve external bytes\n", encoding="utf-8")
+            self.create_receipt(generated, receipt)
+            real_open_directory = publish_local._open_directory_handle_at
+            substituted = False
+
+            def substitute_before_transaction_open(
+                parent_descriptor: int,
+                name: str,
+                display_path: Path,
+            ) -> publish_local.DirectoryHandle:
+                nonlocal substituted
+                if (
+                    not substituted
+                    and name.startswith(publish_local.TRANSACTION_PREFIX)
+                ):
+                    substituted = True
+                    display_path.rename(displaced_created_directory)
+                    external.rename(display_path)
+                return real_open_directory(
+                    parent_descriptor,
+                    name,
+                    display_path,
+                )
+
+            with patch.object(
+                publish_local,
+                "_open_directory_handle_at",
+                side_effect=substitute_before_transaction_open,
+            ), self.assertRaises(publish_local.PublishError):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertTrue(substituted)
+            surviving_values = [
+                path.read_text(encoding="utf-8")
+                for path in root.rglob("valuable.txt")
+            ]
+            self.assertEqual(["preserve external bytes\n"], surviving_values)
+
+    def test_interrupt_after_committed_backup_rename_preserves_original(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            expected_core = snapshot(destination / "stata-core")
+            real_replace = os.replace
+            replace_calls = 0
+
+            def interrupt_after_first_backup(
+                source: str | Path,
+                target: str | Path,
+                **kwargs: int,
+            ) -> None:
+                nonlocal replace_calls
+                replace_calls += 1
+                real_replace(source, target, **kwargs)
+                if replace_calls == 1:
+                    raise KeyboardInterrupt(
+                        "interrupt after committed backup rename"
+                    )
+
+            with patch.object(
+                publish_local.os,
+                "replace",
+                side_effect=interrupt_after_first_backup,
+            ), self.assertRaises(publish_local.PublishError):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            observed_copies = []
+            installed_core = destination / "stata-core"
+            if installed_core.is_dir():
+                observed_copies.append(snapshot(installed_core))
+            for transaction in destination.glob(
+                f"{publish_local.TRANSACTION_PREFIX}*"
+            ):
+                backup_core = transaction / "backups" / "stata-core"
+                if backup_core.is_dir():
+                    observed_copies.append(snapshot(backup_core))
+            self.assertIn(expected_core, observed_copies)
+
+    def test_changed_backup_is_preserved_instead_of_restored(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            real_replace = os.replace
+            replace_calls = 0
+            changed_backup = "# Concurrent backup bytes\n"
+
+            def change_backup_then_fail_install(
+                source: str | Path,
+                target: str | Path,
+                **kwargs: int,
+            ) -> None:
+                nonlocal replace_calls
+                replace_calls += 1
+                if replace_calls == 2:
+                    transaction = next(
+                        destination.glob(
+                            f"{publish_local.TRANSACTION_PREFIX}*"
+                        )
+                    )
+                    (
+                        transaction
+                        / "backups"
+                        / "stata-core"
+                        / "SKILL.md"
+                    ).write_text(changed_backup, encoding="utf-8")
+                    raise OSError("forced install failure after backup drift")
+                real_replace(source, target, **kwargs)
+
+            with patch.object(
+                publish_local.os,
+                "replace",
+                side_effect=change_backup_then_fail_install,
+            ), self.assertRaises(publish_local.PublishError) as raised:
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertIn("rollback was incomplete", str(raised.exception))
+            transactions = list(
+                destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")
+            )
+            self.assertEqual(1, len(transactions))
+            self.assertEqual(
+                changed_backup,
+                (
+                    transactions[0]
+                    / "backups"
+                    / "stata-core"
+                    / "SKILL.md"
+                ).read_text(encoding="utf-8"),
+            )
+
+    def test_recursive_cleanup_closes_child_descriptor_after_failure(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            transaction_path = root / "transaction"
+            leaf = transaction_path / "nested" / "leaf.txt"
+            leaf.parent.mkdir(parents=True)
+            leaf.write_text("preserve recovery bytes\n", encoding="utf-8")
+            root_descriptor = os.open(
+                root,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            transaction = publish_local._open_directory_handle_at(
+                root_descriptor,
+                transaction_path.name,
+                transaction_path,
+            )
+            real_open_directory = publish_local._open_directory_handle_at
+            real_unlink = os.unlink
+            descendant_descriptors: list[int] = []
+
+            def record_descendant_descriptor(
+                parent_descriptor: int,
+                name: str,
+                display_path: Path,
+            ) -> publish_local.DirectoryHandle:
+                handle = real_open_directory(
+                    parent_descriptor,
+                    name,
+                    display_path,
+                )
+                if handle.file_descriptor is not None:
+                    descendant_descriptors.append(handle.file_descriptor)
+                return handle
+
+            def fail_leaf_unlink(
+                name: str | bytes,
+                *,
+                dir_fd: int | None = None,
+            ) -> None:
+                if name == "leaf.txt":
+                    raise PermissionError("forced nested cleanup failure")
+                real_unlink(name, dir_fd=dir_fd)
+
+            open_after_failure: list[int] = []
+            try:
+                with patch.object(
+                    publish_local,
+                    "_open_directory_handle_at",
+                    side_effect=record_descendant_descriptor,
+                ), patch.object(
+                    publish_local.os,
+                    "unlink",
+                    side_effect=fail_leaf_unlink,
+                ), self.assertRaises((OSError, publish_local.PublishError)):
+                    publish_local._clear_directory_handle(transaction)
+
+                self.assertTrue(leaf.is_file())
+                for file_descriptor in descendant_descriptors:
+                    try:
+                        os.fstat(file_descriptor)
+                    except OSError as error:
+                        self.assertEqual(errno.EBADF, error.errno)
+                    else:
+                        open_after_failure.append(file_descriptor)
+            finally:
+                for file_descriptor in open_after_failure:
+                    os.close(file_descriptor)
+                publish_local._close_directory_handle(transaction)
+                os.close(root_descriptor)
+
+            self.assertEqual([], open_after_failure)
+
     def test_cleanup_failure_warns_after_verified_publish(self) -> None:
         with TemporaryDirectory(prefix="publish-test-") as temporary:
             root = Path(temporary)
@@ -1014,19 +1910,12 @@ class PublishTransactionTests(unittest.TestCase):
             write_skill_tree(generated, "new")
             write_skill_tree(destination, "old")
             expected_receipt = self.create_receipt(generated, receipt)
-            real_rmtree = publish_local.shutil.rmtree
-
-            def fail_transaction_cleanup(path: str | Path, *args: object, **kwargs: object) -> None:
-                candidate = Path(path)
-                if candidate.name.startswith(publish_local.TRANSACTION_PREFIX):
-                    raise PermissionError("forced transaction cleanup failure")
-                real_rmtree(candidate, *args, **kwargs)
 
             stderr = io.StringIO()
             with patch.object(
-                publish_local.shutil,
-                "rmtree",
-                side_effect=fail_transaction_cleanup,
+                publish_local,
+                "_remove_transaction_workspace",
+                side_effect=PermissionError("forced transaction cleanup failure"),
             ), redirect_stderr(stderr):
                 observed_receipt = publish_local.publish_skills(
                     source_root=generated,
@@ -1076,7 +1965,7 @@ class PublishTransactionTests(unittest.TestCase):
 
             self.assertEqual(expected_receipt, observed_receipt)
             self.assertIn(
-                "transaction lock could not be removed",
+                "kernel transaction-lock release state is indeterminate",
                 stderr.getvalue(),
             )
             for folder in release_state.SKILL_FOLDERS:

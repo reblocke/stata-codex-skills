@@ -39,6 +39,10 @@ Generated skills are written to `build/generated/` and published into:
 If `CODEX_HOME` is set, the default publication root is
 `$CODEX_HOME/skills/`. Custom publication roots must resolve outside this
 repository and must not overlap `build/generated/`.
+Publication holds a kernel advisory lock on that destination directory and
+keeps `.stata-codex-skills-publish.lock` as a protocol sentinel. Unresolved
+`.stata-codex-skills-publish-*` recovery directories block later publication
+until they are reviewed and removed.
 
 ## Design principles
 

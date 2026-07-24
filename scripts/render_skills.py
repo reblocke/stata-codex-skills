@@ -5,9 +5,11 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 import argparse
+import ctypes
 import os
 import re
-import shutil
+import stat
+import sys
 import tempfile
 import uuid
 
@@ -252,6 +254,31 @@ def verify_output_root_state(
     if observed != expected:
         raise RenderTransactionError(
             "render output root changed after preflight; refusing replacement"
+        )
+
+
+def _verify_moved_output_state(
+    backup_root: Path,
+    expected: RenderOutputState,
+) -> None:
+    """Require the object moved aside to be the exact accepted render root."""
+
+    if not expected.exists:
+        raise RenderTransactionError(
+            "an unexpected output root appeared during replacement; it remains "
+            f"preserved at {backup_root}"
+        )
+    try:
+        observed = capture_output_root_state(backup_root)
+    except (OSError, ValueError) as error:
+        raise RenderTransactionError(
+            "the object moved from the render output path is not the accepted "
+            f"generated tree; it remains preserved at {backup_root}"
+        ) from error
+    if observed != expected:
+        raise RenderTransactionError(
+            "the object moved from the render output path changed after "
+            f"verification; it remains preserved at {backup_root}"
         )
 
 
@@ -590,11 +617,241 @@ def validate_rendered_tree(
         raise ValueError("staged render validation failed: " + "; ".join(errors))
 
 
-def _remove_path(path: Path) -> None:
-    if path.is_symlink() or path.is_file():
-        path.unlink()
-    elif path.exists():
-        shutil.rmtree(path)
+def _atomic_rename_no_replace(source: Path, destination: Path) -> None:
+    """Atomically rename a directory only when the destination is absent."""
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    if sys.platform == "darwin":
+        try:
+            rename_exclusive = libc.renamex_np
+        except AttributeError as error:
+            raise RenderTransactionError(
+                "This macOS runtime lacks atomic no-replace rename support"
+            ) from error
+        rename_exclusive.argtypes = [
+            ctypes.c_char_p,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename_exclusive.restype = ctypes.c_int
+        result = rename_exclusive(
+            source_bytes,
+            destination_bytes,
+            0x00000004,  # RENAME_EXCL from <sys/stdio.h>
+        )
+    elif sys.platform.startswith("linux"):
+        try:
+            rename_exclusive = libc.renameat2
+        except AttributeError as error:
+            raise RenderTransactionError(
+                "This Linux runtime lacks atomic no-replace rename support"
+            ) from error
+        rename_exclusive.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        rename_exclusive.restype = ctypes.c_int
+        result = rename_exclusive(
+            -100,  # AT_FDCWD
+            source_bytes,
+            -100,
+            destination_bytes,
+            1,  # RENAME_NOREPLACE from <linux/fs.h>
+        )
+    else:
+        raise RenderTransactionError(
+            "Atomic render replacement is supported only on macOS and Linux"
+        )
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(
+            error_number,
+            os.strerror(error_number),
+            str(destination),
+        )
+
+
+def _open_directory_at(
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+) -> tuple[int, os.stat_result]:
+    metadata = os.stat(
+        name,
+        dir_fd=parent_descriptor,
+        follow_symlinks=False,
+    )
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise RenderTransactionError(
+            f"refusing non-directory render backup entry: {display_path}"
+        )
+    descriptor = os.open(
+        name,
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+        dir_fd=parent_descriptor,
+    )
+    opened = os.fstat(descriptor)
+    if (
+        not stat.S_ISDIR(opened.st_mode)
+        or opened.st_dev != metadata.st_dev
+        or opened.st_ino != metadata.st_ino
+    ):
+        os.close(descriptor)
+        raise RenderTransactionError(
+            f"render backup changed while opening it: {display_path}"
+        )
+    return descriptor, opened
+
+
+def _clear_directory_descriptor(
+    descriptor: int,
+    display_path: Path,
+) -> None:
+    current_mode = stat.S_IMODE(os.fstat(descriptor).st_mode)
+    os.fchmod(
+        descriptor,
+        current_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR,
+    )
+    for name in sorted(os.listdir(descriptor)):
+        child_path = display_path / name
+        metadata = os.stat(
+            name,
+            dir_fd=descriptor,
+            follow_symlinks=False,
+        )
+        if stat.S_ISDIR(metadata.st_mode):
+            child_descriptor, opened = _open_directory_at(
+                descriptor,
+                name,
+                child_path,
+            )
+            try:
+                _clear_directory_descriptor(child_descriptor, child_path)
+            finally:
+                os.close(child_descriptor)
+            observed = os.stat(
+                name,
+                dir_fd=descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISDIR(observed.st_mode)
+                or observed.st_dev != opened.st_dev
+                or observed.st_ino != opened.st_ino
+            ):
+                raise RenderTransactionError(
+                    "render backup directory changed before removal: "
+                    f"{child_path}"
+                )
+            os.rmdir(name, dir_fd=descriptor)
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise RenderTransactionError(
+                f"refusing unexpected render backup entry: {child_path}"
+            )
+        os.unlink(name, dir_fd=descriptor)
+    os.fsync(descriptor)
+
+
+def _remove_verified_backup(
+    backup_root: Path,
+    expected: RenderOutputState,
+) -> None:
+    """Delete only the exact prior tree through anchored descriptors."""
+
+    _verify_moved_output_state(backup_root, expected)
+    if expected.device is None or expected.inode is None:
+        raise RenderTransactionError(
+            f"render backup has no accepted identity: {backup_root}"
+        )
+    _remove_owned_directory(
+        backup_root,
+        expected.device,
+        expected.inode,
+    )
+
+
+def _remove_owned_directory(
+    directory: Path,
+    expected_device: int,
+    expected_inode: int,
+) -> None:
+    """Remove only the directory with the exact captured identity."""
+
+    parent_descriptor = os.open(
+        directory.parent,
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0),
+    )
+    backup_descriptor: int | None = None
+    try:
+        backup_descriptor, opened = _open_directory_at(
+            parent_descriptor,
+            directory.name,
+            directory,
+        )
+        if (
+            opened.st_dev != expected_device
+            or opened.st_ino != expected_inode
+        ):
+            raise RenderTransactionError(
+                "directory no longer matches its captured identity; "
+                f"preserving {directory}"
+            )
+        _clear_directory_descriptor(backup_descriptor, directory)
+        os.close(backup_descriptor)
+        backup_descriptor = None
+        observed = os.stat(
+            directory.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(observed.st_mode)
+            or observed.st_dev != opened.st_dev
+            or observed.st_ino != opened.st_ino
+        ):
+            raise RenderTransactionError(
+                "directory path changed before final removal; preserving "
+                f"the observed path {directory}"
+            )
+        os.rmdir(directory.name, dir_fd=parent_descriptor)
+        os.fsync(parent_descriptor)
+    finally:
+        if backup_descriptor is not None:
+            os.close(backup_descriptor)
+        os.close(parent_descriptor)
+
+
+def _cleanup_staged_root(
+    staged_root: Path,
+    expected_device: int,
+    expected_inode: int,
+) -> None:
+    try:
+        _remove_owned_directory(
+            staged_root,
+            expected_device,
+            expected_inode,
+        )
+    except FileNotFoundError:
+        return
+    except (OSError, RenderTransactionError) as cleanup_error:
+        print(
+            "WARNING: staged render cleanup was skipped because the path no "
+            f"longer matched the created directory: {staged_root}: "
+            f"{cleanup_error}"
+        )
 
 
 def _replace_rendered_tree(
@@ -610,14 +867,37 @@ def _replace_rendered_tree(
         backup_root = output_root.parent / (
             f".{output_root.name}.backup-{uuid.uuid4().hex}"
         )
-        os.replace(output_root, backup_root)
+        try:
+            _atomic_rename_no_replace(output_root, backup_root)
+        except BaseException as move_error:
+            if backup_root.exists() or backup_root.is_symlink():
+                raise RenderTransactionError(
+                    "The prior render-root move reported a failure after "
+                    f"creating {backup_root}; preserving it for review"
+                ) from move_error
+            raise
+        _verify_moved_output_state(backup_root, expected_output_state)
 
     try:
-        os.replace(staged_root, output_root)
+        _atomic_rename_no_replace(staged_root, output_root)
     except BaseException as swap_error:
         if backup_root is not None and backup_root.exists():
             try:
-                os.replace(backup_root, output_root)
+                _verify_moved_output_state(
+                    backup_root,
+                    expected_output_state,
+                )
+                if output_root.exists() or output_root.is_symlink():
+                    raise RenderTransactionError(
+                        "Rendered-tree swap failed and the output path gained "
+                        "concurrent state. The accepted prior tree remains at "
+                        f"{backup_root}"
+                    )
+                _atomic_rename_no_replace(backup_root, output_root)
+                verify_output_root_state(
+                    output_root,
+                    expected_output_state,
+                )
             except BaseException as restore_error:
                 raise RenderTransactionError(
                     "Rendered-tree swap failed and the prior tree could not be "
@@ -628,8 +908,11 @@ def _replace_rendered_tree(
     else:
         if backup_root is not None:
             try:
-                _remove_path(backup_root)
-            except OSError as cleanup_error:
+                _remove_verified_backup(
+                    backup_root,
+                    expected_output_state,
+                )
+            except (OSError, RenderTransactionError) as cleanup_error:
                 print(
                     "WARNING: rendered tree was committed, but the prior-tree "
                     f"backup could not be removed: {backup_root}: {cleanup_error}"
@@ -658,6 +941,7 @@ def render_all(
             dir=output_root.parent,
         )
     )
+    staged_metadata = staged_root.stat()
     try:
         _render_tree(staged_root, config, grouped, aliases_by_skill)
         validate_rendered_tree(
@@ -672,7 +956,11 @@ def render_all(
             expected_output_state,
         )
     finally:
-        _remove_path(staged_root)
+        _cleanup_staged_root(
+            staged_root,
+            staged_metadata.st_dev,
+            staged_metadata.st_ino,
+        )
 
     for skill in config["skills"].values():
         print(f"Rendered {output_root / skill['folder']}")

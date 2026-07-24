@@ -4,21 +4,21 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+import errno
+import fcntl
 import hashlib
 import os
 from pathlib import Path
-import shutil
+import secrets
 import stat
 import sys
-import tempfile
 
 from libskillpack import BUILD_ROOT, REPO_ROOT
 from release_state import (
     SKILL_FOLDERS,
     VALIDATION_RECEIPT_PATH,
-    tree_digest,
     validate_complete_skill_tree,
     verify_validation_receipt,
 )
@@ -28,6 +28,7 @@ RECEIPT_MAX_AGE = timedelta(hours=1)
 RECEIPT_FUTURE_TOLERANCE = timedelta(minutes=1)
 TRANSACTION_PREFIX = ".stata-codex-skills-publish-"
 TRANSACTION_LOCK_NAME = ".stata-codex-skills-publish.lock"
+TRANSACTION_LOCK_PAYLOAD = b"stata-codex-skills-publish-lock-v1\n"
 
 
 class PublishError(RuntimeError):
@@ -38,6 +39,10 @@ class PublishError(RuntimeError):
         self.preserve_transaction = preserve_transaction
 
 
+class DestinationAuthorizationError(PublishError):
+    """The approved destination path no longer names the anchored root."""
+
+
 @dataclass
 class ReplacementState:
     destination: Path
@@ -45,7 +50,10 @@ class ReplacementState:
     staged: Path
     original_existed: bool
     original_state: DestinationState
+    backup_attempted: bool = False
     backup_created: bool = False
+    backup_state_after_move: DestinationState | None = None
+    install_attempted: bool = False
     installed: bool = False
     staged_state: DestinationState | None = None
     installed_state: DestinationState | None = None
@@ -59,11 +67,22 @@ class DestinationState:
     tree_sha256: str | None = None
 
 
-@dataclass(frozen=True)
+@dataclass
 class TransactionLock:
     path: Path
+    root_device: int
+    root_inode: int
+    file_descriptor: int | None
+    close_errors: list[str] = field(default_factory=list)
+
+
+@dataclass
+class DirectoryHandle:
+    name: str
+    display_path: Path
     device: int
     inode: int
+    file_descriptor: int | None
 
 
 @dataclass(frozen=True)
@@ -83,13 +102,6 @@ def default_skills_dir() -> Path:
         else Path.home() / ".codex"
     )
     return codex_home / "skills"
-
-
-def _remove_path(path: Path) -> None:
-    if path.is_symlink() or path.is_file():
-        path.unlink()
-    elif path.exists():
-        shutil.rmtree(path)
 
 
 def _capture_destination_root_identity(
@@ -121,12 +133,143 @@ def _capture_destination_root_identity(
 
 
 def _assert_destination_root(identity: DestinationRootIdentity) -> None:
-    observed = _capture_destination_root_identity(identity.path, identity.path)
+    try:
+        observed = _capture_destination_root_identity(identity.path, identity.path)
+    except PublishError as error:
+        raise DestinationAuthorizationError(
+            "Publication destination root can no longer be authorized: "
+            f"{identity.path}: {error}",
+            preserve_transaction=True,
+        ) from error
     if observed.device != identity.device or observed.inode != identity.inode:
-        raise PublishError(
+        raise DestinationAuthorizationError(
             "Publication destination root identity changed; refusing to modify "
-            f"it: {identity.path}"
+            f"it: {identity.path}",
+            preserve_transaction=True,
         )
+
+
+def _write_all(file_descriptor: int, payload: bytes) -> None:
+    written = 0
+    while written < len(payload):
+        chunk_size = os.write(file_descriptor, payload[written:])
+        if chunk_size <= 0:
+            raise OSError("filesystem write made no progress")
+        written += chunk_size
+
+
+def _ensure_transaction_sentinel(
+    root_descriptor: int,
+    lock_path: Path,
+) -> None:
+    create_flags = (
+        os.O_CREAT
+        | os.O_EXCL
+        | os.O_WRONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    created = False
+    sentinel_descriptor: int | None = None
+    sentinel_stat: os.stat_result | None = None
+    try:
+        try:
+            sentinel_descriptor = os.open(
+                TRANSACTION_LOCK_NAME,
+                create_flags,
+                0o600,
+                dir_fd=root_descriptor,
+            )
+            created = True
+        except FileExistsError:
+            sentinel_descriptor = os.open(
+                TRANSACTION_LOCK_NAME,
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=root_descriptor,
+            )
+
+        sentinel_stat = os.fstat(sentinel_descriptor)
+        expected_owner = os.geteuid() if hasattr(os, "geteuid") else sentinel_stat.st_uid
+        if (
+            not stat.S_ISREG(sentinel_stat.st_mode)
+            or sentinel_stat.st_nlink != 1
+            or sentinel_stat.st_uid != expected_owner
+        ):
+            raise PublishError(
+                "Publication lock sentinel must be a singly linked regular "
+                f"file owned by the current user: {lock_path}"
+            )
+        if created:
+            _write_all(sentinel_descriptor, TRANSACTION_LOCK_PAYLOAD)
+            os.fsync(sentinel_descriptor)
+            _fsync_directory_descriptor(
+                root_descriptor,
+                lock_path.parent,
+            )
+        else:
+            observed = os.read(
+                sentinel_descriptor,
+                len(TRANSACTION_LOCK_PAYLOAD) + 1,
+            )
+            if observed != TRANSACTION_LOCK_PAYLOAD:
+                raise PublishError(
+                    "Publication lock sentinel is not recognized; refusing to "
+                    f"replace it: {lock_path}"
+                )
+    except BaseException as error:
+        if created and sentinel_stat is not None:
+            try:
+                observed = os.stat(
+                    TRANSACTION_LOCK_NAME,
+                    dir_fd=root_descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    observed.st_dev == sentinel_stat.st_dev
+                    and observed.st_ino == sentinel_stat.st_ino
+                ):
+                    os.unlink(
+                        TRANSACTION_LOCK_NAME,
+                        dir_fd=root_descriptor,
+                    )
+                    _fsync_directory_descriptor(
+                        root_descriptor,
+                        lock_path.parent,
+                    )
+            except (NameError, OSError):
+                pass
+        close_errors = (
+            _close_file_descriptor(sentinel_descriptor)
+            if sentinel_descriptor is not None
+            else []
+        )
+        sentinel_descriptor = None
+        if close_errors:
+            raise PublishError(
+                f"{error}; sentinel descriptor cleanup also reported: "
+                + "; ".join(close_errors),
+                preserve_transaction=(
+                    isinstance(error, PublishError)
+                    and error.preserve_transaction
+                ),
+            ) from error
+        raise
+    else:
+        close_errors = (
+            _close_file_descriptor(sentinel_descriptor)
+            if sentinel_descriptor is not None
+            else []
+        )
+        sentinel_descriptor = None
+        if close_errors:
+            raise PublishError(
+                "Publication lock sentinel descriptor closure was "
+                "indeterminate: " + "; ".join(close_errors)
+            )
 
 
 def _acquire_transaction_lock(
@@ -134,53 +277,72 @@ def _acquire_transaction_lock(
 ) -> TransactionLock:
     _assert_destination_root(destination_root)
     lock_path = destination_root.path / TRANSACTION_LOCK_NAME
-    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    root_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
     try:
-        file_descriptor = os.open(lock_path, flags, 0o600)
-    except FileExistsError as error:
-        raise PublishError(
-            "Another publication transaction is active or left a recovery "
-            f"lock at {lock_path}."
-        ) from error
+        file_descriptor = os.open(destination_root.path, root_flags)
     except OSError as error:
         raise PublishError(
-            f"Could not acquire publication transaction lock {lock_path}: {error}"
+            "Could not open publication destination for locking "
+            f"{destination_root.path}: {error}"
         ) from error
 
-    lock_stat: os.stat_result | None = None
     try:
-        lock_stat = os.fstat(file_descriptor)
-        with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
-            handle.write(f"pid={os.getpid()}\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        root_stat = os.fstat(file_descriptor)
+        if (
+            not stat.S_ISDIR(root_stat.st_mode)
+            or root_stat.st_dev != destination_root.device
+            or root_stat.st_ino != destination_root.inode
+        ):
+            raise PublishError(
+                "Publication destination changed before its kernel lock was "
+                f"acquired: {destination_root.path}"
+            )
+        try:
+            fcntl.flock(
+                file_descriptor,
+                fcntl.LOCK_EX | fcntl.LOCK_NB,
+            )
+        except OSError as error:
+            if error.errno in {errno.EACCES, errno.EAGAIN}:
+                raise PublishError(
+                    "Another publication transaction is active for "
+                    f"{destination_root.path}."
+                ) from error
+            raise
+        _assert_destination_root(destination_root)
+        _ensure_transaction_sentinel(file_descriptor, lock_path)
     except BaseException as error:
-        try:
-            os.close(file_descriptor)
-        except OSError:
-            pass
-        try:
-            _assert_destination_root(destination_root)
-            observed = lock_path.lstat()
-            if (
-                lock_stat is not None
-                and observed.st_dev == lock_stat.st_dev
-                and observed.st_ino == lock_stat.st_ino
-            ):
-                lock_path.unlink()
-        except (OSError, PublishError):
-            pass
-        raise PublishError(
-            f"Could not initialize publication transaction lock {lock_path}: {error}"
-        ) from error
-    if lock_stat is None:
-        raise PublishError(
-            f"Could not initialize publication transaction lock {lock_path}"
+        close_errors = _close_file_descriptor(
+            file_descriptor,
+            unlock=True,
         )
+        if isinstance(error, PublishError):
+            if close_errors:
+                raise PublishError(
+                    f"{error}; lock descriptor cleanup also reported: "
+                    + "; ".join(close_errors),
+                    preserve_transaction=error.preserve_transaction,
+                ) from error
+            raise
+        close_suffix = (
+            f"; lock descriptor cleanup also reported: {'; '.join(close_errors)}"
+            if close_errors
+            else ""
+        )
+        raise PublishError(
+            "Could not initialize publication transaction lock "
+            f"{lock_path}: {error}{close_suffix}"
+        ) from error
     return TransactionLock(
         path=lock_path,
-        device=lock_stat.st_dev,
-        inode=lock_stat.st_ino,
+        root_device=root_stat.st_dev,
+        root_inode=root_stat.st_ino,
+        file_descriptor=file_descriptor,
     )
 
 
@@ -189,20 +351,29 @@ def _assert_transaction_lock(
     destination_root: DestinationRootIdentity,
 ) -> None:
     _assert_destination_root(destination_root)
+    if lock.file_descriptor is None:
+        raise DestinationAuthorizationError(
+            f"Publication transaction lock is no longer held: {lock.path}",
+            preserve_transaction=True,
+        )
     try:
-        observed = lock.path.lstat()
+        held = os.fstat(lock.file_descriptor)
     except OSError as error:
-        raise PublishError(
-            f"Publication transaction lock disappeared: {lock.path}"
+        raise DestinationAuthorizationError(
+            f"Could not verify held publication transaction lock: {lock.path}",
+            preserve_transaction=True,
         ) from error
     if (
-        not stat.S_ISREG(observed.st_mode)
-        or observed.st_dev != lock.device
-        or observed.st_ino != lock.inode
+        not stat.S_ISDIR(held.st_mode)
+        or held.st_dev != lock.root_device
+        or held.st_ino != lock.root_inode
+        or held.st_dev != destination_root.device
+        or held.st_ino != destination_root.inode
     ):
-        raise PublishError(
-            "Publication transaction lock was replaced; refusing to modify "
-            f"destinations: {lock.path}"
+        raise DestinationAuthorizationError(
+            "Held publication destination lock changed: "
+            f"{destination_root.path}",
+            preserve_transaction=True,
         )
 
 
@@ -218,7 +389,277 @@ def _release_transaction_lock(
     destination_root: DestinationRootIdentity,
 ) -> None:
     _assert_mutation_authorized(destination_root, lock)
-    lock.path.unlink()
+    close_errors = _close_transaction_lock(lock)
+    if close_errors:
+        raise PublishError(
+            "Publication kernel-lock release reported errors: "
+            + "; ".join(close_errors)
+        )
+
+
+def _close_transaction_lock(lock: TransactionLock) -> list[str]:
+    if lock.file_descriptor is None:
+        return []
+    file_descriptor = lock.file_descriptor
+    lock.file_descriptor = None
+    close_errors = _close_file_descriptor(
+        file_descriptor,
+        unlock=True,
+    )
+    lock.close_errors.extend(close_errors)
+    return close_errors
+
+
+def _close_file_descriptor(
+    file_descriptor: int,
+    *,
+    unlock: bool = False,
+) -> list[str]:
+    errors: list[str] = []
+    if unlock:
+        try:
+            fcntl.flock(file_descriptor, fcntl.LOCK_UN)
+        except OSError as error:
+            errors.append(f"unlock failed: {error}")
+    try:
+        os.close(file_descriptor)
+    except OSError as error:
+        errors.append(f"close failed: {error}")
+    return errors
+
+
+def _fsync_directory_descriptor(
+    file_descriptor: int,
+    display_path: Path,
+    *,
+    preserve_transaction: bool = False,
+) -> None:
+    try:
+        os.fsync(file_descriptor)
+    except OSError as error:
+        raise PublishError(
+            f"Could not durably synchronize directory {display_path}: {error}",
+            preserve_transaction=preserve_transaction,
+        ) from error
+
+
+def _open_directory_handle_at(
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+) -> DirectoryHandle:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    file_descriptor: int | None = None
+    try:
+        metadata = os.stat(
+            name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        file_descriptor = os.open(
+            name,
+            flags,
+            dir_fd=parent_descriptor,
+        )
+        opened = os.fstat(file_descriptor)
+    except OSError as error:
+        close_errors = (
+            _close_file_descriptor(file_descriptor)
+            if file_descriptor is not None
+            else []
+        )
+        close_suffix = (
+            f"; descriptor cleanup also reported: {'; '.join(close_errors)}"
+            if close_errors
+            else ""
+        )
+        raise PublishError(
+            f"Could not open anchored directory {display_path}: "
+            f"{error}{close_suffix}"
+        ) from error
+    if (
+        not stat.S_ISDIR(metadata.st_mode)
+        or not stat.S_ISDIR(opened.st_mode)
+        or metadata.st_dev != opened.st_dev
+        or metadata.st_ino != opened.st_ino
+    ):
+        close_errors = _close_file_descriptor(file_descriptor)
+        close_suffix = (
+            f"; descriptor cleanup also reported: {'; '.join(close_errors)}"
+            if close_errors
+            else ""
+        )
+        raise PublishError(
+            f"Anchored directory changed while opening it: "
+            f"{display_path}{close_suffix}"
+        )
+    return DirectoryHandle(
+        name=name,
+        display_path=display_path,
+        device=opened.st_dev,
+        inode=opened.st_ino,
+        file_descriptor=file_descriptor,
+    )
+
+
+def _close_directory_handle(handle: DirectoryHandle | None) -> list[str]:
+    if handle is None or handle.file_descriptor is None:
+        return []
+    file_descriptor = handle.file_descriptor
+    handle.file_descriptor = None
+    return _close_file_descriptor(file_descriptor)
+
+
+def _require_directory_descriptor(handle: DirectoryHandle) -> int:
+    if handle.file_descriptor is None:
+        raise PublishError(
+            f"Anchored directory is no longer open: {handle.display_path}"
+        )
+    try:
+        observed = os.fstat(handle.file_descriptor)
+    except OSError as error:
+        raise PublishError(
+            f"Could not verify anchored directory {handle.display_path}"
+        ) from error
+    if (
+        not stat.S_ISDIR(observed.st_mode)
+        or observed.st_dev != handle.device
+        or observed.st_ino != handle.inode
+    ):
+        raise PublishError(
+            f"Anchored directory identity changed: {handle.display_path}"
+        )
+    return handle.file_descriptor
+
+
+def _create_directory_handle_at(
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+    *,
+    preserve_on_create_failure: bool = True,
+) -> DirectoryHandle:
+    try:
+        os.mkdir(name, 0o700, dir_fd=parent_descriptor)
+    except OSError as error:
+        raise PublishError(
+            f"Could not create anchored directory {display_path}: {error}",
+            preserve_transaction=preserve_on_create_failure,
+        ) from error
+    handle: DirectoryHandle | None = None
+    try:
+        created = os.stat(
+            name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        expected_owner = (
+            os.geteuid() if hasattr(os, "geteuid") else created.st_uid
+        )
+        if (
+            not stat.S_ISDIR(created.st_mode)
+            or created.st_uid != expected_owner
+            or created.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+        ):
+            raise PublishError(
+                "New transaction directory has unsafe ownership or "
+                f"permissions: {display_path}",
+                preserve_transaction=True,
+            )
+        handle = _open_directory_handle_at(
+            parent_descriptor,
+            name,
+            display_path,
+        )
+        if handle.device != created.st_dev or handle.inode != created.st_ino:
+            close_errors = _close_directory_handle(handle)
+            close_suffix = (
+                "; descriptor cleanup also reported: "
+                + "; ".join(close_errors)
+                if close_errors
+                else ""
+            )
+            raise PublishError(
+                "New transaction directory changed before it could be "
+                f"anchored: {display_path}{close_suffix}",
+                preserve_transaction=True,
+            )
+        if os.listdir(_require_directory_descriptor(handle)):
+            close_errors = _close_directory_handle(handle)
+            close_suffix = (
+                "; descriptor cleanup also reported: "
+                + "; ".join(close_errors)
+                if close_errors
+                else ""
+            )
+            raise PublishError(
+                "New transaction directory was not empty when anchored; "
+                f"preserving it without cleanup: {display_path}{close_suffix}",
+                preserve_transaction=True,
+            )
+        _fsync_directory_descriptor(
+            parent_descriptor,
+            display_path.parent,
+            preserve_transaction=preserve_on_create_failure,
+        )
+        return handle
+    except BaseException as error:
+        close_errors = _close_directory_handle(handle)
+        close_suffix = (
+            "; descriptor cleanup also reported: "
+            + "; ".join(close_errors)
+            if close_errors
+            else ""
+        )
+        if isinstance(error, PublishError):
+            if error.preserve_transaction:
+                if close_errors:
+                    raise PublishError(
+                        f"{error}{close_suffix}",
+                        preserve_transaction=True,
+                    ) from error
+                raise
+            raise PublishError(
+                f"{error}{close_suffix}",
+                preserve_transaction=True,
+            ) from error
+        raise PublishError(
+            f"Could not anchor newly created transaction directory "
+            f"{display_path}: {error}{close_suffix}",
+            preserve_transaction=True,
+        ) from error
+
+
+def _create_transaction_workspace(
+    destination_root: DestinationRootIdentity,
+    transaction_lock: TransactionLock,
+) -> DirectoryHandle:
+    _assert_mutation_authorized(destination_root, transaction_lock)
+    root_descriptor = transaction_lock.file_descriptor
+    if root_descriptor is None:
+        raise PublishError("Publication destination lock descriptor is missing")
+    for _ in range(100):
+        name = f"{TRANSACTION_PREFIX}{secrets.token_hex(12)}"
+        display_path = destination_root.path / name
+        try:
+            return _create_directory_handle_at(
+                root_descriptor,
+                name,
+                display_path,
+                preserve_on_create_failure=False,
+            )
+        except PublishError as error:
+            if isinstance(error.__cause__, FileExistsError):
+                continue
+            raise
+    raise PublishError(
+        "Could not allocate a unique publication transaction directory"
+    )
 
 
 def _same_or_descendant(path: Path, root: Path) -> bool:
@@ -262,6 +703,85 @@ def preflight_publication_paths(
             f"{canonical_destination}"
         )
     return canonical_source, canonical_destination
+
+
+def _ensure_destination_root(destination_root: Path) -> None:
+    """Create an absent destination through anchored, non-symlink components."""
+
+    if not destination_root.is_absolute():
+        raise PublishError(
+            f"Publication destination must be absolute: {destination_root}"
+        )
+    anchor = Path(destination_root.anchor)
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        root_descriptor = os.open(anchor, flags)
+        root_stat = os.fstat(root_descriptor)
+    except OSError as error:
+        raise PublishError(
+            f"Could not anchor publication filesystem root {anchor}: {error}"
+        ) from error
+    current = DirectoryHandle(
+        name=str(anchor),
+        display_path=anchor,
+        device=root_stat.st_dev,
+        inode=root_stat.st_ino,
+        file_descriptor=root_descriptor,
+    )
+    try:
+        for name in destination_root.parts[1:]:
+            parent_descriptor = _require_directory_descriptor(current)
+            display_path = current.display_path / name
+            try:
+                child = _open_directory_handle_at(
+                    parent_descriptor,
+                    name,
+                    display_path,
+                )
+            except PublishError as error:
+                if not isinstance(error.__cause__, FileNotFoundError):
+                    raise
+                child = _create_directory_handle_at(
+                    parent_descriptor,
+                    name,
+                    display_path,
+                    preserve_on_create_failure=False,
+                )
+            close_errors = _close_directory_handle(current)
+            if close_errors:
+                child_close_errors = _close_directory_handle(child)
+                suffix = (
+                    "; child descriptor cleanup also reported: "
+                    + "; ".join(child_close_errors)
+                    if child_close_errors
+                    else ""
+                )
+                raise PublishError(
+                    "Could not close an anchored publication path component "
+                    f"{current.display_path}: "
+                    f"{'; '.join(close_errors)}{suffix}"
+                )
+            current = child
+    except BaseException as error:
+        close_errors = _close_directory_handle(current)
+        if close_errors:
+            raise PublishError(
+                f"{error}; anchored destination descriptor cleanup also "
+                "reported: " + "; ".join(close_errors)
+            ) from error
+        raise
+    else:
+        close_errors = _close_directory_handle(current)
+        if close_errors:
+            raise PublishError(
+                "Could not close anchored publication destination "
+                f"{destination_root}: {'; '.join(close_errors)}"
+            )
 
 
 def _parse_receipt_time(value: object) -> datetime:
@@ -340,137 +860,788 @@ def _update_digest_field(digest: object, payload: bytes) -> None:
     digest.update(payload)
 
 
-def _destination_tree_digest(root: Path) -> str:
-    digest = hashlib.sha256()
+def _read_all(file_descriptor: int) -> bytes:
+    chunks: list[bytes] = []
+    while True:
+        chunk = os.read(file_descriptor, 1024 * 1024)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _read_regular_file_at(
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+    expected: os.stat_result,
+) -> bytes:
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    file_descriptor: int | None = None
     try:
-        paths = sorted(root.rglob("*"))
-        for path in paths:
-            relative = path.relative_to(root).as_posix().encode("utf-8")
-            metadata = path.lstat()
-            if stat.S_ISLNK(metadata.st_mode):
-                raise PublishError(
-                    f"Refusing destination tree containing a symlink: {path}"
-                )
-            if stat.S_ISDIR(metadata.st_mode):
-                kind = b"directory"
-                payload = b""
-            elif stat.S_ISREG(metadata.st_mode):
-                kind = b"file"
-                payload = path.read_bytes()
-            else:
-                raise PublishError(
-                    f"Refusing unsupported destination filesystem entry: {path}"
-                )
-            _update_digest_field(digest, relative)
-            _update_digest_field(digest, kind)
-            _update_digest_field(digest, payload)
+        file_descriptor = os.open(name, flags, dir_fd=parent_descriptor)
+        observed = os.fstat(file_descriptor)
+        if (
+            not stat.S_ISREG(observed.st_mode)
+            or observed.st_dev != expected.st_dev
+            or observed.st_ino != expected.st_ino
+            or observed.st_nlink != 1
+        ):
+            raise PublishError(
+                f"File changed or is hard-linked while reading: {display_path}"
+            )
+        return _read_all(file_descriptor)
     except PublishError:
         raise
     except OSError as error:
+        raise PublishError(f"Could not read {display_path}: {error}") from error
+    finally:
+        if file_descriptor is not None:
+            close_errors = _close_file_descriptor(file_descriptor)
+            if close_errors and sys.exc_info()[0] is None:
+                raise PublishError(
+                    f"Could not close {display_path}: {'; '.join(close_errors)}"
+                )
+
+
+def _walk_directory_handle(
+    handle: DirectoryHandle,
+    *,
+    prefix: str = "",
+) -> list[tuple[str, bytes, bytes]]:
+    file_descriptor = _require_directory_descriptor(handle)
+    records: list[tuple[str, bytes, bytes]] = []
+    try:
+        names = sorted(os.listdir(file_descriptor))
+    except OSError as error:
         raise PublishError(
-            f"Could not capture destination state for {root}: {error}"
+            f"Could not list anchored directory {handle.display_path}: {error}"
         ) from error
+    for name in names:
+        relative = f"{prefix}/{name}" if prefix else name
+        display_path = handle.display_path / name
+        try:
+            metadata = os.stat(
+                name,
+                dir_fd=file_descriptor,
+                follow_symlinks=False,
+            )
+        except OSError as error:
+            raise PublishError(
+                f"Could not inspect anchored entry {display_path}: {error}"
+            ) from error
+        if stat.S_ISLNK(metadata.st_mode):
+            raise PublishError(
+                f"Refusing anchored tree containing a symlink: {display_path}"
+            )
+        if stat.S_ISDIR(metadata.st_mode):
+            child = _open_directory_handle_at(
+                file_descriptor,
+                name,
+                display_path,
+            )
+            try:
+                records.append((relative, b"directory", b""))
+                records.extend(
+                    _walk_directory_handle(
+                        child,
+                        prefix=relative,
+                    )
+                )
+            finally:
+                close_errors = _close_directory_handle(child)
+                if close_errors and sys.exc_info()[0] is None:
+                    raise PublishError(
+                        f"Could not close {display_path}: "
+                        + "; ".join(close_errors)
+                    )
+            continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise PublishError(
+                f"Refusing unsupported anchored entry: {display_path}"
+            )
+        records.append(
+            (
+                relative,
+                b"file",
+                _read_regular_file_at(
+                    file_descriptor,
+                    name,
+                    display_path,
+                    metadata,
+                ),
+            )
+        )
+    return records
+
+
+def _destination_tree_digest_handle(handle: DirectoryHandle) -> str:
+    digest = hashlib.sha256()
+    for relative, kind, payload in _walk_directory_handle(handle):
+        _update_digest_field(digest, relative.encode("utf-8"))
+        _update_digest_field(digest, kind)
+        _update_digest_field(digest, payload)
     return digest.hexdigest()
 
 
-def _capture_destination_state(destination: Path) -> DestinationState:
+def _skill_tree_digest_handle(handle: DirectoryHandle) -> str:
+    digest = hashlib.sha256()
+    for relative, kind, payload in _walk_directory_handle(handle):
+        if kind != b"file":
+            continue
+        _update_digest_field(digest, relative.encode("utf-8"))
+        _update_digest_field(digest, payload)
+    return digest.hexdigest()
+
+
+def _capture_destination_state_at(
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+) -> DestinationState:
     try:
-        metadata = destination.lstat()
+        metadata = os.stat(
+            name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
     except FileNotFoundError:
         return DestinationState(kind="absent")
     except OSError as error:
         raise PublishError(
-            f"Could not inspect skill destination {destination}: {error}"
+            f"Could not inspect skill destination {display_path}: {error}"
         ) from error
     if stat.S_ISLNK(metadata.st_mode):
         raise PublishError(
-            f"Refusing to replace symlinked skill destination: {destination}"
+            f"Refusing to replace symlinked skill destination: {display_path}"
         )
     if not stat.S_ISDIR(metadata.st_mode):
         raise PublishError(
-            f"Skill destination exists but is not a directory: {destination}"
+            f"Skill destination exists but is not a directory: {display_path}"
         )
-    return DestinationState(
-        kind="directory",
-        device=metadata.st_dev,
-        inode=metadata.st_ino,
-        tree_sha256=_destination_tree_digest(destination),
+    handle = _open_directory_handle_at(
+        parent_descriptor,
+        name,
+        display_path,
+    )
+    try:
+        return DestinationState(
+            kind="directory",
+            device=handle.device,
+            inode=handle.inode,
+            tree_sha256=_destination_tree_digest_handle(handle),
+        )
+    finally:
+        close_errors = _close_directory_handle(handle)
+        if close_errors and sys.exc_info()[0] is None:
+            raise PublishError(
+                f"Could not close {display_path}: {'; '.join(close_errors)}"
+            )
+
+
+def preflight_destinations(
+    dest_root: Path,
+    root_descriptor: int,
+) -> dict[str, DestinationState]:
+    return {
+        folder: _capture_destination_state_at(
+            root_descriptor,
+            folder,
+            dest_root / folder,
+        )
+        for folder in SKILL_FOLDERS
+    }
+
+
+def _assert_no_recovery_transactions(
+    destination_root: DestinationRootIdentity,
+    transaction_lock: TransactionLock,
+) -> None:
+    _assert_mutation_authorized(destination_root, transaction_lock)
+    root_descriptor = transaction_lock.file_descriptor
+    if root_descriptor is None:
+        raise PublishError("Publication destination lock descriptor is missing")
+    try:
+        recovery_names = sorted(
+            name
+            for name in os.listdir(root_descriptor)
+            if name.startswith(TRANSACTION_PREFIX)
+        )
+    except OSError as error:
+        raise PublishError(
+            "Could not inspect publication destination for recovery "
+            f"transactions: {destination_root.path}"
+        ) from error
+    _assert_mutation_authorized(destination_root, transaction_lock)
+    if recovery_names:
+        raise PublishError(
+            "Unresolved publication recovery transaction blocks publication: "
+            + ", ".join(
+                str(destination_root.path / name)
+                for name in recovery_names
+            ),
+            preserve_transaction=True,
+        )
+
+
+def _copy_source_directory(
+    source: Path,
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+) -> None:
+    try:
+        source_metadata = source.lstat()
+    except OSError as error:
+        raise PublishError(f"Could not inspect source {source}: {error}") from error
+    if source.is_symlink() or not stat.S_ISDIR(source_metadata.st_mode):
+        raise PublishError(f"Source directory changed during staging: {source}")
+    destination = _create_directory_handle_at(
+        parent_descriptor,
+        name,
+        display_path,
+    )
+    destination_descriptor = _require_directory_descriptor(destination)
+    try:
+        for child in sorted(source.iterdir()):
+            child_metadata = child.lstat()
+            child_display = display_path / child.name
+            if child.is_symlink():
+                raise PublishError(
+                    f"Source symlink appeared during staging: {child}"
+                )
+            if stat.S_ISDIR(child_metadata.st_mode):
+                _copy_source_directory(
+                    child,
+                    destination_descriptor,
+                    child.name,
+                    child_display,
+                )
+                continue
+            if not stat.S_ISREG(child_metadata.st_mode):
+                raise PublishError(
+                    f"Unsupported source entry during staging: {child}"
+                )
+            source_descriptor = os.open(
+                child,
+                os.O_RDONLY
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+            )
+            target_descriptor: int | None = None
+            try:
+                opened_source = os.fstat(source_descriptor)
+                if (
+                    not stat.S_ISREG(opened_source.st_mode)
+                    or opened_source.st_dev != child_metadata.st_dev
+                    or opened_source.st_ino != child_metadata.st_ino
+                ):
+                    raise PublishError(
+                        f"Source file changed during staging: {child}"
+                    )
+                target_descriptor = os.open(
+                    child.name,
+                    os.O_CREAT
+                    | os.O_EXCL
+                    | os.O_WRONLY
+                    | getattr(os, "O_CLOEXEC", 0)
+                    | getattr(os, "O_NOFOLLOW", 0),
+                    0o600,
+                    dir_fd=destination_descriptor,
+                )
+                _write_all(target_descriptor, _read_all(source_descriptor))
+                os.fchmod(
+                    target_descriptor,
+                    stat.S_IMODE(child_metadata.st_mode),
+                )
+                os.fsync(target_descriptor)
+            finally:
+                source_close_errors = _close_file_descriptor(source_descriptor)
+                target_close_errors = (
+                    _close_file_descriptor(target_descriptor)
+                    if target_descriptor is not None
+                    else []
+                )
+                if (
+                    (source_close_errors or target_close_errors)
+                    and sys.exc_info()[0] is None
+                ):
+                    raise PublishError(
+                        f"Could not close staged file {child_display}: "
+                        + "; ".join(source_close_errors + target_close_errors)
+                    )
+        os.fchmod(
+            destination_descriptor,
+            stat.S_IMODE(source_metadata.st_mode),
+        )
+        _fsync_directory_descriptor(
+            destination_descriptor,
+            display_path,
+            preserve_transaction=True,
+        )
+    finally:
+        close_errors = _close_directory_handle(destination)
+        if close_errors and sys.exc_info()[0] is None:
+            raise PublishError(
+                f"Could not close staged directory {display_path}: "
+                + "; ".join(close_errors)
+            )
+
+
+def _stage_all(
+    source_root: Path,
+    transaction_root: DirectoryHandle,
+) -> DirectoryHandle:
+    transaction_descriptor = _require_directory_descriptor(transaction_root)
+    stage_root = _create_directory_handle_at(
+        transaction_descriptor,
+        "stage",
+        transaction_root.display_path / "stage",
+    )
+    stage_descriptor = _require_directory_descriptor(stage_root)
+    try:
+        for folder in SKILL_FOLDERS:
+            _copy_source_directory(
+                source_root / folder,
+                stage_descriptor,
+                folder,
+                stage_root.display_path / folder,
+            )
+    except BaseException as error:
+        close_errors = _close_directory_handle(stage_root)
+        if close_errors:
+            raise PublishError(
+                f"{error}; staged-root descriptor cleanup also reported: "
+                + "; ".join(close_errors),
+                preserve_transaction=True,
+            ) from error
+        raise
+    _fsync_directory_descriptor(
+        stage_descriptor,
+        stage_root.display_path,
+        preserve_transaction=True,
+    )
+    return stage_root
+
+
+def _preflight_skill_tree_handle(root: DirectoryHandle) -> None:
+    root_descriptor = _require_directory_descriptor(root)
+    try:
+        observed = tuple(sorted(os.listdir(root_descriptor)))
+    except OSError as error:
+        raise PublishError(
+            f"Could not inspect staged skill tree {root.display_path}: {error}"
+        ) from error
+    expected = tuple(sorted(SKILL_FOLDERS))
+    if observed != expected:
+        raise PublishError(
+            "Staged skill folders differ: "
+            f"expected {', '.join(expected)}; observed {', '.join(observed)}"
+        )
+    for folder in SKILL_FOLDERS:
+        state = _capture_destination_state_at(
+            root_descriptor,
+            folder,
+            root.display_path / folder,
+        )
+        if state.kind != "directory":
+            raise PublishError(
+                f"Staged skill is not a directory: {root.display_path / folder}"
+            )
+
+
+def _skill_digest_at(
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+) -> str:
+    handle = _open_directory_handle_at(
+        parent_descriptor,
+        name,
+        display_path,
+    )
+    try:
+        return _skill_tree_digest_handle(handle)
+    finally:
+        close_errors = _close_directory_handle(handle)
+        if close_errors and sys.exc_info()[0] is None:
+            raise PublishError(
+                f"Could not close {display_path}: {'; '.join(close_errors)}"
+            )
+
+
+def _clear_directory_handle(handle: DirectoryHandle) -> None:
+    file_descriptor = _require_directory_descriptor(handle)
+    try:
+        current_mode = stat.S_IMODE(os.fstat(file_descriptor).st_mode)
+        os.fchmod(
+            file_descriptor,
+            current_mode | stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR,
+        )
+    except OSError as error:
+        raise PublishError(
+            f"Could not make transaction directory removable "
+            f"{handle.display_path}: {error}"
+        ) from error
+    try:
+        names = sorted(os.listdir(file_descriptor))
+    except OSError as error:
+        raise PublishError(
+            f"Could not list transaction directory {handle.display_path}: {error}"
+        ) from error
+    for name in names:
+        display_path = handle.display_path / name
+        try:
+            metadata = os.stat(
+                name,
+                dir_fd=file_descriptor,
+                follow_symlinks=False,
+            )
+        except OSError as error:
+            raise PublishError(
+                f"Could not inspect transaction entry {display_path}: {error}"
+            ) from error
+        if stat.S_ISDIR(metadata.st_mode):
+            child = _open_directory_handle_at(
+                file_descriptor,
+                name,
+                display_path,
+            )
+            child_device = child.device
+            child_inode = child.inode
+            recursive_error: BaseException | None = None
+            try:
+                _clear_directory_handle(child)
+            except BaseException as error:
+                recursive_error = error
+            close_errors = _close_directory_handle(child)
+            if recursive_error is not None:
+                if close_errors:
+                    raise PublishError(
+                        f"{recursive_error}; closing transaction directory "
+                        f"{display_path} also reported: "
+                        + "; ".join(close_errors),
+                        preserve_transaction=True,
+                    ) from recursive_error
+                raise recursive_error
+            if close_errors:
+                raise PublishError(
+                    f"Could not close transaction directory {display_path}: "
+                    + "; ".join(close_errors),
+                    preserve_transaction=True,
+                )
+            observed = os.stat(
+                name,
+                dir_fd=file_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISDIR(observed.st_mode)
+                or observed.st_dev != child_device
+                or observed.st_ino != child_inode
+            ):
+                raise PublishError(
+                    "Transaction directory changed before removal: "
+                    f"{display_path}"
+                )
+            os.rmdir(name, dir_fd=file_descriptor)
+            continue
+        os.unlink(name, dir_fd=file_descriptor)
+    _fsync_directory_descriptor(
+        file_descriptor,
+        handle.display_path,
+        preserve_transaction=True,
     )
 
 
-def preflight_destinations(dest_root: Path) -> dict[str, DestinationState]:
-    states: dict[str, DestinationState] = {}
-    for folder in SKILL_FOLDERS:
-        destination = dest_root / folder
-        states[folder] = _capture_destination_state(destination)
-    return states
-
-
-def _stage_all(source_root: Path, transaction_root: Path) -> Path:
-    stage_root = transaction_root / "stage"
-    stage_root.mkdir()
-    for folder in SKILL_FOLDERS:
-        shutil.copytree(source_root / folder, stage_root / folder)
-    return stage_root
+def _remove_transaction_workspace(
+    transaction_root: DirectoryHandle,
+    destination_root: DestinationRootIdentity,
+    transaction_lock: TransactionLock,
+) -> None:
+    _assert_mutation_authorized(destination_root, transaction_lock)
+    root_descriptor = transaction_lock.file_descriptor
+    if root_descriptor is None:
+        raise PublishError("Publication destination lock descriptor is missing")
+    _clear_directory_handle(transaction_root)
+    _assert_mutation_authorized(destination_root, transaction_lock)
+    observed = os.stat(
+        transaction_root.name,
+        dir_fd=root_descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISDIR(observed.st_mode)
+        or observed.st_dev != transaction_root.device
+        or observed.st_ino != transaction_root.inode
+    ):
+        raise PublishError(
+            "Transaction workspace changed before removal: "
+            f"{transaction_root.display_path}"
+        )
+    close_errors = _close_directory_handle(transaction_root)
+    if close_errors:
+        raise PublishError(
+            "Could not close transaction workspace before removal: "
+            + "; ".join(close_errors)
+        )
+    os.rmdir(transaction_root.name, dir_fd=root_descriptor)
+    _fsync_directory_descriptor(
+        root_descriptor,
+        destination_root.path,
+        preserve_transaction=True,
+    )
 
 
 def _rollback(
     states: list[ReplacementState],
     destination_root: DestinationRootIdentity,
     transaction_lock: TransactionLock,
+    backup_root: DirectoryHandle,
+    quarantine_root: DirectoryHandle,
 ) -> list[str]:
     errors: list[str] = []
+    root_descriptor = transaction_lock.file_descriptor
+    if root_descriptor is None:
+        return ["publication destination lock descriptor is missing"]
+    backup_descriptor = _require_directory_descriptor(backup_root)
+    quarantine_descriptor = _require_directory_descriptor(quarantine_root)
     for state in reversed(states):
+        folder = state.destination.name
         try:
             _assert_mutation_authorized(destination_root, transaction_lock)
-            if state.backup_created:
-                observed_backup = _capture_destination_state(state.backup)
-                if observed_backup != state.original_state:
+            observed_backup = _capture_destination_state_at(
+                backup_descriptor,
+                folder,
+                state.backup,
+            )
+            observed_destination = _capture_destination_state_at(
+                root_descriptor,
+                folder,
+                state.destination,
+            )
+            observed_quarantine = _capture_destination_state_at(
+                quarantine_descriptor,
+                folder,
+                quarantine_root.display_path / folder,
+            )
+            conflicts: list[str] = []
+            expected_backup = (
+                state.backup_state_after_move
+                if state.backup_state_after_move is not None
+                else (
+                    state.original_state
+                    if state.original_existed
+                    else DestinationState(kind="absent")
+                )
+            )
+            if observed_backup not in {
+                DestinationState(kind="absent"),
+                expected_backup,
+            }:
+                raise PublishError(
+                    "Backup changed before rollback; preserving recovery "
+                    f"bytes without restoring them: {state.backup}",
+                    preserve_transaction=True,
+                )
+            if observed_quarantine != DestinationState(kind="absent"):
+                conflicts.append(
+                    "rollback quarantine contains unexpected bytes at "
+                    f"{quarantine_root.display_path / folder}"
+                )
+
+            if (
+                state.staged_state is not None
+                and observed_destination == state.staged_state
+            ):
+                if conflicts:
                     raise PublishError(
-                        "Original skill backup changed before rollback: "
-                        f"{state.backup}"
+                        "; ".join(conflicts),
+                        preserve_transaction=True,
                     )
-            if state.installed:
-                observed_installed = _capture_destination_state(state.destination)
-                if (
-                    state.installed_state is None
-                    or observed_installed != state.installed_state
+                _assert_mutation_authorized(destination_root, transaction_lock)
+                os.replace(
+                    folder,
+                    folder,
+                    src_dir_fd=root_descriptor,
+                    dst_dir_fd=quarantine_descriptor,
+                )
+                _fsync_directory_descriptor(
+                    quarantine_descriptor,
+                    quarantine_root.display_path,
+                    preserve_transaction=True,
+                )
+                _fsync_directory_descriptor(
+                    root_descriptor,
+                    destination_root.path,
+                    preserve_transaction=True,
+                )
+                quarantined_state = _capture_destination_state_at(
+                    quarantine_descriptor,
+                    folder,
+                    quarantine_root.display_path / folder,
+                )
+                if quarantined_state != state.installed_state:
+                    expected_installed = state.staged_state
+                    if quarantined_state == expected_installed:
+                        state.installed_state = expected_installed
+                    else:
+                        destination_state = _capture_destination_state_at(
+                            root_descriptor,
+                            folder,
+                            state.destination,
+                        )
+                        if destination_state == DestinationState(kind="absent"):
+                            os.replace(
+                                folder,
+                                folder,
+                                src_dir_fd=quarantine_descriptor,
+                                dst_dir_fd=root_descriptor,
+                            )
+                            _fsync_directory_descriptor(
+                                root_descriptor,
+                                destination_root.path,
+                                preserve_transaction=True,
+                            )
+                            _fsync_directory_descriptor(
+                                quarantine_descriptor,
+                                quarantine_root.display_path,
+                                preserve_transaction=True,
+                            )
+                        raise PublishError(
+                            "Installed skill changed during rollback quarantine; "
+                            "restored it without deleting bytes: "
+                            f"{state.destination}",
+                            preserve_transaction=True,
+                        )
+                observed_destination = _capture_destination_state_at(
+                    root_descriptor,
+                    folder,
+                    state.destination,
+                )
+                state.installed = False
+            elif observed_destination == expected_backup:
+                if observed_backup != DestinationState(kind="absent"):
+                    raise PublishError(
+                        "Original skill appears in both destination and backup; "
+                        f"preserving transaction for review: {state.destination}",
+                        preserve_transaction=True,
+                    )
+            elif observed_destination != DestinationState(kind="absent"):
+                raise PublishError(
+                    "Skill destination changed before rollback; refusing to "
+                    f"remove concurrent state: {state.destination}",
+                    preserve_transaction=True,
+                )
+
+            if state.original_existed:
+                if observed_backup == expected_backup:
+                    observed_destination = _capture_destination_state_at(
+                        root_descriptor,
+                        folder,
+                        state.destination,
+                    )
+                    if observed_destination != DestinationState(kind="absent"):
+                        raise PublishError(
+                            "Skill destination is no longer absent before "
+                            f"rollback restore: {state.destination}",
+                            preserve_transaction=True,
+                        )
+                    _assert_mutation_authorized(
+                        destination_root,
+                        transaction_lock,
+                    )
+                    os.replace(
+                        folder,
+                        folder,
+                        src_dir_fd=backup_descriptor,
+                        dst_dir_fd=root_descriptor,
+                    )
+                    _fsync_directory_descriptor(
+                        root_descriptor,
+                        destination_root.path,
+                        preserve_transaction=True,
+                    )
+                    _fsync_directory_descriptor(
+                        backup_descriptor,
+                        backup_root.display_path,
+                        preserve_transaction=True,
+                    )
+                    restored_state = _capture_destination_state_at(
+                        root_descriptor,
+                        folder,
+                        state.destination,
+                    )
+                    if restored_state != expected_backup:
+                        raise PublishError(
+                            "Restored skill changed during rollback; preserved "
+                            f"the observed destination: {state.destination}",
+                            preserve_transaction=True,
+                        )
+                    state.backup_created = False
+                elif (
+                    _capture_destination_state_at(
+                        root_descriptor,
+                        folder,
+                        state.destination,
+                    )
+                    != expected_backup
                 ):
                     raise PublishError(
-                        "Installed skill changed before rollback; refusing to "
-                        f"remove concurrent state: {state.destination}"
+                        "Original skill is absent from both destination and "
+                        f"verified backup: {state.destination}",
+                        preserve_transaction=True,
                     )
-                _assert_mutation_authorized(destination_root, transaction_lock)
-                _remove_path(state.destination)
-            if state.backup_created:
-                observed_destination = _capture_destination_state(state.destination)
-                if observed_destination != DestinationState(kind="absent"):
-                    raise PublishError(
-                        "Skill destination is no longer absent before rollback "
-                        f"restore: {state.destination}"
-                    )
-                _assert_mutation_authorized(destination_root, transaction_lock)
-                os.replace(state.backup, state.destination)
-            elif state.installed and state.original_existed:
-                raise OSError(
-                    f"original destination was not backed up: {state.destination}"
+            elif (
+                _capture_destination_state_at(
+                    root_descriptor,
+                    folder,
+                    state.destination,
                 )
-        except (OSError, PublishError) as error:
+                != DestinationState(kind="absent")
+            ):
+                raise PublishError(
+                    "A destination that was originally absent could not be "
+                    f"cleared during rollback: {state.destination}",
+                    preserve_transaction=True,
+                )
+
+            if conflicts:
+                raise PublishError(
+                    "; ".join(conflicts),
+                    preserve_transaction=True,
+                )
+            state.backup_attempted = False
+            state.install_attempted = False
+        except BaseException as error:
             errors.append(f"{state.destination}: {error}")
     return errors
 
 
 def _swap_all(
-    stage_root: Path,
+    stage_root: DirectoryHandle,
     dest_root: Path,
-    transaction_root: Path,
+    transaction_root: DirectoryHandle,
     expected_skill_digests: dict[str, str],
     expected_destination_states: dict[str, DestinationState],
     transaction_lock: TransactionLock,
     destination_root: DestinationRootIdentity,
 ) -> None:
+    root_descriptor = transaction_lock.file_descriptor
+    if root_descriptor is None:
+        raise PublishError("Publication destination lock descriptor is missing")
+    stage_descriptor = _require_directory_descriptor(stage_root)
+    transaction_descriptor = _require_directory_descriptor(transaction_root)
     _assert_mutation_authorized(destination_root, transaction_lock)
-    observed_destination_states = preflight_destinations(dest_root)
+    observed_destination_states = preflight_destinations(
+        dest_root,
+        root_descriptor,
+    )
     changed = [
         folder
         for folder in SKILL_FOLDERS
@@ -483,63 +1654,165 @@ def _swap_all(
         )
 
     _assert_mutation_authorized(destination_root, transaction_lock)
-    backup_root = transaction_root / "backups"
-    backup_root.mkdir()
+    backup_root = _create_directory_handle_at(
+        transaction_descriptor,
+        "backups",
+        transaction_root.display_path / "backups",
+    )
+    quarantine_root: DirectoryHandle | None = None
     states: list[ReplacementState] = []
+    committed = False
     try:
+        quarantine_root = _create_directory_handle_at(
+            transaction_descriptor,
+            "quarantine",
+            transaction_root.display_path / "quarantine",
+        )
+        backup_descriptor = _require_directory_descriptor(backup_root)
+        quarantine_descriptor = _require_directory_descriptor(quarantine_root)
         for folder in SKILL_FOLDERS:
             destination = dest_root / folder
             original_state = expected_destination_states[folder]
             _assert_mutation_authorized(destination_root, transaction_lock)
-            observed_original = _capture_destination_state(destination)
+            observed_original = _capture_destination_state_at(
+                root_descriptor,
+                folder,
+                destination,
+            )
             if observed_original != original_state:
-                prior_mutation = any(
-                    state.backup_created or state.installed for state in states
-                )
                 raise PublishError(
                     "Skill destination changed immediately before backup; "
                     f"refusing to replace it: {destination}",
-                    preserve_transaction=prior_mutation,
                 )
             state = ReplacementState(
                 destination=destination,
-                backup=backup_root / folder,
-                staged=stage_root / folder,
+                backup=backup_root.display_path / folder,
+                staged=stage_root.display_path / folder,
                 original_existed=original_state.kind != "absent",
                 original_state=original_state,
             )
             states.append(state)
             if state.original_existed:
                 _assert_mutation_authorized(destination_root, transaction_lock)
-                os.replace(destination, state.backup)
+                state.backup_attempted = True
+                os.replace(
+                    folder,
+                    folder,
+                    src_dir_fd=root_descriptor,
+                    dst_dir_fd=backup_descriptor,
+                )
+                _fsync_directory_descriptor(
+                    backup_descriptor,
+                    backup_root.display_path,
+                    preserve_transaction=True,
+                )
+                _fsync_directory_descriptor(
+                    root_descriptor,
+                    destination_root.path,
+                    preserve_transaction=True,
+                )
                 state.backup_created = True
+                observed_backup = _capture_destination_state_at(
+                    backup_descriptor,
+                    folder,
+                    state.backup,
+                )
+                state.backup_state_after_move = observed_backup
+                if observed_backup != original_state:
+                    raise PublishError(
+                        "Skill destination changed during backup; publication "
+                        f"will restore the moved bytes: {destination}",
+                    )
             _assert_mutation_authorized(destination_root, transaction_lock)
-            observed_destination = _capture_destination_state(destination)
+            observed_destination = _capture_destination_state_at(
+                root_descriptor,
+                folder,
+                destination,
+            )
             if observed_destination != DestinationState(kind="absent"):
                 raise PublishError(
                     "Skill destination is not absent immediately before install; "
                     f"refusing to overwrite it: {destination}",
                     preserve_transaction=True,
                 )
-            state.staged_state = _capture_destination_state(state.staged)
+            state.staged_state = _capture_destination_state_at(
+                stage_descriptor,
+                folder,
+                state.staged,
+            )
             if state.staged_state.kind != "directory":
                 raise PublishError(
                     f"Staged skill is not a directory: {state.staged}",
-                    preserve_transaction=state.backup_created,
+                    preserve_transaction=state.backup_attempted,
+                )
+            quarantine_state = _capture_destination_state_at(
+                quarantine_descriptor,
+                folder,
+                quarantine_root.display_path / folder,
+            )
+            if quarantine_state != DestinationState(kind="absent"):
+                raise PublishError(
+                    "Publication quarantine is not empty: "
+                    f"{quarantine_root.display_path / folder}",
+                    preserve_transaction=state.backup_attempted,
                 )
             _assert_mutation_authorized(destination_root, transaction_lock)
-            os.replace(state.staged, destination)
+            state.install_attempted = True
+            os.replace(
+                folder,
+                folder,
+                src_dir_fd=stage_descriptor,
+                dst_dir_fd=root_descriptor,
+            )
+            _fsync_directory_descriptor(
+                root_descriptor,
+                destination_root.path,
+                preserve_transaction=True,
+            )
+            _fsync_directory_descriptor(
+                stage_descriptor,
+                stage_root.display_path,
+                preserve_transaction=True,
+            )
             state.installed = True
             state.installed_state = state.staged_state
+            observed_installed = _capture_destination_state_at(
+                root_descriptor,
+                folder,
+                destination,
+            )
+            if observed_installed != state.installed_state:
+                raise PublishError(
+                    "Installed skill changed during atomic placement: "
+                    f"{destination}",
+                    preserve_transaction=True,
+                )
         mismatched = [
             (folder, state)
             for folder, state in zip(SKILL_FOLDERS, states, strict=True)
             if (
                 state.installed_state is None
-                or _capture_destination_state(dest_root / folder)
+                or _capture_destination_state_at(
+                    root_descriptor,
+                    folder,
+                    dest_root / folder,
+                )
                 != state.installed_state
-                or tree_digest(dest_root / folder)
+                or _skill_digest_at(
+                    root_descriptor,
+                    folder,
+                    dest_root / folder,
+                )
                 != expected_skill_digests[folder]
+                or (
+                    state.backup_created
+                    and _capture_destination_state_at(
+                        backup_descriptor,
+                        folder,
+                        state.backup,
+                    )
+                    != state.original_state
+                )
             )
         ]
         if mismatched:
@@ -547,16 +1820,28 @@ def _swap_all(
                 "installed skills differ from their staged bytes: "
                 + ", ".join(folder for folder, _ in mismatched)
             )
+        committed = True
     except BaseException as error:
-        rollback_errors = _rollback(
-            states,
-            destination_root,
-            transaction_lock,
-        )
         preserve_conflict = (
-            isinstance(error, PublishError) and error.preserve_transaction
+            isinstance(error, PublishError)
+            and error.preserve_transaction
         )
-        if rollback_errors or preserve_conflict:
+        rollback_errors = (
+            _rollback(
+                states,
+                destination_root,
+                transaction_lock,
+                backup_root,
+                quarantine_root,
+            )
+            if quarantine_root is not None
+            else (
+                ["rollback quarantine was not available"]
+                if states
+                else []
+            )
+        )
+        if rollback_errors:
             details = (
                 "; ".join(rollback_errors)
                 if rollback_errors
@@ -564,12 +1849,43 @@ def _swap_all(
             )
             raise PublishError(
                 "Publication failed and rollback was incomplete. Recovery files "
-                f"remain at {transaction_root}: {details}",
+                f"remain at {transaction_root.display_path}: {details}",
+                preserve_transaction=True,
+            ) from error
+        if preserve_conflict:
+            raise PublishError(
+                "Publication failed and destinations were restored, but "
+                "unrecognized transaction state remains for review at "
+                f"{transaction_root.display_path}: {error}",
                 preserve_transaction=True,
             ) from error
         raise PublishError(
             f"Publication failed and all destinations were rolled back: {error}"
         ) from error
+    finally:
+        quarantine_close_errors = _close_directory_handle(quarantine_root)
+        backup_close_errors = _close_directory_handle(backup_root)
+        close_errors = quarantine_close_errors + backup_close_errors
+        if close_errors and committed:
+            print(
+                "WARNING: publication committed and verified, but transaction "
+                "directory descriptor closure was indeterminate: "
+                + "; ".join(close_errors),
+                file=sys.stderr,
+            )
+        elif close_errors and sys.exc_info()[0] is None:
+            raise PublishError(
+                "Could not close publication transaction directories: "
+                + "; ".join(close_errors),
+                preserve_transaction=True,
+            )
+        elif close_errors:
+            print(
+                "WARNING: publication rollback was already in progress and "
+                "transaction directory descriptor closure also reported: "
+                + "; ".join(close_errors),
+                file=sys.stderr,
+            )
 
 
 def publish_skills(
@@ -606,42 +1922,61 @@ def publish_skills(
     require_fresh_receipt(receipt, now=now)
 
     transaction_lock: TransactionLock | None = None
-    transaction_root: Path | None = None
+    transaction_root: DirectoryHandle | None = None
+    stage_root: DirectoryHandle | None = None
     destination_identity: DestinationRootIdentity | None = None
     try:
-        destination_root.mkdir(parents=True, exist_ok=True)
+        _ensure_destination_root(destination_root)
         destination_identity = _capture_destination_root_identity(
             destination_root,
             destination_root,
         )
         _assert_destination_root(destination_identity)
         transaction_lock = _acquire_transaction_lock(destination_identity)
-        destination_states = preflight_destinations(destination_root)
+        _assert_no_recovery_transactions(
+            destination_identity,
+            transaction_lock,
+        )
+        root_descriptor = transaction_lock.file_descriptor
+        if root_descriptor is None:
+            raise PublishError(
+                "Publication destination lock descriptor is missing"
+            )
+        destination_states = preflight_destinations(
+            destination_root,
+            root_descriptor,
+        )
         _assert_mutation_authorized(destination_identity, transaction_lock)
-        transaction_root = Path(
-            tempfile.mkdtemp(prefix=TRANSACTION_PREFIX, dir=destination_root)
+        transaction_root = _create_transaction_workspace(
+            destination_identity,
+            transaction_lock,
         )
         _assert_mutation_authorized(destination_identity, transaction_lock)
         stage_root = _stage_all(source_root, transaction_root)
-        preflight_skill_tree(stage_root)
+        _preflight_skill_tree_handle(stage_root)
 
         # Bind publication to the copied tree, not merely to the source tree
         # that existed before staging.
-        if tree_digest(stage_root) != receipt.get("tree_sha256"):
+        if _skill_tree_digest_handle(stage_root) != receipt.get("tree_sha256"):
             raise PublishError(
                 "Staged skill tree differs from the validated generated tree."
             )
         try:
             staged_receipt = verify_validation_receipt(
-                build_root=stage_root,
+                build_root=source_root,
                 receipt_path=receipt_path,
             )
         except ValueError as error:
             raise PublishError(str(error)) from error
         require_fresh_receipt(staged_receipt, now=now)
 
+        stage_descriptor = _require_directory_descriptor(stage_root)
         expected_skill_digests = {
-            folder: tree_digest(stage_root / folder)
+            folder: _skill_digest_at(
+                stage_descriptor,
+                folder,
+                stage_root.display_path / folder,
+            )
             for folder in SKILL_FOLDERS
         }
         _swap_all(
@@ -670,17 +2005,23 @@ def publish_skills(
                     destination_identity,
                     transaction_lock,
                 )
-                if transaction_root.exists():
-                    _assert_mutation_authorized(
-                        destination_identity,
-                        transaction_lock,
+                stage_close_errors = _close_directory_handle(stage_root)
+                if stage_close_errors:
+                    raise PublishError(
+                        "Could not close staged tree before cleanup: "
+                        + "; ".join(stage_close_errors)
                     )
-                    shutil.rmtree(transaction_root)
+                _remove_transaction_workspace(
+                    transaction_root,
+                    destination_identity,
+                    transaction_lock,
+                )
             except (OSError, PublishError) as cleanup_error:
                 raise PublishError(
                     "Publication failed and transaction cleanup also failed. "
-                    f"Recovery files and the transaction lock remain at "
-                    f"{transaction_root}: {cleanup_error}",
+                    "Recovery files may remain at "
+                    f"{transaction_root.display_path}: {cleanup_error}. "
+                    "Kernel-lock release will be attempted by the finalizer.",
                     preserve_transaction=True,
                 ) from error
         if not preserve_transaction and transaction_lock is not None:
@@ -696,7 +2037,8 @@ def publish_skills(
             except (OSError, PublishError) as cleanup_error:
                 raise PublishError(
                     "Publication failed and transaction-lock cleanup also "
-                    f"failed; the lock remains at {transaction_lock.path}: "
+                    "failed; publication recovery state may remain beside "
+                    f"{transaction_lock.path}: "
                     f"{cleanup_error}",
                     preserve_transaction=True,
                 ) from error
@@ -716,17 +2058,30 @@ def publish_skills(
                     destination_identity,
                     transaction_lock,
                 )
-                if transaction_root.exists():
-                    _assert_mutation_authorized(
-                        destination_identity,
-                        transaction_lock,
+                stage_close_errors = _close_directory_handle(stage_root)
+                if stage_close_errors:
+                    raise PublishError(
+                        "Could not close staged tree before cleanup: "
+                        + "; ".join(stage_close_errors)
                     )
-                    shutil.rmtree(transaction_root)
+                _remove_transaction_workspace(
+                    transaction_root,
+                    destination_identity,
+                    transaction_lock,
+                )
+            except DestinationAuthorizationError as cleanup_error:
+                raise PublishError(
+                    "Publication committed to the anchored destination, but "
+                    "the requested destination path changed before recovery "
+                    "cleanup. Recovery state was preserved: "
+                    f"{transaction_root.display_path}: {cleanup_error}",
+                    preserve_transaction=True,
+                ) from cleanup_error
             except (OSError, PublishError) as cleanup_error:
                 print(
                     "WARNING: publication committed and verified, but obsolete "
                     "transaction backup cleanup failed; recovery files remain at "
-                    f"{transaction_root}: {cleanup_error}",
+                    f"{transaction_root.display_path}: {cleanup_error}",
                     file=sys.stderr,
                 )
         if transaction_lock is not None:
@@ -739,13 +2094,33 @@ def publish_skills(
                     transaction_lock,
                     destination_identity,
                 )
+            except DestinationAuthorizationError as cleanup_error:
+                raise PublishError(
+                    "Publication committed to the anchored destination, but "
+                    "the requested destination path changed before lock "
+                    f"release: {cleanup_error}",
+                    preserve_transaction=True,
+                ) from cleanup_error
             except (OSError, PublishError) as cleanup_error:
                 print(
                     "WARNING: publication committed and verified, but the "
-                    "transaction lock could not be removed; the lock remains at "
-                    f"{transaction_lock.path}: {cleanup_error}",
+                    "kernel transaction-lock release state is indeterminate; "
+                    "no unsafe descriptor retry will be attempted. "
+                    f"Sentinel: {transaction_lock.path}: {cleanup_error}",
                     file=sys.stderr,
                 )
+    finally:
+        finalizer_errors: list[str] = []
+        finalizer_errors.extend(_close_directory_handle(stage_root))
+        finalizer_errors.extend(_close_directory_handle(transaction_root))
+        if transaction_lock is not None:
+            finalizer_errors.extend(_close_transaction_lock(transaction_lock))
+        if finalizer_errors:
+            print(
+                "WARNING: publication descriptor finalization reported: "
+                + "; ".join(finalizer_errors),
+                file=sys.stderr,
+            )
 
     return receipt
 
