@@ -10,6 +10,7 @@ import tempfile
 import uuid
 
 from libskillpack import (
+    BUILD_ROOT,
     CONTENT_ROOT,
     LOCK_ROOT,
     REPO_ROOT,
@@ -27,6 +28,11 @@ from libskillpack import (
     write_text,
 )
 from lint_skill_pack import lint_repo
+from release_state import (
+    VALIDATION_RECEIPT_PATH,
+    validation_state,
+    write_validation_receipt,
+)
 
 
 SUITE_CHOICES = (
@@ -620,12 +626,49 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Preserve the temporary work directory when validation fails.",
     )
+    parser.add_argument(
+        "--write-receipt",
+        action="store_true",
+        help=(
+            "Write a digest-bound publication receipt after an unfiltered "
+            "default validation succeeds."
+        ),
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    receipt_path = BUILD_ROOT.parent / VALIDATION_RECEIPT_PATH.name
+    if (
+        BUILD_ROOT.parent.is_symlink()
+        or BUILD_ROOT.is_symlink()
+        or receipt_path.is_symlink()
+    ):
+        print(
+            "ERROR: validation build and receipt paths must not be symbolic links."
+        )
+        return 2
     suites = resolve_suites(args.suite)
+    if args.write_receipt and (
+        set(suites) != set(DEFAULT_SUITES)
+        or args.core_slugs
+        or args.packages
+    ):
+        print(
+            "ERROR: --write-receipt requires the complete, unfiltered "
+            "default validation suite."
+        )
+        return 2
+    if args.write_receipt:
+        receipt_path.unlink(missing_ok=True)
+        try:
+            initial_validation_state = validation_state(BUILD_ROOT)
+        except Exception as error:
+            print(f"ERROR: cannot begin receipt-bearing validation: {error}")
+            return 1
+    else:
+        initial_validation_state = None
     results: list[tuple[str, bool, str]] = []
     work_root = Path(tempfile.mkdtemp(prefix="stata-codex-validate-"))
 
@@ -734,7 +777,20 @@ def main(argv: list[str] | None = None) -> int:
         else:
             shutil.rmtree(work_root, ignore_errors=True)
 
-    return 1 if any(not success for _, success, _ in results) else 0
+    failed = any(not success for _, success, _ in results)
+    if not failed and args.write_receipt:
+        try:
+            write_validation_receipt(
+                build_root=BUILD_ROOT,
+                receipt_path=receipt_path,
+                expected_state=initial_validation_state,
+            )
+        except Exception as error:
+            print(f"ERROR: could not write validation receipt: {error}")
+            receipt_path.unlink(missing_ok=True)
+            return 1
+        print(f"Validation receipt written: {receipt_path}")
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

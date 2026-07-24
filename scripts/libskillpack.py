@@ -5,7 +5,6 @@ import hashlib
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import time
 import urllib.request
@@ -27,7 +26,6 @@ UPSTREAM_REPO_URL = "https://github.com/dylantmoore/stata-skill.git"
 UPSTREAM_REPO_DIR = RAW_ROOT / "upstream" / "stata-skill"
 STATA_ROOT = Path("/Applications/Stata")
 STATA_ADO_BASE = STATA_ROOT / "ado" / "base"
-DEFAULT_SKILLS_DIR = Path.home() / ".codex" / "skills"
 
 
 def ensure_dir(path: Path) -> Path:
@@ -326,12 +324,6 @@ def run_command(
         timeout_message = f"Command timed out after {timeout_seconds} seconds."
         stderr = f"{stderr}\n{timeout_message}".strip()
         return subprocess.CompletedProcess(args, 124, stdout, stderr)
-
-
-def copy_tree_fresh(src: Path, dest: Path) -> None:
-    if dest.exists():
-        shutil.rmtree(dest)
-    shutil.copytree(src, dest)
 
 
 def detect_stata_binary() -> Path | None:

@@ -4,8 +4,11 @@ from __future__ import annotations
 from collections import OrderedDict
 from pathlib import Path
 import argparse
+import os
 import re
 import shutil
+import tempfile
+import uuid
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
@@ -20,6 +23,44 @@ from libskillpack import (
     sha256_file,
     write_text,
 )
+from release_state import SKILL_FOLDERS
+
+
+class RenderTransactionError(RuntimeError):
+    """A render failed and requires explicit recovery from a preserved backup."""
+
+
+REQUIRED_SKILL_KEYS = ("core", "packages", "plugins")
+REQUIRED_SKILLS = dict(zip(REQUIRED_SKILL_KEYS, SKILL_FOLDERS, strict=True))
+
+
+def validate_required_skills(config: dict) -> None:
+    """Keep an accidental config edit from publishing a partial skill pack."""
+
+    skills = config.get("skills")
+    if not isinstance(skills, dict):
+        raise ValueError(
+            "skill configuration must define exactly core, packages, and plugins"
+        )
+    observed_keys = set(skills)
+    expected_keys = set(REQUIRED_SKILL_KEYS)
+    if observed_keys != expected_keys:
+        observed = ", ".join(sorted(str(key) for key in observed_keys)) or "<none>"
+        raise ValueError(
+            "skill configuration must define exactly core, packages, and "
+            f"plugins; observed {observed}"
+        )
+    for key, expected_name in REQUIRED_SKILLS.items():
+        skill = skills[key]
+        if not isinstance(skill, dict):
+            raise ValueError(f"skill configuration for {key} must be a mapping")
+        if (
+            skill.get("name") != expected_name
+            or skill.get("folder") != expected_name
+        ):
+            raise ValueError(
+                f"skill {key} must retain name and folder {expected_name}"
+            )
 
 
 def build_environment() -> Environment:
@@ -182,15 +223,13 @@ def embedded_lock_index() -> list[dict]:
     return index
 
 
-def render_all(
-    output_root: Path = BUILD_ROOT,
-    content_root: Path = CONTENT_ROOT,
-    config_path: Path | None = None,
+def _render_tree(
+    output_root: Path,
+    config: dict,
+    grouped: dict[str, list[dict]],
+    aliases_by_skill: dict[str, list[dict]],
 ) -> None:
-    config = load_skill_config(config_path) if config_path else load_skill_config()
     env = build_environment()
-    grouped, by_slug = prepare_catalog(config, content_root)
-    aliases_by_skill = prepared_route_aliases(config, by_slug)
     lock_index = embedded_lock_index()
 
     reference_template = env.get_template("reference.md.j2")
@@ -201,8 +240,6 @@ def render_all(
 
     for skill_key, skill in config["skills"].items():
         folder = output_root / skill["folder"]
-        if folder.exists():
-            shutil.rmtree(folder)
         route_dir = folder / skill["route_dir"]
         route_dir.mkdir(parents=True, exist_ok=True)
 
@@ -254,7 +291,190 @@ def render_all(
             folder / "agents" / "openai.yaml",
             openai_template.render(interface=skill["interface"]).strip() + "\n",
         )
-        print(f"Rendered {folder}")
+
+
+def _expected_rendered_files(
+    config: dict,
+    grouped: dict[str, list[dict]],
+    aliases_by_skill: dict[str, list[dict]],
+) -> set[Path]:
+    expected: list[Path] = []
+    for skill_key, skill in config["skills"].items():
+        folder = Path(skill["folder"])
+        expected.extend(
+            (
+                folder / "SKILL.md",
+                folder / "PROVENANCE.md",
+                folder / "agents" / "openai.yaml",
+            )
+        )
+        expected.extend(
+            folder / skill["route_dir"] / f"{entry['slug']}.md"
+            for entry in grouped[skill_key]
+        )
+        expected.extend(
+            folder / alias["from_route"] for alias in aliases_by_skill[skill_key]
+        )
+    unique = set(expected)
+    if len(unique) != len(expected):
+        raise ValueError("render configuration maps multiple entries to one output path")
+    return unique
+
+
+def validate_rendered_tree(
+    output_root: Path,
+    config: dict,
+    grouped: dict[str, list[dict]],
+    aliases_by_skill: dict[str, list[dict]],
+) -> None:
+    """Reject incomplete, unexpected, empty, or malformed staged output."""
+
+    expected = _expected_rendered_files(config, grouped, aliases_by_skill)
+    actual = {
+        path.relative_to(output_root)
+        for path in output_root.rglob("*")
+        if path.is_file()
+    }
+    errors: list[str] = []
+    missing = sorted(str(path) for path in expected - actual)
+    extra = sorted(str(path) for path in actual - expected)
+    if missing:
+        errors.append(f"missing files: {', '.join(missing)}")
+    if extra:
+        errors.append(f"unexpected files: {', '.join(extra)}")
+
+    expected_directories: set[Path] = set()
+    for relative in expected:
+        parent = relative.parent
+        while parent != Path("."):
+            expected_directories.add(parent)
+            parent = parent.parent
+    actual_directories = {
+        path.relative_to(output_root)
+        for path in output_root.rglob("*")
+        if path.is_dir() and not path.is_symlink()
+    }
+    missing_directories = sorted(
+        str(path) for path in expected_directories - actual_directories
+    )
+    extra_directories = sorted(
+        str(path) for path in actual_directories - expected_directories
+    )
+    if missing_directories:
+        errors.append(f"missing directories: {', '.join(missing_directories)}")
+    if extra_directories:
+        errors.append(f"unexpected directories: {', '.join(extra_directories)}")
+
+    unsafe_links = sorted(
+        str(path.relative_to(output_root))
+        for path in output_root.rglob("*")
+        if path.is_symlink()
+    )
+    if unsafe_links:
+        errors.append(f"symbolic links are not publishable: {', '.join(unsafe_links)}")
+
+    empty = sorted(
+        str(relative)
+        for relative in expected & actual
+        if not (output_root / relative).read_bytes()
+    )
+    if empty:
+        errors.append(f"empty files: {', '.join(empty)}")
+
+    for skill in config["skills"].values():
+        metadata_path = (
+            output_root / skill["folder"] / "agents" / "openai.yaml"
+        )
+        if metadata_path.relative_to(output_root) not in actual:
+            continue
+        metadata = read_yaml(metadata_path)
+        if metadata.get("interface") != skill["interface"]:
+            errors.append(
+                f"{metadata_path.relative_to(output_root)}: interface metadata "
+                "does not match configuration"
+            )
+
+    if errors:
+        raise ValueError("staged render validation failed: " + "; ".join(errors))
+
+
+def _remove_path(path: Path) -> None:
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)
+
+
+def _replace_rendered_tree(staged_root: Path, output_root: Path) -> None:
+    """Replace output_root and restore its prior state if the swap fails."""
+
+    backup_root: Path | None = None
+    if output_root.exists() or output_root.is_symlink():
+        backup_root = output_root.parent / (
+            f".{output_root.name}.backup-{uuid.uuid4().hex}"
+        )
+        os.replace(output_root, backup_root)
+
+    try:
+        os.replace(staged_root, output_root)
+    except BaseException as swap_error:
+        if backup_root is not None and backup_root.exists():
+            try:
+                os.replace(backup_root, output_root)
+            except BaseException as restore_error:
+                raise RenderTransactionError(
+                    "Rendered-tree swap failed and the prior tree could not be "
+                    f"restored. The prior tree remains at {backup_root}: "
+                    f"{restore_error}"
+                ) from swap_error
+        raise
+    else:
+        if backup_root is not None:
+            try:
+                _remove_path(backup_root)
+            except OSError as cleanup_error:
+                print(
+                    "WARNING: rendered tree was committed, but the prior-tree "
+                    f"backup could not be removed: {backup_root}: {cleanup_error}"
+                )
+
+
+def render_all(
+    output_root: Path = BUILD_ROOT,
+    content_root: Path = CONTENT_ROOT,
+    config_path: Path | None = None,
+) -> None:
+    """Render, validate, and transactionally replace a complete skill tree."""
+
+    output_root = Path(output_root)
+    if output_root.parent == output_root:
+        raise ValueError("refusing to render over a filesystem root")
+    config = load_skill_config(config_path) if config_path else load_skill_config()
+    validate_required_skills(config)
+    grouped, by_slug = prepare_catalog(config, content_root)
+    aliases_by_skill = prepared_route_aliases(config, by_slug)
+
+    output_root.parent.mkdir(parents=True, exist_ok=True)
+    staged_root = Path(
+        tempfile.mkdtemp(
+            prefix=f".{output_root.name}.stage-",
+            dir=output_root.parent,
+        )
+    )
+    try:
+        _render_tree(staged_root, config, grouped, aliases_by_skill)
+        validate_rendered_tree(
+            staged_root,
+            config,
+            grouped,
+            aliases_by_skill,
+        )
+        _replace_rendered_tree(staged_root, output_root)
+    finally:
+        _remove_path(staged_root)
+
+    for skill in config["skills"].values():
+        print(f"Rendered {output_root / skill['folder']}")
 
 
 def main(argv: list[str] | None = None) -> int:

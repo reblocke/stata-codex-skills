@@ -104,7 +104,8 @@ entries:
   - plugins/stata/skills/stata/references/programming-basics.md
   upstream_only: false
 - slug: regression-diagnostics
-  upstream_files: []
+  upstream_files:
+  - plugins/stata/skills/stata/packages/diagnostics.md
   upstream_only: false
 - slug: regression-discontinuity
   upstream_files:

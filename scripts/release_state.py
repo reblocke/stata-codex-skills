@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+"""Digest and receipt helpers for validated builds and local publishing."""
+
+from __future__ import annotations
+
+from datetime import datetime, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import tempfile
+
+from libskillpack import BUILD_ROOT, REPO_ROOT
+
+
+VALIDATION_RECEIPT_PATH = BUILD_ROOT.parent / "validation-receipt.json"
+SKILL_FOLDERS = ("stata-core", "stata-packages", "stata-c-plugins")
+EXCLUDED_PARTS = {"__pycache__", ".pytest_cache"}
+EXCLUDED_ROOT_DIRECTORIES = {".cache", ".git", ".venv", "build", "raw"}
+
+
+def _hash_records(records: list[tuple[str, bytes]]) -> str:
+    digest = hashlib.sha256()
+    for relative, payload in records:
+        encoded_path = relative.encode("utf-8")
+        digest.update(len(encoded_path).to_bytes(8, "big"))
+        digest.update(encoded_path)
+        digest.update(len(payload).to_bytes(8, "big"))
+        digest.update(payload)
+    return digest.hexdigest()
+
+
+def _file_records(root: Path, paths: list[Path]) -> list[tuple[str, bytes]]:
+    records: list[tuple[str, bytes]] = []
+    for path in sorted(paths):
+        if path.is_symlink():
+            raise ValueError(f"Refusing to hash symlink: {path}")
+        if not path.is_file():
+            continue
+        records.append((path.relative_to(root).as_posix(), path.read_bytes()))
+    return records
+
+
+def tree_digest(root: Path) -> str:
+    """Hash every file path and byte in a generated or installed tree."""
+
+    if not root.is_dir():
+        raise ValueError(f"Tree does not exist: {root}")
+    paths = [path for path in root.rglob("*") if path.is_file()]
+    return _hash_records(_file_records(root, paths))
+
+
+def source_digest(repo_root: Path = REPO_ROOT) -> str:
+    """Hash all review, build, test, and publication inputs.
+
+    Ignored runtime material such as ``build/``, ``raw/``, virtual
+    environments, caches, and ``tests/tmp/`` is intentionally outside this
+    inventory.
+    """
+
+    paths: list[Path] = []
+    for child in repo_root.iterdir():
+        if child.is_symlink():
+            raise ValueError(f"Refusing to hash source symlink: {child}")
+        if child.is_file():
+            if child.name != ".DS_Store":
+                paths.append(child)
+            continue
+        if not child.is_dir() or child.name in EXCLUDED_ROOT_DIRECTORIES:
+            continue
+        for path in child.rglob("*"):
+            relative_path = path.relative_to(repo_root)
+            if path.is_symlink():
+                raise ValueError(f"Refusing to hash source symlink: {path}")
+            if not path.is_file():
+                continue
+            if any(part in EXCLUDED_PARTS for part in relative_path.parts):
+                continue
+            if relative_path.parts[:2] == ("tests", "tmp"):
+                continue
+            if path.suffix == ".pyc" or path.name == ".DS_Store":
+                continue
+            paths.append(path)
+    return _hash_records(_file_records(repo_root, paths))
+
+
+def expected_skill_folders(root: Path) -> tuple[str, ...]:
+    return tuple(sorted(path.name for path in root.iterdir() if path.is_dir()))
+
+
+def validate_complete_skill_tree(root: Path) -> list[str]:
+    errors: list[str] = []
+    if not root.is_dir():
+        return [f"missing skill tree: {root}"]
+    observed_entries = tuple(sorted(path.name for path in root.iterdir()))
+    observed = expected_skill_folders(root)
+    expected = tuple(sorted(SKILL_FOLDERS))
+    if observed_entries != expected:
+        errors.append(
+            "top-level entries differ: "
+            f"expected {', '.join(expected)}; "
+            f"observed {', '.join(observed_entries)}"
+        )
+    if observed != expected:
+        errors.append(
+            "skill folders differ: "
+            f"expected {', '.join(expected)}; observed {', '.join(observed)}"
+        )
+    for folder in SKILL_FOLDERS:
+        skill_root = root / folder
+        if not (skill_root / "SKILL.md").is_file():
+            errors.append(f"{folder}: missing SKILL.md")
+        if not (skill_root / "PROVENANCE.md").is_file():
+            errors.append(f"{folder}: missing PROVENANCE.md")
+        if not (skill_root / "agents" / "openai.yaml").is_file():
+            errors.append(f"{folder}: missing agents/openai.yaml")
+    return errors
+
+
+def validation_state(build_root: Path = BUILD_ROOT) -> dict[str, str]:
+    errors = validate_complete_skill_tree(build_root)
+    if errors:
+        raise ValueError("; ".join(errors))
+    return {
+        "source_sha256": source_digest(),
+        "tree_sha256": tree_digest(build_root),
+    }
+
+
+def write_validation_receipt(
+    build_root: Path = BUILD_ROOT,
+    receipt_path: Path = VALIDATION_RECEIPT_PATH,
+    expected_state: dict[str, str] | None = None,
+) -> dict:
+    current_state = validation_state(build_root)
+    if expected_state is not None and current_state != expected_state:
+        raise ValueError(
+            "Source or generated bytes changed during validation; "
+            "run make validate again."
+        )
+    payload = {
+        "schema_version": 1,
+        "validated_at": datetime.now(timezone.utc).isoformat(),
+        **current_state,
+        "skill_folders": list(SKILL_FOLDERS),
+        "suites": [
+            "static",
+            "core",
+            "packages",
+            "plugin-compile",
+        ],
+    }
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    file_descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{receipt_path.name}.",
+        suffix=".tmp",
+        dir=receipt_path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(receipt_path)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
+    return payload
+
+
+def read_validation_receipt(
+    receipt_path: Path = VALIDATION_RECEIPT_PATH,
+) -> dict:
+    try:
+        payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except FileNotFoundError as error:
+        raise ValueError(
+            f"Validation receipt is missing: {receipt_path}. Run make validate."
+        ) from error
+    except (OSError, json.JSONDecodeError) as error:
+        raise ValueError(f"Validation receipt is unreadable: {receipt_path}") from error
+    if not isinstance(payload, dict) or payload.get("schema_version") != 1:
+        raise ValueError(f"Validation receipt has an unsupported schema: {receipt_path}")
+    return payload
+
+
+def verify_validation_receipt(
+    build_root: Path = BUILD_ROOT,
+    receipt_path: Path = VALIDATION_RECEIPT_PATH,
+) -> dict:
+    payload = read_validation_receipt(receipt_path)
+    errors = validate_complete_skill_tree(build_root)
+    if errors:
+        raise ValueError("; ".join(errors))
+    if payload.get("skill_folders") != list(SKILL_FOLDERS):
+        raise ValueError("Validation receipt does not cover all three skills.")
+    if payload.get("suites") != [
+        "static",
+        "core",
+        "packages",
+        "plugin-compile",
+    ]:
+        raise ValueError("Validation receipt does not cover the default gate.")
+    actual_source = source_digest()
+    if payload.get("source_sha256") != actual_source:
+        raise ValueError(
+            "Validation receipt is stale for the current source state. "
+            "Run make validate."
+        )
+    actual_tree = tree_digest(build_root)
+    if payload.get("tree_sha256") != actual_tree:
+        raise ValueError(
+            "Validation receipt is stale for build/generated. Run make validate."
+        )
+    return payload
