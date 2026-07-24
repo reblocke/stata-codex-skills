@@ -41,6 +41,7 @@ scaffold:
 	$(UV_RUN) python scripts/scaffold_content.py
 
 build: lock-check
+	$(UV_RUN) python scripts/lint_skill_pack.py --no-generated-check
 	$(UV_RUN) python scripts/render_skills.py
 
 render: build

@@ -4,6 +4,7 @@ from contextlib import redirect_stdout
 import io
 import os
 from pathlib import Path
+import shutil
 import sys
 from tempfile import TemporaryDirectory
 import unittest
@@ -39,16 +40,27 @@ class AtomicRenderTests(unittest.TestCase):
             if path.name.startswith(prefixes)
         ]
 
+    @staticmethod
+    def seeded_target(parent: Path) -> Path:
+        target = parent / "generated"
+        render_skills.render_all(output_root=target)
+        (target / "stata-core" / "SKILL.md").write_text(
+            "# Prior generated tree\n",
+            encoding="utf-8",
+        )
+        return target
+
     def test_success_replaces_complete_tree_and_cleans_transaction_artifacts(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
-            target = parent / "generated"
-            target.mkdir()
-            (target / "stale.txt").write_text("stale", encoding="utf-8")
+            target = self.seeded_target(parent)
 
             render_skills.render_all(output_root=target)
 
-            self.assertFalse((target / "stale.txt").exists())
+            self.assertNotEqual(
+                b"# Prior generated tree\n",
+                (target / "stata-core" / "SKILL.md").read_bytes(),
+            )
             self.assertEqual(
                 {"stata-core", "stata-packages", "stata-c-plugins"},
                 {path.name for path in target.iterdir() if path.is_dir()},
@@ -58,9 +70,7 @@ class AtomicRenderTests(unittest.TestCase):
     def test_render_failure_preserves_previous_tree(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
-            target = parent / "generated"
-            target.mkdir()
-            (target / "sentinel.txt").write_text("prior", encoding="utf-8")
+            target = self.seeded_target(parent)
             before = self.snapshot(target)
 
             def fail_after_partial_render(
@@ -84,9 +94,7 @@ class AtomicRenderTests(unittest.TestCase):
     def test_validation_failure_preserves_previous_tree(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
-            target = parent / "generated"
-            target.mkdir()
-            (target / "sentinel.txt").write_text("prior", encoding="utf-8")
+            target = self.seeded_target(parent)
             before = self.snapshot(target)
 
             real_render = render_skills._render_tree
@@ -115,9 +123,7 @@ class AtomicRenderTests(unittest.TestCase):
     def test_truncated_skill_config_cannot_replace_complete_tree(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
-            target = parent / "generated"
-            target.mkdir()
-            (target / "sentinel.txt").write_text("prior", encoding="utf-8")
+            target = self.seeded_target(parent)
             before = self.snapshot(target)
             config = yaml.safe_load(
                 (REPO_ROOT / "config" / "skills.yaml").read_text(encoding="utf-8")
@@ -144,9 +150,7 @@ class AtomicRenderTests(unittest.TestCase):
     def test_failed_swap_rolls_back_previous_tree(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
-            target = parent / "generated"
-            target.mkdir()
-            (target / "sentinel.txt").write_text("prior", encoding="utf-8")
+            target = self.seeded_target(parent)
             before = self.snapshot(target)
             real_replace = os.replace
             replace_count = 0
@@ -173,9 +177,7 @@ class AtomicRenderTests(unittest.TestCase):
     def test_failed_restore_preserves_prior_tree_at_reported_backup(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
-            target = parent / "generated"
-            target.mkdir()
-            (target / "sentinel.txt").write_text("prior", encoding="utf-8")
+            target = self.seeded_target(parent)
             before = self.snapshot(target)
             real_replace = os.replace
             replace_count = 0
@@ -211,9 +213,8 @@ class AtomicRenderTests(unittest.TestCase):
     ) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
-            target = parent / "generated"
-            target.mkdir()
-            (target / "sentinel.txt").write_text("prior", encoding="utf-8")
+            target = self.seeded_target(parent)
+            before = self.snapshot(target)
             real_remove = render_skills._remove_path
 
             def fail_backup_cleanup(path: Path) -> None:
@@ -229,7 +230,6 @@ class AtomicRenderTests(unittest.TestCase):
             ), redirect_stdout(output):
                 render_skills.render_all(output_root=target)
 
-            self.assertFalse((target / "sentinel.txt").exists())
             self.assertIn("rendered tree was committed", output.getvalue())
             backups = [
                 path
@@ -237,10 +237,184 @@ class AtomicRenderTests(unittest.TestCase):
                 if ".backup-" in path.name
             ]
             self.assertEqual(1, len(backups))
+            self.assertEqual(before, self.snapshot(backups[0]))
+
+    def test_existing_file_is_rejected_and_preserved(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = parent / "generated"
+            target.write_text("unrelated file\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "render output root is not a directory",
+            ):
+                render_skills.render_all(output_root=target)
+
             self.assertEqual(
-                {"sentinel.txt": b"prior"},
-                self.snapshot(backups[0]),
+                "unrelated file\n",
+                target.read_text(encoding="utf-8"),
             )
+            self.assertEqual([], self.transaction_artifacts(parent, target.name))
+
+    def test_shared_directory_is_rejected_and_preserved(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = parent / "shared"
+            target.mkdir()
+            unrelated = target / "unrelated.md"
+            unrelated.write_text("keep me\n", encoding="utf-8")
+            before = self.snapshot(target)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "non-dedicated render output root",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertEqual(before, self.snapshot(target))
+            self.assertEqual([], self.transaction_artifacts(parent, target.name))
+
+    def test_symlinked_output_root_is_rejected_and_preserved(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            shared = parent / "shared"
+            shared.mkdir()
+            unrelated = shared / "unrelated.md"
+            unrelated.write_text("keep me\n", encoding="utf-8")
+            target = parent / "generated"
+            target.symlink_to(shared, target_is_directory=True)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "symlinked render output root",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(target.is_symlink())
+            self.assertEqual("keep me\n", unrelated.read_text(encoding="utf-8"))
+            self.assertEqual([], self.transaction_artifacts(parent, target.name))
+
+    def test_target_replacement_during_staging_is_rejected_and_preserved(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            accepted = parent / "accepted-tree"
+            concurrent = parent / "concurrent-tree"
+            concurrent.mkdir()
+            sentinel = concurrent / "unrelated.md"
+            sentinel.write_text("concurrent bytes\n", encoding="utf-8")
+            before = self.snapshot(target)
+            real_validate = render_skills.validate_rendered_tree
+
+            def replace_target_after_staged_validation(*args: object) -> None:
+                real_validate(*args)
+                target.rename(accepted)
+                target.symlink_to(concurrent, target_is_directory=True)
+
+            with patch.object(
+                render_skills,
+                "validate_rendered_tree",
+                side_effect=replace_target_after_staged_validation,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "changed after preflight",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(target.is_symlink())
+            self.assertEqual(
+                "concurrent bytes\n",
+                sentinel.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(before, self.snapshot(accepted))
+            self.assertEqual([], self.transaction_artifacts(parent, target.name))
+
+    def test_nonstandard_in_repository_output_root_is_rejected(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            repository = Path(temp_root) / "repo"
+            repository.mkdir()
+            target = repository / "custom-generated"
+            with patch.object(
+                render_skills,
+                "REPO_ROOT",
+                repository,
+            ), patch.object(
+                render_skills,
+                "BUILD_ROOT",
+                repository / "build" / "generated",
+            ), self.assertRaisesRegex(
+                ValueError,
+                "in-repository render output must be build/generated",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertFalse(target.exists())
+
+    def test_unsafe_render_paths_fail_before_staging_or_external_writes(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            base_config = yaml.safe_load(
+                (REPO_ROOT / "config" / "skills.yaml").read_text(encoding="utf-8")
+            )
+            content_root = parent / "content"
+            shutil.copytree(REPO_ROOT / "content", content_root)
+
+            cases: list[tuple[str, dict, Path]] = []
+
+            unsafe_alias = yaml.safe_load(yaml.safe_dump(base_config))
+            unsafe_alias["route_aliases"][0]["from_route"] = "../../escaped.md"
+            cases.append(("from-route", unsafe_alias, content_root))
+
+            unsafe_route_dir = yaml.safe_load(yaml.safe_dump(base_config))
+            unsafe_route_dir["skills"]["core"]["route_dir"] = "../../references"
+            cases.append(("route-dir", unsafe_route_dir, content_root))
+
+            unsafe_slug_root = parent / "unsafe-slug-content"
+            shutil.copytree(content_root, unsafe_slug_root)
+            slug_path = unsafe_slug_root / "core" / "panel-data.yaml"
+            slug_entry = yaml.safe_load(slug_path.read_text(encoding="utf-8"))
+            slug_entry["slug"] = "../../../escaped"
+            slug_path.write_text(
+                yaml.safe_dump(slug_entry, sort_keys=False),
+                encoding="utf-8",
+            )
+            cases.append(("slug", base_config, unsafe_slug_root))
+
+            for label, config, selected_content_root in cases:
+                with self.subTest(label=label):
+                    case_root = parent / label
+                    case_root.mkdir()
+                    escaped = case_root / "escaped.md"
+                    escaped.write_text("sentinel\n", encoding="utf-8")
+                    config_path = case_root / "skills.yaml"
+                    config_path.write_text(
+                        yaml.safe_dump(config, sort_keys=False),
+                        encoding="utf-8",
+                    )
+                    output = case_root / "generated"
+
+                    with self.assertRaisesRegex(
+                        ValueError,
+                        "render input validation failed",
+                    ):
+                        render_skills.render_all(
+                            output_root=output,
+                            content_root=selected_content_root,
+                            config_path=config_path,
+                        )
+
+                    self.assertEqual(
+                        "sentinel\n",
+                        escaped.read_text(encoding="utf-8"),
+                    )
+                    self.assertFalse(output.exists())
+                    self.assertEqual(
+                        [],
+                        self.transaction_artifacts(case_root, output.name),
+                    )
 
     def test_explicit_output_roots_remain_byte_identical(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:

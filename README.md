@@ -37,7 +37,8 @@ Generated skills are written to `build/generated/` and published into:
 - `~/.codex/skills/stata-c-plugins`
 
 If `CODEX_HOME` is set, the default publication root is
-`$CODEX_HOME/skills/`.
+`$CODEX_HOME/skills/`. Custom publication roots must resolve outside this
+repository and must not overlap `build/generated/`.
 
 ## Design principles
 
@@ -213,6 +214,9 @@ If `CODEX_HOME` is unset, the default location is:
 ~/.codex/skills
 ```
 
+The resolved Codex home must be outside the repository. This keeps publication
+staging from changing the source digest covered by the validation receipt.
+
 ### Refreshing an existing installation
 
 If the skills are already installed on a machine and you want to update them after pulling new changes:
@@ -266,7 +270,9 @@ When you update the repo, the normal order is:
 `make build` stages and validates the complete three-skill tree beside
 `build/generated/`, then swaps it as one filesystem transaction. A render or
 staged-tree failure leaves the prior generated tree untouched. `make all`
-remains a compatibility alias for `make check`.
+remains a compatibility alias for `make check`. Direct `--output-root` renders
+accept absent or empty external directories; an existing target must already
+have the dedicated three-skill generated-tree layout.
 
 Fetching upstream material, harvesting help, scaffolding candidates, and
 refreshing locks are explicit maintenance operations. Review their ignored

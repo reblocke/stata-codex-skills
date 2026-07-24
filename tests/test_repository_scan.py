@@ -66,6 +66,35 @@ class RepositoryScanTests(unittest.TestCase):
         self.assertTrue(any("GitHub token" in error for error in errors))
         self.assertTrue(any("OpenAI API key" in error for error in errors))
 
+    def test_benign_extensions_under_generated_roots_are_reported(self) -> None:
+        with TemporaryDirectory(prefix="repo-scan-") as temp_root:
+            root = Path(temp_root)
+            artifacts = [
+                Path("build/README.md"),
+                Path("raw/candidate.yaml"),
+                Path(".venv/pyvenv.cfg"),
+                Path(".cache/state.json"),
+                Path(".pytest_cache/CACHEDIR.TAG"),
+                Path("tests/tmp/notes.md"),
+                Path(".codex/config.yaml"),
+            ]
+            for relative in artifacts:
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("benign-looking generated content\n", encoding="utf-8")
+
+            errors = scan_repository.scan_paths(root, artifacts)
+
+        for relative in artifacts:
+            with self.subTest(relative=relative):
+                self.assertTrue(
+                    any(
+                        error.startswith(f"{relative}:")
+                        and "forbidden" in error
+                        for error in errors
+                    )
+                )
+
     def test_root_llms_text_is_the_only_allowed_text_path(self) -> None:
         with TemporaryDirectory(prefix="repo-scan-") as temp_root:
             root = Path(temp_root)
@@ -91,10 +120,17 @@ class RepositoryScanTests(unittest.TestCase):
     def test_normal_source_file_passes(self) -> None:
         with TemporaryDirectory(prefix="repo-scan-") as temp_root:
             root = Path(temp_root)
-            source = root / "script.py"
-            source.write_text("print('safe')\n", encoding="utf-8")
+            sources = [
+                Path("script.py"),
+                Path("docs/build-guide.md"),
+                Path("src/raw_parser.py"),
+            ]
+            for relative in sources:
+                source = root / relative
+                source.parent.mkdir(parents=True, exist_ok=True)
+                source.write_text("reviewed source\n", encoding="utf-8")
 
-            errors = scan_repository.scan_paths(root, [Path("script.py")])
+            errors = scan_repository.scan_paths(root, sources)
 
         self.assertEqual([], errors)
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 import argparse
 import os
@@ -16,18 +17,32 @@ from libskillpack import (
     BUILD_ROOT,
     CONTENT_ROOT,
     LOCK_ROOT,
+    REPO_ROOT,
     TEMPLATES_ROOT,
     content_entries_by_skill,
+    iter_content_entries,
     load_skill_config,
     read_yaml,
     sha256_file,
     write_text,
 )
-from release_state import SKILL_FOLDERS
+from release_state import (
+    SKILL_FOLDERS,
+    tree_digest,
+    validate_complete_skill_tree,
+)
 
 
 class RenderTransactionError(RuntimeError):
     """A render failed and requires explicit recovery from a preserved backup."""
+
+
+@dataclass(frozen=True)
+class RenderOutputState:
+    exists: bool
+    device: int | None = None
+    inode: int | None = None
+    tree_sha256: str | None = None
 
 
 REQUIRED_SKILL_KEYS = ("core", "packages", "plugins")
@@ -61,6 +76,183 @@ def validate_required_skills(config: dict) -> None:
             raise ValueError(
                 f"skill {key} must retain name and folder {expected_name}"
             )
+
+
+def validate_render_inputs(config: dict, content_root: Path) -> None:
+    """Apply the linter's path/schema checks before constructing output paths."""
+
+    from lint_skill_pack import lint_config, lint_entry, lint_route_aliases
+
+    errors = lint_config(config)
+    if errors:
+        raise ValueError("render input validation failed: " + "; ".join(errors))
+
+    slug_to_skill: dict[str, str] = {}
+    route_paths: set[str] = set()
+    for skill_key, path, entry in iter_content_entries(content_root, config):
+        skill = config["skills"][skill_key]
+        errors.extend(lint_entry(skill_key, path, entry, skill))
+        if not isinstance(entry, dict):
+            continue
+        slug = entry.get("slug")
+        if isinstance(slug, str):
+            slug_to_skill[slug] = skill_key
+            route_paths.add(
+                f"{skill['name']}/{skill['route_dir']}/{slug}.md"
+            )
+    errors.extend(lint_route_aliases(config, slug_to_skill, route_paths))
+    if errors:
+        raise ValueError("render input validation failed: " + "; ".join(errors))
+
+
+def _safe_render_path(root: Path, *parts: str | Path) -> Path:
+    """Return a child path only when it remains canonically beneath root."""
+
+    resolved_root = root.resolve()
+    candidate = root.joinpath(*parts)
+    resolved_candidate = candidate.resolve(strict=False)
+    if (
+        resolved_candidate == resolved_root
+        or not resolved_candidate.is_relative_to(resolved_root)
+    ):
+        raise ValueError(f"render path escapes staging root: {candidate}")
+    return resolved_candidate
+
+
+def _resolved_output_root(output_root: Path) -> Path:
+    """Canonicalize a render target while rejecting ambiguous destinations."""
+
+    requested = Path(output_root).expanduser()
+    if requested.is_symlink():
+        raise ValueError(f"refusing symlinked render output root: {requested}")
+    resolved = requested.resolve(strict=False)
+    if resolved.parent == resolved:
+        raise ValueError("refusing to render over a filesystem root")
+    repository_root = REPO_ROOT.resolve()
+    if (
+        resolved.is_relative_to(repository_root)
+        and resolved != BUILD_ROOT.resolve()
+    ):
+        raise ValueError(
+            "in-repository render output must be build/generated; "
+            f"refusing {resolved}"
+        )
+    return resolved
+
+
+def preflight_existing_output_root(output_root: Path) -> None:
+    """Require an existing target to be empty or recognizably generated."""
+
+    if not output_root.exists():
+        return
+    if not output_root.is_dir():
+        raise ValueError(f"render output root is not a directory: {output_root}")
+    if not any(output_root.iterdir()):
+        return
+
+    errors = validate_complete_skill_tree(output_root)
+    for folder in SKILL_FOLDERS:
+        skill_root = output_root / folder
+        if not skill_root.is_dir() or skill_root.is_symlink():
+            continue
+        direct_files = {
+            path.name
+            for path in skill_root.iterdir()
+            if path.is_file() and not path.is_symlink()
+        }
+        direct_directories = {
+            path.name
+            for path in skill_root.iterdir()
+            if path.is_dir() and not path.is_symlink()
+        }
+        if direct_files != {"SKILL.md", "PROVENANCE.md"}:
+            errors.append(
+                f"{folder}: expected only SKILL.md and PROVENANCE.md at skill root"
+            )
+        route_directories = direct_directories - {"agents"}
+        if "agents" not in direct_directories or len(route_directories) != 1:
+            errors.append(
+                f"{folder}: expected agents/ and exactly one reference directory"
+            )
+        agents_root = skill_root / "agents"
+        if (
+            agents_root.is_dir()
+            and not agents_root.is_symlink()
+            and {path.name for path in agents_root.iterdir()} != {"openai.yaml"}
+        ):
+            errors.append(f"{folder}: agents/ must contain only openai.yaml")
+        for route_name in route_directories:
+            route_root = skill_root / route_name
+            for path in route_root.iterdir():
+                if (
+                    path.is_symlink()
+                    or not path.is_file()
+                    or path.suffix != ".md"
+                ):
+                    errors.append(
+                        f"{folder}: unexpected reference entry "
+                        f"{path.relative_to(skill_root)}"
+                    )
+        unsafe_links = [
+            path.relative_to(skill_root)
+            for path in skill_root.rglob("*")
+            if path.is_symlink()
+        ]
+        if unsafe_links:
+            errors.append(
+                f"{folder}: symbolic links are not generated content: "
+                + ", ".join(str(path) for path in unsafe_links)
+            )
+    if errors:
+        raise ValueError(
+            "refusing to replace a non-dedicated render output root: "
+            + "; ".join(errors)
+        )
+
+
+def capture_output_root_state(output_root: Path) -> RenderOutputState:
+    """Fingerprint an accepted target so staging cannot hide a later change."""
+
+    if output_root.is_symlink():
+        raise ValueError(f"refusing symlinked render output root: {output_root}")
+    if not output_root.exists():
+        return RenderOutputState(exists=False)
+
+    preflight_existing_output_root(output_root)
+    before = output_root.stat()
+    digest = tree_digest(output_root)
+    preflight_existing_output_root(output_root)
+    after = output_root.stat()
+    before_identity = (before.st_dev, before.st_ino)
+    after_identity = (after.st_dev, after.st_ino)
+    if before_identity != after_identity:
+        raise RenderTransactionError(
+            "render output root changed while its ownership was being checked"
+        )
+    return RenderOutputState(
+        exists=True,
+        device=after.st_dev,
+        inode=after.st_ino,
+        tree_sha256=digest,
+    )
+
+
+def verify_output_root_state(
+    output_root: Path,
+    expected: RenderOutputState,
+) -> None:
+    """Refuse replacement when the accepted root changed during staging."""
+
+    try:
+        observed = capture_output_root_state(output_root)
+    except (OSError, ValueError) as error:
+        raise RenderTransactionError(
+            "render output root changed after preflight; refusing replacement"
+        ) from error
+    if observed != expected:
+        raise RenderTransactionError(
+            "render output root changed after preflight; refusing replacement"
+        )
 
 
 def build_environment() -> Environment:
@@ -239,8 +431,8 @@ def _render_tree(
     openai_template = env.get_template("openai.yaml.j2")
 
     for skill_key, skill in config["skills"].items():
-        folder = output_root / skill["folder"]
-        route_dir = folder / skill["route_dir"]
+        folder = _safe_render_path(output_root, skill["folder"])
+        route_dir = _safe_render_path(folder, skill["route_dir"])
         route_dir.mkdir(parents=True, exist_ok=True)
 
         entries = grouped[skill_key]
@@ -250,13 +442,13 @@ def _render_tree(
         for entry in entries:
             sections[entry["section"]].append(entry)
             write_text(
-                route_dir / f"{entry['slug']}.md",
+                _safe_render_path(route_dir, f"{entry['slug']}.md"),
                 normalized_markdown(reference_template.render(entry=entry)),
             )
 
         route_aliases = aliases_by_skill[skill_key]
         for alias in route_aliases:
-            alias_path = folder / alias["from_route"]
+            alias_path = _safe_render_path(folder, alias["from_route"])
             write_text(
                 alias_path,
                 normalized_markdown(alias_template.render(alias=alias)),
@@ -268,7 +460,7 @@ def _render_tree(
             if section_entries
         ]
         write_text(
-            folder / "SKILL.md",
+            _safe_render_path(folder, "SKILL.md"),
             normalized_markdown(
                 skill_template.render(
                     skill=skill,
@@ -278,7 +470,7 @@ def _render_tree(
             ),
         )
         write_text(
-            folder / "PROVENANCE.md",
+            _safe_render_path(folder, "PROVENANCE.md"),
             normalized_markdown(
                 provenance_template.render(
                     skill=skill,
@@ -288,7 +480,7 @@ def _render_tree(
             ),
         )
         write_text(
-            folder / "agents" / "openai.yaml",
+            _safe_render_path(folder, "agents", "openai.yaml"),
             openai_template.render(interface=skill["interface"]).strip() + "\n",
         )
 
@@ -405,9 +597,14 @@ def _remove_path(path: Path) -> None:
         shutil.rmtree(path)
 
 
-def _replace_rendered_tree(staged_root: Path, output_root: Path) -> None:
+def _replace_rendered_tree(
+    staged_root: Path,
+    output_root: Path,
+    expected_output_state: RenderOutputState,
+) -> None:
     """Replace output_root and restore its prior state if the swap fails."""
 
+    verify_output_root_state(output_root, expected_output_state)
     backup_root: Path | None = None
     if output_root.exists() or output_root.is_symlink():
         backup_root = output_root.parent / (
@@ -446,13 +643,13 @@ def render_all(
 ) -> None:
     """Render, validate, and transactionally replace a complete skill tree."""
 
-    output_root = Path(output_root)
-    if output_root.parent == output_root:
-        raise ValueError("refusing to render over a filesystem root")
+    output_root = _resolved_output_root(output_root)
     config = load_skill_config(config_path) if config_path else load_skill_config()
     validate_required_skills(config)
+    validate_render_inputs(config, content_root)
     grouped, by_slug = prepare_catalog(config, content_root)
     aliases_by_skill = prepared_route_aliases(config, by_slug)
+    expected_output_state = capture_output_root_state(output_root)
 
     output_root.parent.mkdir(parents=True, exist_ok=True)
     staged_root = Path(
@@ -469,7 +666,11 @@ def render_all(
             grouped,
             aliases_by_skill,
         )
-        _replace_rendered_tree(staged_root, output_root)
+        _replace_rendered_tree(
+            staged_root,
+            output_root,
+            expected_output_state,
+        )
     finally:
         _remove_path(staged_root)
 
@@ -483,7 +684,10 @@ def main(argv: list[str] | None = None) -> int:
         "--output-root",
         type=Path,
         default=BUILD_ROOT,
-        help="Render into this directory instead of build/generated.",
+        help=(
+            "Render into an absent, empty, or dedicated generated-tree "
+            "directory instead of build/generated."
+        ),
     )
     args = parser.parse_args(argv)
     render_all(output_root=args.output_root)

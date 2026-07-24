@@ -38,6 +38,15 @@ FORBIDDEN_SUFFIXES = {
     ".sthlp",
     ".toc",
 }
+FORBIDDEN_ROOTS = (
+    Path(".cache"),
+    Path(".codex"),
+    Path(".pytest_cache"),
+    Path(".venv"),
+    Path("build"),
+    Path("raw"),
+    Path("tests/tmp"),
+)
 ALLOWED_TEXT_PATHS = {Path("llms.txt")}
 SECRET_PATTERNS = (
     (
@@ -65,6 +74,13 @@ SECRET_PATTERNS = (
 )
 
 
+def is_under_forbidden_root(relative: Path) -> bool:
+    return any(
+        relative == forbidden_root or forbidden_root in relative.parents
+        for forbidden_root in FORBIDDEN_ROOTS
+    )
+
+
 def reviewable_paths(repo_root: Path = REPO_ROOT) -> list[Path]:
     result = run_command(
         [
@@ -90,6 +106,7 @@ def scan_paths(repo_root: Path, relative_paths: list[Path]) -> list[str]:
         forbidden_artifact = (
             path.name in FORBIDDEN_NAMES
             or path.suffix.lower() in FORBIDDEN_SUFFIXES
+            or is_under_forbidden_root(relative)
             or (
                 path.suffix.lower() == ".txt"
                 and relative not in ALLOWED_TEXT_PATHS
