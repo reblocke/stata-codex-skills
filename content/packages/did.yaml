@@ -23,6 +23,8 @@ install_commands:
 - ssc install csdid, replace
 smoke_test: 'clear
 
+  set seed 12345
+
   set obs 80
 
   gen id = ceil(_n/4)

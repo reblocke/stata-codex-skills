@@ -211,7 +211,7 @@ PACKAGE_METADATA = {
         "commands": ["csdid"],
         "source_topics": ["csdid"],
         "install_commands": ["ssc install csdid, replace"],
-        "smoke_test": "clear\nset obs 80\ngen id = ceil(_n/4)\ngen t = mod(_n-1,4)\ngen gvar = cond(id <= 10, 2, 0)\ngen y = rnormal() + 2*(gvar>0 & t>=gvar)\ncsdid y, ivar(id) time(t) gvar(gvar) notyet",
+        "smoke_test": "clear\nset seed 12345\nset obs 80\ngen id = ceil(_n/4)\ngen t = mod(_n-1,4)\ngen gvar = cond(id <= 10, 2, 0)\ngen y = rnormal() + 2*(gvar>0 & t>=gvar)\ncsdid y, ivar(id) time(t) gvar(gvar) notyet",
         "related_refs": ["difference-in-differences", "treatment-effects"],
     },
     "estout": {
@@ -285,7 +285,7 @@ PACKAGE_METADATA = {
         "commands": ["rdrobust"],
         "source_topics": ["rdrobust"],
         "install_commands": ["ssc install rdrobust, replace"],
-        "smoke_test": "clear\nset obs 200\ngen x = _n - 100\ngen y = x + 2*(x>=0) + rnormal()\nrdrobust y x",
+        "smoke_test": "clear\nset seed 12345\nset obs 200\ngen x = _n - 100\ngen y = x + 2*(x>=0) + rnormal()\nrdrobust y x",
         "related_refs": ["regression-discontinuity", "graphics"],
     },
     "reghdfe": {

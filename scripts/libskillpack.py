@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from functools import lru_cache
+import hashlib
+import os
 from pathlib import Path
 import re
 import shutil
@@ -218,14 +220,34 @@ def extract_warning_lines(text: str, limit: int = 4) -> list[str]:
     return unique_list(warnings)
 
 
-def run_command(args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        args,
-        cwd=str(cwd) if cwd else None,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
+def run_command(
+    args: list[str],
+    cwd: Path | None = None,
+    timeout_seconds: int = 120,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            args,
+            cwd=str(cwd) if cwd else None,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout_seconds,
+        )
+    except subprocess.TimeoutExpired as error:
+        stdout = (
+            error.stdout.decode("utf-8", "ignore")
+            if isinstance(error.stdout, bytes)
+            else (error.stdout or "")
+        )
+        stderr = (
+            error.stderr.decode("utf-8", "ignore")
+            if isinstance(error.stderr, bytes)
+            else (error.stderr or "")
+        )
+        timeout_message = f"Command timed out after {timeout_seconds} seconds."
+        stderr = f"{stderr}\n{timeout_message}".strip()
+        return subprocess.CompletedProcess(args, 124, stdout, stderr)
 
 
 def copy_tree_fresh(src: Path, dest: Path) -> None:
@@ -251,63 +273,118 @@ def run_stata_do(
     stata_binary: Path,
     do_file: Path,
     cwd: Path,
-    completion_marker: str = "VALIDATION COMPLETE",
+    completion_marker: str,
     timeout_seconds: int = 300,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
+    """Run one Stata do-file and require its exact, run-specific marker.
+
+    Stata's macOS ``-e do`` mode names its plain-text log after the do-file in
+    the process working directory.  Validation deliberately accepts only that
+    path: stale logs elsewhere (especially in the repository root) are never
+    candidates.
+    """
+    ensure_dir(cwd)
+    log_path = cwd / f"{do_file.stem}.log"
+    if log_path.exists():
+        log_path.unlink()
+
     process = subprocess.Popen(
-        [str(stata_binary), "-b", "do", str(do_file)],
+        [str(stata_binary), "-e", "do", str(do_file)],
         cwd=str(cwd),
+        env={**os.environ, "PWD": str(cwd)},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    candidate_logs = [
-        cwd / f"{do_file.stem}.log",
-        REPO_ROOT / f"{do_file.stem}.log",
-        do_file.parent / f"{do_file.stem}.log",
-    ]
-    log_path = candidate_logs[0]
     marker_found = False
-    deadline = time.time() + timeout_seconds
-
-    while time.time() < deadline:
-        for candidate in candidate_logs:
-            if candidate.exists():
-                log_path = candidate
+    timed_out = False
+    stopped_after_marker = False
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        if log_path.exists():
+            log_text = read_text(log_path)
+            marker_found = any(
+                line.strip() == completion_marker for line in log_text.splitlines()
+            )
+            if marker_found:
                 break
-        if log_path.exists() and completion_marker in read_text(log_path):
-            marker_found = True
-            break
         if process.poll() is not None:
             break
-        time.sleep(1)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            timed_out = True
+            break
+        time.sleep(min(0.1, remaining))
 
     if process.poll() is None:
+        stopped_after_marker = marker_found
         process.terminate()
         try:
-            process.wait(timeout=5)
+            stdout, stderr = process.communicate(timeout=5)
         except subprocess.TimeoutExpired:
             process.kill()
-            process.wait(timeout=5)
+            stdout, stderr = process.communicate(timeout=5)
+    else:
+        stdout, stderr = process.communicate()
 
-    stdout, stderr = process.communicate()
-    effective_returncode = 0 if marker_found else (process.returncode if process.returncode is not None else 1)
-    result = subprocess.CompletedProcess(process.args, effective_returncode, stdout, stderr)
+    log_text = read_text(log_path) if log_path.exists() else ""
+    marker_found = any(line.strip() == completion_marker for line in log_text.splitlines())
+    diagnostics: list[str] = []
+    process_returncode = process.returncode if process.returncode is not None else 1
+    if not log_path.exists():
+        diagnostics.append(f"Stata did not create the expected log {log_path.name}.")
+    elif not marker_found:
+        diagnostics.append("Stata log did not contain the exact completion marker.")
+
+    if timed_out:
+        effective_returncode = 124
+        diagnostics.append(f"Stata timed out after {timeout_seconds} seconds.")
+    elif process_returncode != 0 and not stopped_after_marker:
+        effective_returncode = process_returncode
+    elif not log_path.exists():
+        effective_returncode = 1
+    elif not marker_found:
+        effective_returncode = 1
+    else:
+        effective_returncode = 0
+
+    stderr_parts = [stderr or "", *diagnostics]
+    effective_stderr = "\n".join(part for part in stderr_parts if part).strip()
+    result = subprocess.CompletedProcess(
+        process.args,
+        effective_returncode,
+        stdout,
+        effective_stderr,
+    )
     return result, log_path
 
 
 def has_stata_error(log_text: str) -> bool:
-    return bool(re.search(r"(?m)^r\([0-9]+\);", log_text))
+    return bool(re.search(r"(?m)^\s*r\([0-9]+\);", log_text))
 
 
-def download_text(url: str) -> str:
+def download_text(url: str, timeout_seconds: int = 30) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(request) as response:
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
         return response.read().decode("utf-8", "ignore")
 
 
-def download_binary(url: str, dest: Path) -> None:
+def download_binary(
+    url: str,
+    dest: Path,
+    timeout_seconds: int = 30,
+    expected_sha256: str | None = None,
+) -> str:
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(request) as response:
-        ensure_dir(dest.parent)
-        dest.write_bytes(response.read())
+    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+        data = response.read()
+
+    actual_sha256 = hashlib.sha256(data).hexdigest()
+    if expected_sha256 and actual_sha256.lower() != expected_sha256.lower():
+        raise ValueError(
+            f"SHA-256 mismatch for {url}: expected {expected_sha256}, got {actual_sha256}"
+        )
+
+    ensure_dir(dest.parent)
+    dest.write_bytes(data)
+    return actual_sha256
