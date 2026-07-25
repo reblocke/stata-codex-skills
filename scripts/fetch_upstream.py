@@ -48,6 +48,14 @@ DIRECTORY_OPEN_FLAGS = (
     | getattr(os, "O_DIRECTORY", 0)
     | getattr(os, "O_NOFOLLOW", 0)
 )
+GIT_SAFETY_CONFIG_ARGUMENTS = (
+    "-c",
+    f"core.hooksPath={os.devnull}",
+    "-c",
+    "maintenance.auto=false",
+    "-c",
+    "gc.auto=0",
+)
 
 
 @dataclass
@@ -826,8 +834,7 @@ def run_anchored_git(
         working_directory_fd = checkout.git_dir_fd
         command = [
             arguments[0],
-            "-c",
-            f"core.hooksPath={os.devnull}",
+            *GIT_SAFETY_CONFIG_ARGUMENTS,
             "--git-dir=.",
             "--work-tree=..",
             *arguments[1:],
@@ -838,8 +845,7 @@ def run_anchored_git(
         working_directory_fd = checkout_fd
         command = [
             arguments[0],
-            "-c",
-            f"core.hooksPath={os.devnull}",
+            *GIT_SAFETY_CONFIG_ARGUMENTS,
             *arguments[1:],
         ]
         inherited_fds = (checkout_fd,)
@@ -934,8 +940,7 @@ def run_anchored_git_bytes(
         working_directory_fd = checkout.git_dir_fd
         command = [
             arguments[0],
-            "-c",
-            f"core.hooksPath={os.devnull}",
+            *GIT_SAFETY_CONFIG_ARGUMENTS,
             "--git-dir=.",
             "--work-tree=..",
             *arguments[1:],
@@ -946,8 +951,7 @@ def run_anchored_git_bytes(
         working_directory_fd = checkout_fd
         command = [
             arguments[0],
-            "-c",
-            f"core.hooksPath={os.devnull}",
+            *GIT_SAFETY_CONFIG_ARGUMENTS,
             *arguments[1:],
         ]
         inherited_fds = (checkout_fd,)

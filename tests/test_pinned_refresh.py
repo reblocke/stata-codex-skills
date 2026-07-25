@@ -42,7 +42,16 @@ def run_git(repository: Path, *arguments: str) -> CompletedProcess[str]:
     ):
         arguments_list.insert(1, "--no-hardlinks")
     return subprocess.run(
-        ["git", "-C", str(repository), *arguments_list],
+        [
+            "git",
+            "-c",
+            "maintenance.auto=false",
+            "-c",
+            "gc.auto=0",
+            "-C",
+            str(repository),
+            *arguments_list,
+        ],
         check=True,
         capture_output=True,
         text=True,
@@ -211,6 +220,9 @@ class PinnedRefreshTests(unittest.TestCase):
         self.assertIn("timed out", result.stderr.lower())
         terminate.assert_called_once_with(process)
         self.assertTrue(mocked_popen.call_args.kwargs["start_new_session"])
+        command = mocked_popen.call_args.args[0]
+        self.assertIn("maintenance.auto=false", command)
+        self.assertIn("gc.auto=0", command)
 
     def test_timeout_does_not_block_on_stuck_text_pipes_after_kill(self) -> None:
         with TemporaryDirectory(prefix="pinned-stuck-text-pipes-") as temp_root:
@@ -289,7 +301,7 @@ class PinnedRefreshTests(unittest.TestCase):
                     fetch_upstream.subprocess,
                     "Popen",
                     return_value=process,
-                ), patch.object(
+                ) as mocked_popen, patch.object(
                     fetch_upstream,
                     "terminate_process_group",
                 ) as terminate:
@@ -314,6 +326,9 @@ class PinnedRefreshTests(unittest.TestCase):
             timeout=fetch_upstream.POST_KILL_REAP_TIMEOUT_SECONDS
         )
         self.assertGreaterEqual(terminate.call_count, 2)
+        command = mocked_popen.call_args.args[0]
+        self.assertIn("maintenance.auto=false", command)
+        self.assertIn("gc.auto=0", command)
 
     def test_interrupt_terminates_and_reaps_text_git_process_group(self) -> None:
         with TemporaryDirectory(prefix="pinned-process-interrupt-") as temp_root:
