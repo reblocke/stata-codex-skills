@@ -82,6 +82,15 @@ def recovery_roots(root: Path) -> list[Path]:
     )
 
 
+def stat_result_with_uid(
+    metadata: os.stat_result,
+    owner_uid: int,
+) -> os.stat_result:
+    values = list(metadata)
+    values[4] = owner_uid
+    return os.stat_result(values)
+
+
 class PublishTransactionTests(unittest.TestCase):
     def create_receipt(
         self,
@@ -156,6 +165,322 @@ class PublishTransactionTests(unittest.TestCase):
                 (destination / publish_local.TRANSACTION_LOCK_NAME).exists()
             )
             self.assertEqual([], recovery_roots(destination))
+
+    def test_unsafe_existing_destination_root_is_rejected_before_mutation(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            destination.chmod(0o770)
+            before = snapshot(destination)
+
+            with patch.object(
+                publish_local,
+                "_ensure_destination_root",
+            ) as ensure_destination, self.assertRaisesRegex(
+                publish_local.PublishError,
+                "destination root must not be group/other writable",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            ensure_destination.assert_not_called()
+            self.assertEqual(before, snapshot(destination))
+            self.assertFalse(
+                (destination / publish_local.TRANSACTION_LOCK_NAME).exists()
+            )
+            self.assertEqual([], recovery_roots(destination))
+
+    def test_foreign_owned_destination_root_is_rejected_before_mutation(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            destination_identity = destination.stat()
+            unexpected_uid = os.geteuid() + 1
+            real_fstat = publish_local.os.fstat
+            before = snapshot(destination)
+
+            def foreign_owner(file_descriptor: int) -> os.stat_result:
+                observed = real_fstat(file_descriptor)
+                if (
+                    observed.st_dev == destination_identity.st_dev
+                    and observed.st_ino == destination_identity.st_ino
+                ):
+                    return stat_result_with_uid(observed, unexpected_uid)
+                return observed
+
+            with patch.object(
+                publish_local.os,
+                "fstat",
+                side_effect=foreign_owner,
+            ), patch.object(
+                publish_local,
+                "_ensure_destination_root",
+            ) as ensure_destination, self.assertRaisesRegex(
+                publish_local.PublishError,
+                "destination root must be owned by the current effective user",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            ensure_destination.assert_not_called()
+            self.assertEqual(before, snapshot(destination))
+            self.assertFalse(
+                (destination / publish_local.TRANSACTION_LOCK_NAME).exists()
+            )
+            self.assertEqual([], recovery_roots(destination))
+
+    def test_unsafe_writable_destination_ancestor_is_rejected_before_mutation(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            unsafe_ancestor = root / "unsafe"
+            destination = unsafe_ancestor / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            unsafe_ancestor.chmod(0o770)
+            before = snapshot(destination)
+
+            with patch.object(
+                publish_local,
+                "_ensure_destination_root",
+            ) as ensure_destination, self.assertRaisesRegex(
+                publish_local.PublishError,
+                "unsafe group/other-writable ancestor without the sticky bit",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            ensure_destination.assert_not_called()
+            self.assertEqual(before, snapshot(destination))
+            self.assertFalse(
+                (destination / publish_local.TRANSACTION_LOCK_NAME).exists()
+            )
+            self.assertEqual([], recovery_roots(destination))
+
+    def test_sticky_writable_ancestor_allows_current_user_owned_child(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            sticky_ancestor = root / "sticky"
+            owned_child = sticky_ancestor / "owned"
+            destination = owned_child / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            sticky_ancestor.mkdir()
+            sticky_ancestor.chmod(0o1777)
+            owned_child.mkdir(mode=0o700)
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+
+            publish_local.publish_skills(
+                source_root=generated,
+                dest_root=destination,
+                receipt_path=receipt,
+            )
+
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertIn(
+                    b"new",
+                    (destination / folder / "SKILL.md").read_bytes(),
+                )
+            self.assertEqual([], recovery_roots(destination))
+
+    def test_sticky_writable_ancestor_rejects_foreign_owned_next_child(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            sticky_ancestor = root / "sticky"
+            owned_child = sticky_ancestor / "owned"
+            destination = owned_child / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            sticky_ancestor.mkdir()
+            sticky_ancestor.chmod(0o1777)
+            owned_child.mkdir(mode=0o700)
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            child_identity = owned_child.stat()
+            unexpected_uid = os.geteuid() + 1
+            real_fstat = publish_local.os.fstat
+            before = snapshot(destination)
+
+            def foreign_owner(file_descriptor: int) -> os.stat_result:
+                observed = real_fstat(file_descriptor)
+                if (
+                    observed.st_dev == child_identity.st_dev
+                    and observed.st_ino == child_identity.st_ino
+                ):
+                    return stat_result_with_uid(observed, unexpected_uid)
+                return observed
+
+            with patch.object(
+                publish_local.os,
+                "fstat",
+                side_effect=foreign_owner,
+            ), patch.object(
+                publish_local,
+                "_ensure_destination_root",
+            ) as ensure_destination, self.assertRaisesRegex(
+                publish_local.PublishError,
+                "next child is not owned by the current effective user",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            ensure_destination.assert_not_called()
+            self.assertEqual(before, snapshot(destination))
+            self.assertFalse(
+                (destination / publish_local.TRANSACTION_LOCK_NAME).exists()
+            )
+            self.assertEqual([], recovery_roots(destination))
+
+    def test_destination_permission_drift_during_publication_is_rejected(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            before = {
+                folder: snapshot(destination / folder)
+                for folder in release_state.SKILL_FOLDERS
+            }
+            original_mode = stat.S_IMODE(destination.stat().st_mode)
+            real_swap = publish_local._swap_all
+
+            def swap_after_permission_drift(*args: object, **kwargs: object):
+                destination.chmod(0o770)
+                try:
+                    return real_swap(*args, **kwargs)
+                finally:
+                    destination.chmod(original_mode)
+
+            with patch.object(
+                publish_local,
+                "_swap_all",
+                side_effect=swap_after_permission_drift,
+            ), self.assertRaisesRegex(
+                publish_local.PublishError,
+                "destination root must not be group/other writable",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertEqual(
+                before,
+                {
+                    folder: snapshot(destination / folder)
+                    for folder in release_state.SKILL_FOLDERS
+                },
+            )
+            self.assertEqual(1, len(recovery_roots(destination)))
+
+    def test_destination_ownership_drift_during_publication_is_rejected(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            destination_identity = destination.stat()
+            unexpected_uid = os.geteuid() + 1
+            real_fstat = publish_local.os.fstat
+            real_swap = publish_local._swap_all
+            ownership_drifted = False
+            before = {
+                folder: snapshot(destination / folder)
+                for folder in release_state.SKILL_FOLDERS
+            }
+
+            def drifted_fstat(file_descriptor: int) -> os.stat_result:
+                observed = real_fstat(file_descriptor)
+                if (
+                    ownership_drifted
+                    and observed.st_dev == destination_identity.st_dev
+                    and observed.st_ino == destination_identity.st_ino
+                ):
+                    return stat_result_with_uid(observed, unexpected_uid)
+                return observed
+
+            def swap_after_ownership_drift(*args: object, **kwargs: object):
+                nonlocal ownership_drifted
+                ownership_drifted = True
+                try:
+                    return real_swap(*args, **kwargs)
+                finally:
+                    ownership_drifted = False
+
+            with patch.object(
+                publish_local.os,
+                "fstat",
+                side_effect=drifted_fstat,
+            ), patch.object(
+                publish_local,
+                "_swap_all",
+                side_effect=swap_after_ownership_drift,
+            ), self.assertRaisesRegex(
+                publish_local.PublishError,
+                "destination root must be owned by the current effective user",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertEqual(
+                before,
+                {
+                    folder: snapshot(destination / folder)
+                    for folder in release_state.SKILL_FOLDERS
+                },
+            )
+            self.assertEqual(1, len(recovery_roots(destination)))
 
     def test_destination_inside_source_is_rejected_without_side_effects(self) -> None:
         with TemporaryDirectory(prefix="publish-test-") as temporary:
@@ -261,6 +586,100 @@ class PublishTransactionTests(unittest.TestCase):
             stage_all.assert_not_called()
             self.assertFalse(destination.exists())
             self.assertFalse(destination.parent.exists())
+
+    def test_linked_worktree_git_metadata_destinations_are_rejected_before_creation(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            repository = root / "linked-worktree"
+            common_git_directory = root / "common.git"
+            worktree_git_directory = (
+                common_git_directory / "worktrees" / "linked"
+            )
+            generated = root / "generated"
+            repository.mkdir()
+            worktree_git_directory.mkdir(parents=True)
+            (common_git_directory / "refs").mkdir()
+            (repository / ".git").write_text(
+                f"gitdir: {worktree_git_directory}\n",
+                encoding="utf-8",
+            )
+            (worktree_git_directory / "commondir").write_text(
+                "../..\n",
+                encoding="utf-8",
+            )
+            write_skill_tree(generated, "source")
+            destinations = (
+                worktree_git_directory / "codex-skills",
+                common_git_directory / "refs" / "codex-skills",
+            )
+
+            for destination in destinations:
+                with self.subTest(destination=destination), patch.object(
+                    publish_local,
+                    "REPO_ROOT",
+                    repository,
+                ), patch.object(
+                    publish_local,
+                    "_ensure_destination_root",
+                ) as ensure_destination, self.assertRaisesRegex(
+                    publish_local.PublishError,
+                    "must be outside Git metadata directories",
+                ):
+                    publish_local.publish_skills(
+                        source_root=generated,
+                        dest_root=destination,
+                        receipt_path=root / "missing.json",
+                    )
+
+                ensure_destination.assert_not_called()
+                self.assertFalse(destination.exists())
+
+    def test_destination_containing_linked_worktree_metadata_is_rejected(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            repository = root / "linked-worktree"
+            destination = root / "skills"
+            common_git_directory = destination / "common.git"
+            worktree_git_directory = (
+                common_git_directory / "worktrees" / "linked"
+            )
+            generated = root / "generated"
+            repository.mkdir()
+            worktree_git_directory.mkdir(parents=True)
+            (repository / ".git").write_text(
+                f"gitdir: {worktree_git_directory}\n",
+                encoding="utf-8",
+            )
+            (worktree_git_directory / "commondir").write_text(
+                "../..\n",
+                encoding="utf-8",
+            )
+            write_skill_tree(generated, "source")
+
+            with patch.object(
+                publish_local,
+                "REPO_ROOT",
+                repository,
+            ), patch.object(
+                publish_local,
+                "_ensure_destination_root",
+            ) as ensure_destination, self.assertRaisesRegex(
+                publish_local.PublishError,
+                "must not contain them",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=root / "missing.json",
+                )
+
+            ensure_destination.assert_not_called()
+            self.assertTrue(worktree_git_directory.is_dir())
+            self.assertTrue((worktree_git_directory / "commondir").is_file())
 
     def test_case_insensitive_source_alias_with_absent_leaf_is_rejected(
         self,

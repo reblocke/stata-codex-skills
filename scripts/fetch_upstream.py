@@ -33,11 +33,14 @@ UPSTREAM_ROOTS = {
 CANDIDATE_REPORT = RAW_ROOT / "candidates" / "upstream-comparison.yaml"
 UPSTREAM_LOCK_PATH = LOCK_ROOT / "upstream.yaml"
 COMMIT_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 LOCAL_GIT_TIMEOUT_SECONDS = 30
 NETWORK_GIT_TIMEOUT_SECONDS = 120
+POST_KILL_REAP_TIMEOUT_SECONDS = 5
 UPSTREAM_CHECKOUT_RELATIVE = Path("upstream") / "stata-skill"
 CHECKOUT_OWNER_MARKER = "stata-codex-skills-owner"
 CHECKOUT_OWNER_CONTENT = "stata-codex-skills upstream checkout v1\n"
+CHECKOUT_OWNER_BYTES = CHECKOUT_OWNER_CONTENT.encode("utf-8")
 REPORT_OWNER = "stata-codex-skills upstream comparison v1"
 MAX_REPORT_BYTES = 4 * 1024 * 1024
 DIRECTORY_OPEN_FLAGS = (
@@ -78,6 +81,12 @@ class TemporaryFileState:
     link_count: int
     size: int
     sha256: str
+
+
+@dataclass(frozen=True)
+class PreservedReport:
+    path: Path
+    state: TemporaryFileState
 
 
 def absolute_without_resolving(path: Path) -> Path:
@@ -247,6 +256,221 @@ def read_bounded_regular_file(
         os.close(file_descriptor)
 
 
+def assert_safe_git_directory_tree(
+    parent_fd: int,
+    directory_name: str,
+    *,
+    expected_device: int,
+    display_path: str | None = None,
+    allow_hardlinked_files: bool = False,
+) -> None:
+    """Reject redirecting or special entries below a Git write namespace."""
+
+    display_path = display_path or directory_name
+    try:
+        named_metadata = os.stat(
+            directory_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return
+    except OSError as error:
+        raise RuntimeError(
+            f"Could not inspect raw upstream Git {display_path}"
+        ) from error
+    if (
+        not stat.S_ISDIR(named_metadata.st_mode)
+        or named_metadata.st_dev != expected_device
+    ):
+        raise RuntimeError(
+            f"Raw upstream Git {display_path} must be a local, real directory"
+        )
+    try:
+        directory_fd = os.open(
+            directory_name,
+            DIRECTORY_OPEN_FLAGS,
+            dir_fd=parent_fd,
+        )
+    except OSError as error:
+        raise RuntimeError(
+            f"Raw upstream Git {display_path} must be a local, real directory"
+        ) from error
+    try:
+        opened_metadata = os.fstat(directory_fd)
+        if (
+            opened_metadata.st_dev,
+            opened_metadata.st_ino,
+        ) != (
+            named_metadata.st_dev,
+            named_metadata.st_ino,
+        ):
+            raise RuntimeError(
+                f"Raw upstream Git {display_path} changed during safety inspection"
+            )
+        try:
+            entry_names = sorted(os.listdir(directory_fd))
+        except OSError as error:
+            raise RuntimeError(
+                f"Could not inspect raw upstream Git {display_path}"
+            ) from error
+        for entry_name in entry_names:
+            relative_name = f"{display_path}/{entry_name}"
+            try:
+                entry_metadata = os.stat(
+                    entry_name,
+                    dir_fd=directory_fd,
+                    follow_symlinks=False,
+                )
+            except OSError as error:
+                raise RuntimeError(
+                    f"Raw upstream Git {relative_name} changed during safety inspection"
+                ) from error
+            if stat.S_ISREG(entry_metadata.st_mode):
+                if (
+                    entry_metadata.st_dev != expected_device
+                    or (
+                        not allow_hardlinked_files
+                        and entry_metadata.st_nlink != 1
+                    )
+                ):
+                    raise RuntimeError(
+                        f"Raw upstream Git {relative_name} must be a same-device, "
+                        "single-link regular file"
+                    )
+                try:
+                    entry_fd = os.open(
+                        entry_name,
+                        os.O_RDONLY
+                        | getattr(os, "O_NOFOLLOW", 0)
+                        | getattr(os, "O_NONBLOCK", 0),
+                        dir_fd=directory_fd,
+                    )
+                except OSError as error:
+                    raise RuntimeError(
+                        f"Raw upstream Git {relative_name} changed during "
+                        "safety inspection"
+                    ) from error
+                try:
+                    opened_entry = os.fstat(entry_fd)
+                finally:
+                    os.close(entry_fd)
+                if (
+                    opened_entry.st_dev,
+                    opened_entry.st_ino,
+                    stat.S_IFMT(opened_entry.st_mode),
+                ) != (
+                    entry_metadata.st_dev,
+                    entry_metadata.st_ino,
+                    stat.S_IFMT(entry_metadata.st_mode),
+                ):
+                    raise RuntimeError(
+                        f"Raw upstream Git {relative_name} changed during "
+                        "safety inspection"
+                    )
+                try:
+                    final_entry = os.stat(
+                        entry_name,
+                        dir_fd=directory_fd,
+                        follow_symlinks=False,
+                    )
+                except OSError as error:
+                    raise RuntimeError(
+                        f"Raw upstream Git {relative_name} changed during "
+                        "safety inspection"
+                    ) from error
+                if (
+                    final_entry.st_dev,
+                    final_entry.st_ino,
+                    stat.S_IFMT(final_entry.st_mode),
+                ) != (
+                    entry_metadata.st_dev,
+                    entry_metadata.st_ino,
+                    stat.S_IFMT(entry_metadata.st_mode),
+                ):
+                    raise RuntimeError(
+                        f"Raw upstream Git {relative_name} changed during "
+                        "safety inspection"
+                    )
+                continue
+            if stat.S_ISDIR(entry_metadata.st_mode):
+                assert_safe_git_directory_tree(
+                    directory_fd,
+                    entry_name,
+                    expected_device=expected_device,
+                    display_path=relative_name,
+                    allow_hardlinked_files=(
+                        allow_hardlinked_files
+                        or (
+                            display_path == ".git"
+                            and entry_name == "objects"
+                        )
+                    ),
+                )
+                try:
+                    final_entry = os.stat(
+                        entry_name,
+                        dir_fd=directory_fd,
+                        follow_symlinks=False,
+                    )
+                except OSError as error:
+                    raise RuntimeError(
+                        f"Raw upstream Git {relative_name} changed during safety inspection"
+                    ) from error
+                if (
+                    final_entry.st_dev,
+                    final_entry.st_ino,
+                    stat.S_IFMT(final_entry.st_mode),
+                ) != (
+                    entry_metadata.st_dev,
+                    entry_metadata.st_ino,
+                    stat.S_IFMT(entry_metadata.st_mode),
+                ):
+                    raise RuntimeError(
+                        f"Raw upstream Git {relative_name} changed during safety inspection"
+                    )
+                continue
+            raise RuntimeError(
+                f"Raw upstream Git {relative_name} must be a regular file "
+                "or a local, real directory"
+            )
+        final_opened = os.fstat(directory_fd)
+        if (
+            final_opened.st_dev,
+            final_opened.st_ino,
+        ) != (
+            opened_metadata.st_dev,
+            opened_metadata.st_ino,
+        ):
+            raise RuntimeError(
+                f"Raw upstream Git {display_path} changed during safety inspection"
+            )
+    finally:
+        os.close(directory_fd)
+    try:
+        final_named = os.stat(
+            directory_name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+    except OSError as error:
+        raise RuntimeError(
+            f"Raw upstream Git {display_path} changed during safety inspection"
+        ) from error
+    if (
+        final_named.st_dev,
+        final_named.st_ino,
+        stat.S_IFMT(final_named.st_mode),
+    ) != (
+        named_metadata.st_dev,
+        named_metadata.st_ino,
+        stat.S_IFMT(named_metadata.st_mode),
+    ):
+        raise RuntimeError(
+            f"Raw upstream Git {display_path} changed during safety inspection"
+        )
+
+
 def assert_dedicated_git_layout(context: GitMetadataContext) -> None:
     for prohibited_name, error_message in (
         (
@@ -268,23 +492,36 @@ def assert_dedicated_git_layout(context: GitMetadataContext) -> None:
             continue
         raise RuntimeError(error_message)
 
-    directory_fds: dict[str, int] = {}
-    try:
-        for name in ("objects", "refs"):
-            try:
-                directory_fds[name] = os.open(
-                    name,
-                    DIRECTORY_OPEN_FLAGS,
-                    dir_fd=context.git_dir_fd,
-                )
-            except FileNotFoundError:
-                continue
-            except OSError as error:
-                raise RuntimeError(
-                    f"Raw upstream Git {name} must be a real directory"
-                ) from error
+    checkout_device = os.fstat(context.checkout_fd).st_dev
+    git_device = os.fstat(context.git_dir_fd).st_dev
+    if git_device != checkout_device:
+        raise RuntimeError(
+            "Raw upstream .git metadata must be on the same device as the "
+            "dedicated checkout"
+        )
+    # This full check runs immediately before every Git launch. POSIX cannot
+    # prevent a deliberate same-UID replacement after the final boundary.
+    assert_safe_git_directory_tree(
+        context.checkout_fd,
+        ".git",
+        expected_device=checkout_device,
+        display_path=".git",
+    )
 
-        objects_fd = directory_fds.get("objects")
+    objects_fd: int | None = None
+    try:
+        try:
+            objects_fd = os.open(
+                "objects",
+                DIRECTORY_OPEN_FLAGS,
+                dir_fd=context.git_dir_fd,
+            )
+        except FileNotFoundError:
+            objects_fd = None
+        except OSError as error:
+            raise RuntimeError(
+                "Raw upstream Git objects must be a real directory"
+            ) from error
         if objects_fd is not None:
             try:
                 info_fd = os.open(
@@ -315,8 +552,8 @@ def assert_dedicated_git_layout(context: GitMetadataContext) -> None:
                 finally:
                     os.close(info_fd)
     finally:
-        for directory_fd in directory_fds.values():
-            os.close(directory_fd)
+        if objects_fd is not None:
+            os.close(objects_fd)
 
     config_payload = read_bounded_regular_file(
         context.git_dir_fd,
@@ -412,36 +649,27 @@ def verify_checkout_owner_marker(
     *,
     allow_missing: bool = False,
 ) -> bool:
-    marker_fd: int | None = None
     try:
-        marker_fd = os.open(
+        payload = read_bounded_regular_file(
+            context.git_dir_fd,
             CHECKOUT_OWNER_MARKER,
-            os.O_RDONLY
-            | getattr(os, "O_NOFOLLOW", 0)
-            | getattr(os, "O_NONBLOCK", 0),
-            dir_fd=context.git_dir_fd,
+            maximum_size=len(CHECKOUT_OWNER_BYTES),
+            label="Raw upstream checkout owner marker",
         )
-        metadata = os.fstat(marker_fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
-            raise RuntimeError("Raw upstream checkout owner marker is not a regular file")
-        with os.fdopen(marker_fd, "r", encoding="utf-8") as handle:
-            marker_fd = None
-            content = handle.read()
-        if content != CHECKOUT_OWNER_CONTENT:
+        if payload is None:
+            if allow_missing:
+                return False
+            raise RuntimeError(
+                "Existing raw upstream checkout is not owned by this repository"
+            )
+        if payload != CHECKOUT_OWNER_BYTES:
             raise RuntimeError("Raw upstream checkout owner marker is invalid")
-    except FileNotFoundError as error:
-        if allow_missing:
-            return False
-        raise RuntimeError(
-            "Existing raw upstream checkout is not owned by this repository"
-        ) from error
+    except RuntimeError:
+        raise
     except OSError as error:
         raise RuntimeError(
             "Could not verify ownership of the raw upstream checkout"
         ) from error
-    finally:
-        if marker_fd is not None:
-            os.close(marker_fd)
     return True
 
 
@@ -463,19 +691,10 @@ def exact_commit(value: str) -> str:
 def sanitized_git_environment() -> dict[str, str]:
     environment = os.environ.copy()
     for variable in tuple(environment):
-        if variable in {
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-            "GIT_COMMON_DIR",
-            "GIT_CONFIG",
-            "GIT_CONFIG_COUNT",
-            "GIT_CONFIG_GLOBAL",
-            "GIT_CONFIG_PARAMETERS",
-            "GIT_CONFIG_SYSTEM",
-            "GIT_DIR",
-            "GIT_INDEX_FILE",
-            "GIT_OBJECT_DIRECTORY",
-            "GIT_WORK_TREE",
-        } or variable.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
+        if variable.startswith("GIT_") or variable in {
+            "SSH_ASKPASS",
+            "SSH_ASKPASS_REQUIRE",
+        }:
             environment.pop(variable, None)
     environment.update(
         {
@@ -493,6 +712,111 @@ def terminate_process_group(process: subprocess.Popen) -> None:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
+
+
+def merge_process_output(
+    first: str | bytes | None,
+    second: str | bytes | None,
+    *,
+    binary: bool,
+) -> str | bytes:
+    empty: str | bytes = b"" if binary else ""
+
+    def normalize(value: str | bytes | None) -> str | bytes:
+        if value is None:
+            return empty
+        if binary:
+            return value if isinstance(value, bytes) else value.encode("utf-8")
+        return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
+
+    first_value = normalize(first)
+    second_value = normalize(second)
+    if not first_value:
+        return second_value
+    if not second_value:
+        return first_value
+    if second_value.startswith(first_value):
+        return second_value
+    if first_value.startswith(second_value):
+        return first_value
+    separator: str | bytes = b"\n" if binary else "\n"
+    return first_value + separator + second_value
+
+
+def bounded_communicate_after_kill(
+    process: subprocess.Popen,
+    initial_timeout: subprocess.TimeoutExpired | None,
+    *,
+    binary: bool,
+) -> tuple[str | bytes, str | bytes, str | bytes]:
+    """Collect diagnostics without waiting indefinitely on inherited pipes."""
+
+    initial_stdout = initial_timeout.output if initial_timeout is not None else None
+    initial_stderr = initial_timeout.stderr if initial_timeout is not None else None
+    note: str | bytes = b"" if binary else ""
+    try:
+        stdout, stderr = process.communicate(
+            timeout=POST_KILL_REAP_TIMEOUT_SECONDS
+        )
+        return (
+            merge_process_output(initial_stdout, stdout, binary=binary),
+            merge_process_output(initial_stderr, stderr, binary=binary),
+            note,
+        )
+    except subprocess.TimeoutExpired as error:
+        terminate_process_group(process)
+        stdout = merge_process_output(
+            initial_stdout,
+            error.output,
+            binary=binary,
+        )
+        stderr = merge_process_output(
+            initial_stderr,
+            error.stderr,
+            binary=binary,
+        )
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except (OSError, ValueError):
+                    pass
+        message = (
+            "Post-kill pipe closure timed out; closed local pipes and used a "
+            "bounded process reap."
+        )
+        note = message.encode("utf-8") if binary else message
+        try:
+            process.wait(timeout=POST_KILL_REAP_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            terminate_process_group(process)
+            suffix = (
+                " Could not confirm process reap within the bounded cleanup window."
+            )
+            note = (
+                note + suffix.encode("utf-8")
+                if binary
+                else note + suffix
+            )
+        return stdout, stderr, note
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        for stream in (process.stdout, process.stderr):
+            if stream is not None:
+                try:
+                    stream.close()
+                except (OSError, ValueError):
+                    pass
+        try:
+            process.wait(timeout=POST_KILL_REAP_TIMEOUT_SECONDS)
+        except (OSError, subprocess.TimeoutExpired):
+            terminate_process_group(process)
+        message = f"Post-kill diagnostic collection failed: {error}"
+        note = message.encode("utf-8") if binary else message
+        return (
+            merge_process_output(initial_stdout, None, binary=binary),
+            merge_process_output(initial_stderr, None, binary=binary),
+            note,
+        )
 
 
 def run_anchored_git(
@@ -565,20 +889,36 @@ def run_anchored_git(
             stdout,
             stderr,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as timeout_error:
         terminate_process_group(process)
-        stdout, stderr = process.communicate()
+        stdout, stderr, cleanup_note = bounded_communicate_after_kill(
+            process,
+            timeout_error,
+            binary=False,
+        )
         timeout_message = f"Command timed out after {timeout_seconds} seconds."
         result = subprocess.CompletedProcess(
             command,
             124,
             stdout,
-            f"{stderr}\n{timeout_message}".strip(),
+            "\n".join(
+                part
+                for part in (
+                    str(stderr).strip(),
+                    timeout_message,
+                    str(cleanup_note).strip(),
+                )
+                if part
+            ),
         )
     except BaseException:
         terminate_process_group(process)
         try:
-            process.communicate()
+            bounded_communicate_after_kill(
+                process,
+                None,
+                binary=False,
+            )
         except BaseException:
             pass
         raise
@@ -656,9 +996,13 @@ def run_anchored_git_bytes(
             stdout,
             stderr,
         )
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as timeout_error:
         terminate_process_group(process)
-        stdout, stderr = process.communicate()
+        stdout, stderr, cleanup_note = bounded_communicate_after_kill(
+            process,
+            timeout_error,
+            binary=True,
+        )
         timeout_message = (
             f"Command timed out after {timeout_seconds} seconds.".encode("utf-8")
         )
@@ -666,12 +1010,20 @@ def run_anchored_git_bytes(
             command,
             124,
             stdout,
-            b"\n".join(part for part in (stderr, timeout_message) if part),
+            b"\n".join(
+                part
+                for part in (stderr, timeout_message, cleanup_note)
+                if part
+            ),
         )
     except BaseException:
         terminate_process_group(process)
         try:
-            process.communicate()
+            bounded_communicate_after_kill(
+                process,
+                None,
+                binary=True,
+            )
         except BaseException:
             pass
         raise
@@ -1008,8 +1360,86 @@ def inventory_by_path(inventory: dict) -> dict[str, str]:
     }
 
 
-def build_comparison_report(inventory: dict, upstream_ref: str) -> dict:
-    reviewed_lock = read_yaml(UPSTREAM_LOCK_PATH)
+def validate_reviewed_upstream_lock(reviewed_lock: object) -> dict:
+    if not isinstance(reviewed_lock, dict):
+        raise RuntimeError("Reviewed upstream lock must be a mapping")
+    if reviewed_lock.get("schema_version") != 1:
+        raise RuntimeError("Reviewed upstream lock schema_version must be 1")
+    reviewed_repository = reviewed_lock.get("repository")
+    if not isinstance(reviewed_repository, dict):
+        raise RuntimeError("Reviewed upstream lock repository must be a mapping")
+    if reviewed_repository.get("url") != UPSTREAM_REPO_URL:
+        raise RuntimeError(
+            "Reviewed upstream lock repository.url does not exactly match the "
+            "configured upstream repository"
+        )
+    commit = reviewed_repository.get("commit")
+    expected_commit = reviewed_repository.get("expected_commit")
+    for field, value in (
+        ("commit", commit),
+        ("expected_commit", expected_commit),
+    ):
+        if (
+            not isinstance(value, str)
+            or not COMMIT_PATTERN.fullmatch(value)
+            or value != value.lower()
+        ):
+            raise RuntimeError(
+                f"Reviewed upstream lock repository.{field} must be a lowercase "
+                "full Git SHA"
+            )
+    if expected_commit != commit:
+        raise RuntimeError(
+            "Reviewed upstream lock repository commit drift requires explicit review"
+        )
+    files = reviewed_lock.get("files")
+    if not isinstance(files, dict):
+        raise RuntimeError("Reviewed upstream lock files must be a mapping")
+    for file_path, metadata in files.items():
+        if (
+            not isinstance(file_path, str)
+            or not file_path
+            or Path(file_path).is_absolute()
+            or any(part in {"", ".", ".."} for part in Path(file_path).parts)
+        ):
+            raise RuntimeError(
+                "Reviewed upstream lock file paths must be safe relative paths"
+            )
+        if (
+            not isinstance(metadata, dict)
+            or not SHA256_PATTERN.fullmatch(str(metadata.get("sha256", "")))
+        ):
+            raise RuntimeError(
+                f"Reviewed upstream lock file {file_path!r} requires a SHA-256 hash"
+            )
+    return reviewed_lock
+
+
+def read_reviewed_upstream_lock() -> dict:
+    try:
+        reviewed_lock = read_yaml(UPSTREAM_LOCK_PATH)
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise RuntimeError(
+            f"Could not read reviewed upstream lock {UPSTREAM_LOCK_PATH}: {error}"
+        ) from error
+    return validate_reviewed_upstream_lock(reviewed_lock)
+
+
+def build_comparison_report(
+    inventory: dict,
+    upstream_ref: str,
+    *,
+    reviewed_lock: dict | None = None,
+) -> dict:
+    if inventory.get("repository") != UPSTREAM_REPO_URL:
+        raise RuntimeError(
+            "Candidate inventory repository does not exactly match the configured "
+            "upstream repository"
+        )
+    if reviewed_lock is None:
+        reviewed_lock = read_reviewed_upstream_lock()
+    else:
+        reviewed_lock = validate_reviewed_upstream_lock(reviewed_lock)
     reviewed_files = {
         path: metadata["sha256"]
         for path, metadata in reviewed_lock.get("files", {}).items()
@@ -1169,11 +1599,12 @@ def atomic_rename_at_no_replace(
         )
 
 
-def remove_stale_report(target: ReportTarget) -> None:
+def remove_stale_report(target: ReportTarget) -> PreservedReport | None:
     """Remove only a report whose ownership survives an atomic quarantine move."""
 
     report_descriptor: int | None = None
     quarantine_name: str | None = None
+    expected: TemporaryFileState | None = None
     try:
         assert_report_parent_identity(target)
         try:
@@ -1185,7 +1616,7 @@ def remove_stale_report(target: ReportTarget) -> None:
                 dir_fd=target.parent_fd,
             )
         except FileNotFoundError:
-            return
+            return None
         expected = temporary_file_state(
             report_descriptor,
             maximum_size=MAX_REPORT_BYTES,
@@ -1251,27 +1682,150 @@ def remove_stale_report(target: ReportTarget) -> None:
                     target.name,
                 )
             except FileNotFoundError:
-                pass
+                raise RuntimeError(
+                    "Existing comparison report changed during quarantine; "
+                    f"{describe_expected_report_location(target, expected)}"
+                ) from verification_error
             except FileExistsError as restore_error:
                 raise RuntimeError(
                     "Quarantined foreign comparison report could not be restored; "
-                    f"preserving it as {quarantine_name}"
+                    f"{describe_held_report_entry(target, quarantine_name, 'the quarantine entry')}; "
+                    f"{describe_expected_report_location(target, expected)}"
                 ) from restore_error
             raise RuntimeError(
-                "Existing comparison report changed during quarantine; preserving it"
+                "Existing comparison report changed during quarantine; "
+                f"{describe_held_report_entry(target, target.name, 'the restored quarantine entry')}; "
+                f"{describe_expected_report_location(target, expected)}"
             ) from verification_error
 
         # There is no portable descriptor-relative unlink-by-inode operation.
         # Keep the verified, uniquely named owned quarantine rather than
         # reintroducing a check-then-unlink substitution window.
         os.fsync(target.parent_fd)
+        return PreservedReport(
+            path=target.path.parent / quarantine_name,
+            state=expected,
+        )
     except OSError as error:
+        recovery = ""
+        if quarantine_name is not None and expected is not None:
+            recovery = (
+                "; "
+                + describe_preserved_report(
+                    target,
+                    PreservedReport(
+                        path=target.path.parent / quarantine_name,
+                        state=expected,
+                    ),
+                )
+            )
         raise RuntimeError(
-            f"Could not remove stale comparison report {target.path}: {error}"
+            f"Could not remove stale comparison report {target.path}: "
+            f"{error}{recovery}"
         ) from error
     finally:
         if report_descriptor is not None:
             os.close(report_descriptor)
+
+
+def report_parent_is_current(target: ReportTarget) -> bool:
+    try:
+        assert_report_parent_identity(target)
+    except RuntimeError:
+        return False
+    return True
+
+
+def describe_held_report_entry(
+    target: ReportTarget,
+    entry_name: str,
+    label: str,
+) -> str:
+    try:
+        metadata = os.stat(
+            entry_name,
+            dir_fd=target.parent_fd,
+            follow_symlinks=False,
+        )
+    except OSError:
+        return f"{label} has no verified surviving pathname"
+    if stat.S_ISREG(metadata.st_mode):
+        state = "an unverified regular-file state"
+    elif stat.S_ISDIR(metadata.st_mode):
+        state = "an unverified directory state"
+    elif stat.S_ISLNK(metadata.st_mode):
+        state = "an unverified symlink state"
+    else:
+        state = "an unverified special-entry state"
+    if report_parent_is_current(target):
+        return (
+            f"{label} survives at {target.path.parent / entry_name} with {state}"
+        )
+    return (
+        f"{label} survives under entry name {entry_name!r} in the descriptor-held "
+        f"displaced report directory with {state}; it has no verified current pathname "
+        f"(recorded former directory: {target.path.parent})"
+    )
+
+
+def describe_preserved_report(
+    target: ReportTarget,
+    preserved: PreservedReport,
+) -> str:
+    """Describe the exact last-known quarantine state without following links."""
+
+    if preserved.path.parent != target.path.parent:
+        return (
+            "the recorded comparison-report quarantine path is outside the "
+            f"dedicated report directory: {preserved.path}"
+        )
+    parent_is_current = report_parent_is_current(target)
+    try:
+        descriptor = os.open(
+            preserved.path.name,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=target.parent_fd,
+        )
+    except FileNotFoundError:
+        return (
+            "the previous comparison report no longer has its verified quarantine "
+            f"path {preserved.path}; a concurrent same-UID actor may have moved it"
+        )
+    except OSError:
+        return (
+            f"the quarantine path {preserved.path} now has an unsupported state; "
+            "a concurrent same-UID actor may have replaced it"
+        )
+    try:
+        observed = temporary_file_state(
+            descriptor,
+            maximum_size=MAX_REPORT_BYTES,
+        )
+    except (OSError, RuntimeError):
+        return (
+            f"the quarantine path {preserved.path} now has a different state; "
+            "a concurrent same-UID actor may have replaced it"
+        )
+    finally:
+        os.close(descriptor)
+    if observed == preserved.state:
+        if not parent_is_current:
+            return (
+                "the previous comparison report survives unchanged in the "
+                "descriptor-held report directory, but that directory no longer "
+                f"has the verified public path {preserved.path.parent}; a concurrent "
+                "same-UID actor may have displaced it"
+            )
+        return (
+            "the previous comparison report survives unchanged at "
+            f"{preserved.path}"
+        )
+    return (
+        f"the quarantine path {preserved.path} now has a different state; "
+        "a concurrent same-UID actor may have replaced it"
+    )
 
 
 def temporary_file_state(
@@ -1333,6 +1887,77 @@ def temporary_file_state(
     )
 
 
+def find_report_state_entry_name(
+    target: ReportTarget,
+    expected: TemporaryFileState,
+) -> str | None:
+    """Find the held-directory entry still naming an expected report."""
+
+    try:
+        entry_names = sorted(os.listdir(target.parent_fd))
+    except OSError:
+        return None
+    for entry_name in entry_names:
+        try:
+            descriptor = os.open(
+                entry_name,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=target.parent_fd,
+            )
+        except OSError:
+            continue
+        try:
+            try:
+                observed = temporary_file_state(
+                    descriptor,
+                    maximum_size=MAX_REPORT_BYTES,
+                )
+            except (OSError, RuntimeError):
+                continue
+        finally:
+            os.close(descriptor)
+        if observed == expected:
+            return entry_name
+    return None
+
+
+def find_report_state_path(
+    target: ReportTarget,
+    expected: TemporaryFileState,
+) -> Path | None:
+    if not report_parent_is_current(target):
+        return None
+    entry_name = find_report_state_entry_name(target, expected)
+    if entry_name is None:
+        return None
+    return target.path.parent / entry_name
+
+
+def describe_expected_report_location(
+    target: ReportTarget,
+    expected: TemporaryFileState,
+) -> str:
+    entry_name = find_report_state_entry_name(target, expected)
+    if entry_name is None:
+        return (
+            "the originally opened report has no verified surviving pathname "
+            "after a concurrent same-UID mutation"
+        )
+    if report_parent_is_current(target):
+        return (
+            "the originally opened report survives unchanged at "
+            f"{target.path.parent / entry_name}"
+        )
+    return (
+        "the originally opened report survives unchanged under entry name "
+        f"{entry_name!r} in the descriptor-held displaced report directory; "
+        "it has no verified current pathname "
+        f"(recorded former directory: {target.path.parent})"
+    )
+
+
 def verify_owned_temporary_entry(
     target: ReportTarget,
     entry_name: str,
@@ -1368,10 +1993,84 @@ def verify_owned_temporary_entry(
         )
 
 
+def describe_candidate_survival(
+    target: ReportTarget,
+    entry_name: str,
+    owner_descriptor: int,
+    expected: TemporaryFileState | None,
+) -> str:
+    candidate_path = target.path.parent / entry_name
+    try:
+        assert_report_parent_identity(target)
+        parent_is_current = True
+    except RuntimeError:
+        parent_is_current = False
+    if expected is None:
+        return (
+            f"candidate state could not be fully verified at {candidate_path}; "
+            "the entry was not removed"
+        )
+    try:
+        owner_state = temporary_file_state(
+            owner_descriptor,
+            maximum_size=expected.size,
+        )
+    except (OSError, RuntimeError):
+        return (
+            "the open generated candidate changed and has no verified surviving "
+            f"path; the recorded path was {candidate_path}"
+        )
+    try:
+        observed_descriptor = os.open(
+            entry_name,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=target.parent_fd,
+        )
+    except FileNotFoundError:
+        return (
+            "the generated candidate has no verified surviving path; "
+            f"{candidate_path} disappeared after a concurrent same-UID mutation"
+        )
+    except OSError:
+        return (
+            f"{candidate_path} now has an unsupported state; the generated "
+            "candidate has no verified surviving path after a concurrent "
+            "same-UID mutation"
+        )
+    try:
+        observed_state = temporary_file_state(
+            observed_descriptor,
+            maximum_size=expected.size,
+        )
+    except (OSError, RuntimeError):
+        return (
+            f"{candidate_path} now has a different state; the generated candidate "
+            "has no verified surviving path after a concurrent same-UID mutation"
+        )
+    finally:
+        os.close(observed_descriptor)
+    if owner_state == expected and observed_state == expected:
+        if not parent_is_current:
+            return (
+                "generated candidate survives unchanged in the descriptor-held "
+                "report directory, but that directory no longer has the verified "
+                f"public path {candidate_path.parent}; a concurrent same-UID actor "
+                "may have displaced it"
+            )
+        return f"generated candidate survives unchanged at {candidate_path}"
+    return (
+        f"{candidate_path} now has a different state; the generated candidate "
+        "has no verified surviving path after a concurrent same-UID mutation"
+    )
+
+
 def write_report_atomically(target: ReportTarget, report: dict) -> None:
     """Expose the candidate report only after its complete YAML is on disk."""
 
     temporary_name: str | None = None
+    surviving_name: str | None = None
     file_descriptor: int | None = None
     expected_state: TemporaryFileState | None = None
     try:
@@ -1389,6 +2088,7 @@ def write_report_atomically(target: ReportTarget, report: dict) -> None:
                     dir_fd=target.parent_fd,
                 )
                 temporary_name = candidate
+                surviving_name = candidate
                 expected_state = temporary_file_state(file_descriptor)
                 break
             except FileExistsError:
@@ -1420,20 +2120,31 @@ def write_report_atomically(target: ReportTarget, report: dict) -> None:
             target.parent_fd,
             target.name,
         )
+        temporary_name = None
+        surviving_name = target.name
         verify_owned_temporary_entry(
             target,
             target.name,
             file_descriptor,
             expected_state,
         )
-        temporary_name = None
         os.fsync(target.parent_fd)
+        surviving_name = None
     except Exception as error:
-        preserved = (
-            f"; preserved failed candidate as {temporary_name}"
-            if temporary_name is not None
-            else ""
-        )
+        preserved = ""
+        if (
+            surviving_name is not None
+            and file_descriptor is not None
+        ):
+            preserved = (
+                "; "
+                + describe_candidate_survival(
+                    target,
+                    surviving_name,
+                    file_descriptor,
+                    expected_state,
+                )
+            )
         raise RuntimeError(
             f"Could not write comparison report {target.path}: {error}{preserved}"
         ) from error
@@ -1458,18 +2169,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--report", type=Path, default=CANDIDATE_REPORT)
     args = parser.parse_args(argv)
     target: ReportTarget | None = None
+    reviewed_lock: dict | None = None
+    preserved_report: PreservedReport | None = None
     try:
         report_path = validate_report_path(args.report)
+        reviewed_lock = read_reviewed_upstream_lock()
         target = open_report_target(report_path)
-        remove_stale_report(target)
+        preserved_report = remove_stale_report(target)
         refresh_upstream_repo(args.upstream_ref, offline=args.offline)
         inventory = build_inventory()
         if inventory["commit"] != args.upstream_ref:
             raise RuntimeError("Candidate inventory does not match the requested commit")
-        report = build_comparison_report(inventory, args.upstream_ref)
+        report = build_comparison_report(
+            inventory,
+            args.upstream_ref,
+            reviewed_lock=reviewed_lock,
+        )
         write_report_atomically(target, report)
     except RuntimeError as error:
         print(f"ERROR: {error}")
+        if target is not None and preserved_report is not None:
+            print(
+                "RECOVERY: "
+                f"{describe_preserved_report(target, preserved_report)}"
+            )
         return 1
     finally:
         if target is not None:

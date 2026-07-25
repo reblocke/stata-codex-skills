@@ -1,8 +1,10 @@
 from __future__ import annotations
 
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 import io
 from pathlib import Path
+import shutil
+import subprocess
 from tempfile import TemporaryDirectory
 import sys
 import unittest
@@ -13,6 +15,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import validate_skill_pack  # noqa: E402
+import release_state  # noqa: E402
 
 
 class ValidationReceiptCliTests(unittest.TestCase):
@@ -166,6 +169,147 @@ class ValidationReceiptCliTests(unittest.TestCase):
 
         self.assertEqual(1, result)
         self.assertFalse(receipt.exists())
+
+    def test_cleanup_failure_prevents_receipt_and_reports_workdir(self) -> None:
+        with TemporaryDirectory(prefix="validation-receipt-") as temp_root:
+            build_root = Path(temp_root) / "build" / "generated"
+            receipt = build_root.parent / "validation-receipt.json"
+            work_root = Path(temp_root) / "validation-work"
+            work_root.mkdir()
+            contexts = self.default_patches()
+            output = io.StringIO()
+            with contexts[0], contexts[1], contexts[2], contexts[3], contexts[4], patch.object(
+                validate_skill_pack,
+                "validation_state",
+                return_value={
+                    "source_sha256": "source",
+                    "tree_sha256": "tree",
+                },
+            ), patch.object(
+                validate_skill_pack,
+                "write_validation_receipt",
+            ) as write_receipt, patch.object(
+                validate_skill_pack,
+                "BUILD_ROOT",
+                build_root,
+            ), patch.object(
+                validate_skill_pack.tempfile,
+                "mkdtemp",
+                return_value=str(work_root),
+            ), patch.object(
+                validate_skill_pack.shutil,
+                "rmtree",
+                side_effect=OSError("forced cleanup failure"),
+            ), redirect_stdout(output):
+                result = validate_skill_pack.main(
+                    [
+                        "--suite",
+                        "default",
+                        "--write-receipt",
+                    ]
+                )
+
+        self.assertEqual(1, result)
+        self.assertFalse(receipt.exists())
+        write_receipt.assert_not_called()
+        self.assertIn("validation workspace cleanup: FAIL", output.getvalue())
+        self.assertIn(
+            "validation workdir cleanup failed; inspect the preserved path",
+            output.getvalue(),
+        )
+        self.assertIn(str(work_root), output.getvalue())
+
+    def test_make_validate_invalidates_receipt_before_failed_check(self) -> None:
+        with TemporaryDirectory(prefix="validation-make-") as temp_root:
+            root = Path(temp_root)
+            shutil.copyfile(REPO_ROOT / "Makefile", root / "Makefile")
+            (root / ".gitignore").write_text("build/\n", encoding="utf-8")
+            subprocess.run(
+                ["git", "init"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            subprocess.run(
+                ["git", "add", ".gitignore", "Makefile"],
+                cwd=root,
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            build_root = root / "build" / "generated"
+            for folder in release_state.SKILL_FOLDERS:
+                skill_root = build_root / folder
+                (skill_root / "agents").mkdir(parents=True)
+                (skill_root / "SKILL.md").write_text(
+                    f"# {folder}\n",
+                    encoding="utf-8",
+                )
+                (skill_root / "PROVENANCE.md").write_text(
+                    "# Provenance\n",
+                    encoding="utf-8",
+                )
+                (skill_root / "agents" / "openai.yaml").write_text(
+                    f"display_name: {folder}\n",
+                    encoding="utf-8",
+                )
+            receipt = build_root.parent / "validation-receipt.json"
+            release_state.write_validation_receipt(
+                build_root=build_root,
+                receipt_path=receipt,
+                repo_root=root,
+            )
+            self.assertTrue(receipt.is_file())
+
+            result = subprocess.run(
+                [
+                    "make",
+                    "validate",
+                    "UV=false",
+                ],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertFalse(receipt.exists())
+            self.assertIn("false lock --check --offline", result.stdout)
+
+    def test_make_validate_refuses_symlinked_build_before_invalidation(self) -> None:
+        with TemporaryDirectory(prefix="validation-make-symlink-") as temp_root:
+            root = Path(temp_root) / "repository"
+            root.mkdir()
+            shutil.copyfile(REPO_ROOT / "Makefile", root / "Makefile")
+            external_build = Path(temp_root) / "external-build"
+            external_build.mkdir()
+            protected = external_build / "validation-receipt.json"
+            protected.write_text("protected receipt\n", encoding="utf-8")
+            (root / "build").symlink_to(
+                external_build,
+                target_is_directory=True,
+            )
+
+            result = subprocess.run(
+                ["make", "validate", "UV=false"],
+                cwd=root,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+
+            self.assertNotEqual(0, result.returncode)
+            self.assertIn("build must not be a symlink", result.stdout)
+            self.assertEqual(
+                "protected receipt\n",
+                protected.read_text(encoding="utf-8"),
+            )
 
     def test_receipt_cli_override_cannot_target_repository_files(self) -> None:
         readme = REPO_ROOT / "README.md"

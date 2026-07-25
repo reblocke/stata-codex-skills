@@ -15,6 +15,7 @@ from libskillpack import (
     MANIFEST_ROOT,
     PROMPT_CASES_PATH,
     REPO_ROOT,
+    UPSTREAM_REPO_URL,
     iter_content_entries,
     load_skill_config,
     read_text,
@@ -608,8 +609,11 @@ def lint_upstream_lock(entries: list[tuple[str, Path, dict]]) -> list[str]:
         errors.append(
             f"{path}: repository commit drift requires explicit lock review"
         )
-    if not str(repository.get("url", "")).startswith("https://"):
-        errors.append(f"{path}: repository.url must use HTTPS")
+    if repository.get("url") != UPSTREAM_REPO_URL:
+        errors.append(
+            f"{path}: repository.url must exactly match the configured upstream "
+            f"repository {UPSTREAM_REPO_URL}"
+        )
     files = lock.get("files")
     if not isinstance(files, dict):
         return [*errors, f"{path}: files must be a mapping"]

@@ -5,6 +5,7 @@ from pathlib import Path
 from subprocess import CompletedProcess
 from tempfile import TemporaryDirectory
 import os
+import shlex
 import subprocess
 import sys
 import unittest
@@ -134,12 +135,20 @@ class PinnedRefreshTests(unittest.TestCase):
 
     def test_git_environment_ignores_global_and_system_configuration(self) -> None:
         injected = {
+            "GIT_ASKPASS": "/tmp/foreign-askpass",
             "GIT_CONFIG_COUNT": "1",
+            "GIT_EXEC_PATH": "/tmp/foreign-git-exec-path",
             "GIT_CONFIG_GLOBAL": "/tmp/foreign-global-config",
             "GIT_CONFIG_KEY_0": "include.path",
             "GIT_CONFIG_PARAMETERS": "'core.hooksPath=/tmp/foreign-hooks'",
             "GIT_CONFIG_SYSTEM": "/tmp/foreign-system-config",
             "GIT_CONFIG_VALUE_0": "/tmp/foreign-include",
+            "GIT_PROXY_COMMAND": "/tmp/foreign-proxy",
+            "GIT_SSH": "/tmp/foreign-ssh",
+            "GIT_SSH_COMMAND": "/tmp/foreign-ssh-command",
+            "GIT_TEMPLATE_DIR": "/tmp/foreign-template",
+            "SSH_ASKPASS": "/tmp/foreign-ssh-askpass",
+            "SSH_ASKPASS_REQUIRE": "force",
         }
         with patch.dict(fetch_upstream.os.environ, injected, clear=False):
             environment = fetch_upstream.sanitized_git_environment()
@@ -148,11 +157,19 @@ class PinnedRefreshTests(unittest.TestCase):
         self.assertEqual("1", environment["GIT_CONFIG_NOSYSTEM"])
         self.assertEqual("0", environment["GIT_TERMINAL_PROMPT"])
         for variable in (
+            "GIT_ASKPASS",
             "GIT_CONFIG_COUNT",
+            "GIT_EXEC_PATH",
             "GIT_CONFIG_KEY_0",
             "GIT_CONFIG_PARAMETERS",
             "GIT_CONFIG_SYSTEM",
             "GIT_CONFIG_VALUE_0",
+            "GIT_PROXY_COMMAND",
+            "GIT_SSH",
+            "GIT_SSH_COMMAND",
+            "GIT_TEMPLATE_DIR",
+            "SSH_ASKPASS",
+            "SSH_ASKPASS_REQUIRE",
         ):
             self.assertNotIn(variable, environment)
 
@@ -186,6 +203,109 @@ class PinnedRefreshTests(unittest.TestCase):
         self.assertIn("timed out", result.stderr.lower())
         terminate.assert_called_once_with(process)
         self.assertTrue(mocked_popen.call_args.kwargs["start_new_session"])
+
+    def test_timeout_does_not_block_on_stuck_text_pipes_after_kill(self) -> None:
+        with TemporaryDirectory(prefix="pinned-stuck-text-pipes-") as temp_root:
+            root = Path(temp_root)
+            checkout_fd = os.open(root, fetch_upstream.DIRECTORY_OPEN_FLAGS)
+            process = Mock(pid=12345, returncode=-9)
+            process.stdout = Mock()
+            process.stderr = Mock()
+            process.communicate.side_effect = [
+                subprocess.TimeoutExpired(
+                    ["git"],
+                    1,
+                    output="partial stdout",
+                    stderr="partial stderr",
+                ),
+                subprocess.TimeoutExpired(
+                    ["git"],
+                    fetch_upstream.POST_KILL_REAP_TIMEOUT_SECONDS,
+                    output="post-kill stdout",
+                    stderr="post-kill stderr",
+                ),
+            ]
+            process.wait.return_value = -9
+            try:
+                with patch.object(
+                    fetch_upstream.subprocess,
+                    "Popen",
+                    return_value=process,
+                ), patch.object(
+                    fetch_upstream,
+                    "terminate_process_group",
+                ) as terminate:
+                    result = fetch_upstream.run_anchored_git(
+                        ["git", "status"],
+                        checkout_fd,
+                        timeout_seconds=1,
+                    )
+            finally:
+                os.close(checkout_fd)
+
+        self.assertEqual(124, result.returncode)
+        self.assertIn("partial stdout", result.stdout)
+        self.assertIn("post-kill pipe closure timed out", result.stderr.lower())
+        self.assertEqual(2, process.communicate.call_count)
+        process.stdout.close.assert_called_once()
+        process.stderr.close.assert_called_once()
+        process.wait.assert_called_once_with(
+            timeout=fetch_upstream.POST_KILL_REAP_TIMEOUT_SECONDS
+        )
+        self.assertGreaterEqual(terminate.call_count, 2)
+
+    def test_timeout_does_not_block_on_stuck_binary_pipes_after_kill(self) -> None:
+        with TemporaryDirectory(prefix="pinned-stuck-binary-pipes-") as temp_root:
+            root = Path(temp_root)
+            checkout_fd = os.open(root, fetch_upstream.DIRECTORY_OPEN_FLAGS)
+            process = Mock(pid=12345, returncode=-9)
+            process.stdout = Mock()
+            process.stderr = Mock()
+            process.communicate.side_effect = [
+                subprocess.TimeoutExpired(
+                    ["git"],
+                    1,
+                    output=b"partial stdout",
+                    stderr=b"partial stderr",
+                ),
+                subprocess.TimeoutExpired(
+                    ["git"],
+                    fetch_upstream.POST_KILL_REAP_TIMEOUT_SECONDS,
+                    output=b"post-kill stdout",
+                    stderr=b"post-kill stderr",
+                ),
+            ]
+            process.wait.return_value = -9
+            try:
+                with patch.object(
+                    fetch_upstream.subprocess,
+                    "Popen",
+                    return_value=process,
+                ), patch.object(
+                    fetch_upstream,
+                    "terminate_process_group",
+                ) as terminate:
+                    result = fetch_upstream.run_anchored_git_bytes(
+                        ["git", "status"],
+                        checkout_fd,
+                        timeout_seconds=1,
+                    )
+            finally:
+                os.close(checkout_fd)
+
+        self.assertEqual(124, result.returncode)
+        self.assertIn(b"partial stdout", result.stdout)
+        self.assertIn(
+            b"post-kill pipe closure timed out",
+            result.stderr.lower(),
+        )
+        self.assertEqual(2, process.communicate.call_count)
+        process.stdout.close.assert_called_once()
+        process.stderr.close.assert_called_once()
+        process.wait.assert_called_once_with(
+            timeout=fetch_upstream.POST_KILL_REAP_TIMEOUT_SECONDS
+        )
+        self.assertGreaterEqual(terminate.call_count, 2)
 
     def test_interrupt_terminates_and_reaps_text_git_process_group(self) -> None:
         with TemporaryDirectory(prefix="pinned-process-interrupt-") as temp_root:
@@ -476,6 +596,50 @@ class PinnedRefreshTests(unittest.TestCase):
             )
             self.assertFalse(report_path.exists())
 
+    def test_oversized_sparse_owner_marker_is_rejected_before_git_launch(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-owner-marker-size-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+            checkout.parent.mkdir(parents=True)
+            run_git(root, "clone", str(fixture.repository), str(checkout))
+            marker = checkout / ".git" / fetch_upstream.CHECKOUT_OWNER_MARKER
+            with marker.open("wb") as handle:
+                handle.truncate(1 << 40)
+            marker_size = marker.stat().st_size
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ), patch.object(
+                fetch_upstream.subprocess,
+                "Popen",
+            ) as mocked_popen:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            mocked_popen.assert_not_called()
+            self.assertEqual(marker_size, marker.stat().st_size)
+            self.assertFalse(report_path.exists())
+
     def test_wrong_origin_unmarked_checkout_is_not_adopted(self) -> None:
         with TemporaryDirectory(prefix="pinned-origin-adoption-") as temp_root:
             root = Path(temp_root)
@@ -489,6 +653,12 @@ class PinnedRefreshTests(unittest.TestCase):
             run_git(root, "clone", str(fixture.repository), str(checkout))
             original_head = run_git(checkout, "rev-parse", "HEAD").stdout.strip()
             fixture.write_first_lock(lock_path)
+            lock = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
+            lock["repository"]["url"] = "https://example.invalid/wrong-origin.git"
+            lock_path.write_text(
+                yaml.safe_dump(lock, sort_keys=False),
+                encoding="utf-8",
+            )
 
             with patch.multiple(
                 fetch_upstream,
@@ -517,6 +687,155 @@ class PinnedRefreshTests(unittest.TestCase):
                 (checkout / ".git" / fetch_upstream.CHECKOUT_OWNER_MARKER).exists()
             )
             self.assertFalse(report_path.exists())
+
+    def test_lock_repository_mismatch_is_rejected_before_git_or_quarantine(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-lock-repository-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+            lock = yaml.safe_load(lock_path.read_text(encoding="utf-8"))
+            lock["repository"]["url"] = "https://example.invalid/other.git"
+            lock_path.write_text(
+                yaml.safe_dump(lock, sort_keys=False),
+                encoding="utf-8",
+            )
+            report_path.parent.mkdir(parents=True)
+            report_bytes = (
+                "schema_version: 1\n"
+                "report_type: upstream-comparison\n"
+                f"report_owner: {fetch_upstream.REPORT_OWNER}\n"
+            ).encode("utf-8")
+            report_path.write_bytes(report_bytes)
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ), patch.object(
+                fetch_upstream.subprocess,
+                "Popen",
+            ) as mocked_popen, patch("builtins.print") as mocked_print:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            output = "\n".join(
+                str(call.args[0]) for call in mocked_print.call_args_list
+            )
+            self.assertEqual(1, exit_code)
+            mocked_popen.assert_not_called()
+            self.assertIn("repository.url", output)
+            self.assertIn("configured upstream repository", output)
+            self.assertEqual(report_bytes, report_path.read_bytes())
+            self.assertFalse(checkout.exists())
+
+    def test_malformed_matching_lock_is_rejected_before_git_or_quarantine(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-malformed-lock-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            lock_path.parent.mkdir()
+            lock_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "schema_version": 1,
+                        "repository": {
+                            "url": str(fixture.repository),
+                            "commit": fixture.first_commit,
+                            "expected_commit": fixture.first_commit,
+                        },
+                        "files": [],
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+            report_path.parent.mkdir(parents=True)
+            report_bytes = (
+                "schema_version: 1\n"
+                "report_type: upstream-comparison\n"
+                f"report_owner: {fetch_upstream.REPORT_OWNER}\n"
+            ).encode("utf-8")
+            report_path.write_bytes(report_bytes)
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ), patch.object(
+                fetch_upstream.subprocess,
+                "Popen",
+            ) as mocked_popen, patch("builtins.print") as mocked_print:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            output = "\n".join(
+                str(call.args[0]) for call in mocked_print.call_args_list
+            )
+            self.assertEqual(1, exit_code)
+            mocked_popen.assert_not_called()
+            self.assertIn("files must be a mapping", output)
+            self.assertEqual(report_bytes, report_path.read_bytes())
+            self.assertEqual([], list(report_path.parent.glob("*.stale")))
+            self.assertFalse(checkout.exists())
+
+    def test_comparison_report_rejects_inventory_repository_mismatch(self) -> None:
+        with TemporaryDirectory(prefix="pinned-inventory-repository-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+            inventory = {
+                "repository": "https://example.invalid/other.git",
+                "commit": fixture.first_commit,
+                "inventory": {
+                    "core": [],
+                    "packages": [],
+                    "plugins": [],
+                },
+            }
+
+            with patch.multiple(
+                fetch_upstream,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ), self.assertRaisesRegex(
+                RuntimeError,
+                "Candidate inventory repository does not exactly match",
+            ):
+                fetch_upstream.build_comparison_report(
+                    inventory,
+                    fixture.first_commit,
+                )
 
     def test_linked_worktree_checkout_is_rejected_without_mutation(self) -> None:
         with TemporaryDirectory(prefix="pinned-linked-worktree-") as temp_root:
@@ -721,6 +1040,301 @@ class PinnedRefreshTests(unittest.TestCase):
             )
             self.assertFalse(report_path.exists())
 
+    def test_nested_git_write_namespace_symlinks_are_rejected_before_git_launch(
+        self,
+    ) -> None:
+        namespace_paths = (
+            Path("objects") / "pack",
+            Path("refs") / "heads",
+            Path("logs") / "refs",
+        )
+        for relative_namespace in namespace_paths:
+            with self.subTest(namespace=relative_namespace), TemporaryDirectory(
+                prefix="pinned-nested-git-symlink-"
+            ) as temp_root:
+                root = Path(temp_root)
+                fixture = UpstreamFixture(root)
+                raw_root = root / "raw"
+                checkout = raw_root / "upstream" / "stata-skill"
+                report_path = (
+                    raw_root / "candidates" / "upstream-comparison.yaml"
+                )
+                lock_path = root / "locks" / "upstream.yaml"
+                external = root / "external-git-write-target"
+                external.mkdir()
+                sentinel = external / "sentinel.txt"
+                sentinel.write_text("preserve\n", encoding="utf-8")
+                fixture.write_first_lock(lock_path)
+                checkout.parent.mkdir(parents=True)
+                run_git(root, "clone", str(fixture.repository), str(checkout))
+                namespace = checkout / ".git" / relative_namespace
+                namespace.parent.mkdir(parents=True, exist_ok=True)
+                if namespace.exists():
+                    namespace.rename(namespace.with_name(f"{namespace.name}-owned"))
+                namespace.symlink_to(external, target_is_directory=True)
+                external_before = {
+                    path.name: path.read_bytes()
+                    for path in external.iterdir()
+                    if path.is_file()
+                }
+
+                with patch.multiple(
+                    fetch_upstream,
+                    REPO_ROOT=root,
+                    RAW_ROOT=raw_root,
+                    UPSTREAM_REPO_DIR=checkout,
+                    UPSTREAM_REPO_URL=str(fixture.repository),
+                    UPSTREAM_LOCK_PATH=lock_path,
+                ), patch.object(
+                    fetch_upstream.subprocess,
+                    "Popen",
+                ) as mocked_popen:
+                    exit_code = fetch_upstream.main(
+                        [
+                            "--upstream-ref",
+                            fixture.first_commit,
+                            "--offline",
+                            "--report",
+                            str(report_path),
+                        ]
+                    )
+
+                self.assertEqual(1, exit_code)
+                mocked_popen.assert_not_called()
+                self.assertEqual(
+                    external_before,
+                    {
+                        path.name: path.read_bytes()
+                        for path in external.iterdir()
+                        if path.is_file()
+                    },
+                )
+                self.assertEqual("preserve\n", sentinel.read_text(encoding="utf-8"))
+                self.assertFalse(report_path.exists())
+
+    def test_special_entry_in_git_write_namespace_is_rejected_before_git_launch(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-git-special-entry-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+            checkout.parent.mkdir(parents=True)
+            run_git(root, "clone", str(fixture.repository), str(checkout))
+            fifo = checkout / ".git" / "logs" / "refs" / "unsafe-fifo"
+            fifo.parent.mkdir(parents=True, exist_ok=True)
+            os.mkfifo(fifo)
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ), patch.object(
+                fetch_upstream.subprocess,
+                "Popen",
+            ) as mocked_popen:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            mocked_popen.assert_not_called()
+            self.assertFalse(report_path.exists())
+
+    def test_fetch_head_symlink_cannot_overwrite_external_bytes(self) -> None:
+        with TemporaryDirectory(prefix="pinned-fetch-head-symlink-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+            checkout.parent.mkdir(parents=True)
+            run_git(root, "clone", str(fixture.repository), str(checkout))
+            owner_marker = (
+                checkout / ".git" / fetch_upstream.CHECKOUT_OWNER_MARKER
+            )
+            owner_marker.write_text(
+                fetch_upstream.CHECKOUT_OWNER_CONTENT,
+                encoding="utf-8",
+            )
+            external = root / "external-fetch-head"
+            sentinel = b"external fetch sentinel\n"
+            external.write_bytes(sentinel)
+            fetch_head = checkout / ".git" / "FETCH_HEAD"
+            if fetch_head.exists():
+                fetch_head.rename(checkout / ".git" / "FETCH_HEAD-owned")
+            fetch_head.symlink_to(external)
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ), patch.object(
+                fetch_upstream.subprocess,
+                "Popen",
+            ) as mocked_popen:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            mocked_popen.assert_not_called()
+            self.assertEqual(sentinel, external.read_bytes())
+            self.assertTrue(fetch_head.is_symlink())
+            self.assertFalse(report_path.exists())
+
+    def test_git_log_hardlink_cannot_append_to_external_bytes(self) -> None:
+        with TemporaryDirectory(prefix="pinned-log-hardlink-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+            checkout.parent.mkdir(parents=True)
+            run_git(root, "clone", str(fixture.repository), str(checkout))
+            owner_marker = (
+                checkout / ".git" / fetch_upstream.CHECKOUT_OWNER_MARKER
+            )
+            owner_marker.write_text(
+                fetch_upstream.CHECKOUT_OWNER_CONTENT,
+                encoding="utf-8",
+            )
+            external = root / "external-log-head"
+            sentinel = b"external log sentinel\n"
+            external.write_bytes(sentinel)
+            log_head = checkout / ".git" / "logs" / "HEAD"
+            log_head.rename(log_head.with_name("HEAD-owned"))
+            os.link(external, log_head)
+            self.assertGreater(log_head.stat().st_nlink, 1)
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ), patch.object(
+                fetch_upstream.subprocess,
+                "Popen",
+            ) as mocked_popen:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            mocked_popen.assert_not_called()
+            self.assertEqual(sentinel, external.read_bytes())
+            self.assertFalse(report_path.exists())
+
+    def test_git_directory_must_share_the_checkout_device(self) -> None:
+        with TemporaryDirectory(prefix="pinned-git-device-") as temp_root:
+            checkout = Path(temp_root) / "checkout"
+            git_dir = checkout / ".git"
+            git_dir.mkdir(parents=True)
+            checkout_fd = os.open(checkout, fetch_upstream.DIRECTORY_OPEN_FLAGS)
+            git_dir_fd = os.open(git_dir, fetch_upstream.DIRECTORY_OPEN_FLAGS)
+            context = fetch_upstream.GitMetadataContext(
+                checkout_fd=checkout_fd,
+                git_dir_fd=git_dir_fd,
+            )
+            real_fstat = fetch_upstream.os.fstat
+
+            def cross_device_git_dir(file_descriptor: int) -> os.stat_result:
+                metadata = real_fstat(file_descriptor)
+                if file_descriptor != git_dir_fd:
+                    return metadata
+                fields = list(metadata)
+                fields[2] = metadata.st_dev + 1
+                return os.stat_result(fields)
+
+            try:
+                with patch.object(
+                    fetch_upstream.os,
+                    "fstat",
+                    side_effect=cross_device_git_dir,
+                ), self.assertRaisesRegex(
+                    RuntimeError,
+                    "same device as the dedicated checkout",
+                ):
+                    fetch_upstream.assert_dedicated_git_layout(context)
+            finally:
+                context.close()
+
+    def test_regular_git_pack_contents_remain_supported(self) -> None:
+        with TemporaryDirectory(prefix="pinned-safe-pack-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            run_git(fixture.repository, "gc")
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+            checkout.parent.mkdir(parents=True)
+            run_git(
+                root,
+                "clone",
+                "--no-local",
+                str(fixture.repository),
+                str(checkout),
+            )
+            self.assertTrue(
+                list((checkout / ".git" / "objects" / "pack").glob("*.pack"))
+            )
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ):
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(0, exit_code)
+            self.assertTrue(report_path.is_file())
+
     def test_extensions_worktree_config_is_rejected_before_git_launch(self) -> None:
         with TemporaryDirectory(prefix="pinned-worktree-config-ext-") as temp_root:
             root = Path(temp_root)
@@ -728,6 +1342,8 @@ class PinnedRefreshTests(unittest.TestCase):
             raw_root = root / "raw"
             checkout = raw_root / "upstream" / "stata-skill"
             report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
             checkout.parent.mkdir(parents=True)
             run_git(root, "clone", str(fixture.repository), str(checkout))
             run_git(
@@ -744,6 +1360,7 @@ class PinnedRefreshTests(unittest.TestCase):
                 RAW_ROOT=raw_root,
                 UPSTREAM_REPO_DIR=checkout,
                 UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
             ), patch.object(
                 fetch_upstream.subprocess,
                 "Popen",
@@ -770,6 +1387,8 @@ class PinnedRefreshTests(unittest.TestCase):
             raw_root = root / "raw"
             checkout = raw_root / "upstream" / "stata-skill"
             report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
             checkout.parent.mkdir(parents=True)
             run_git(root, "clone", str(fixture.repository), str(checkout))
             config_worktree = checkout / ".git" / "config.worktree"
@@ -782,6 +1401,7 @@ class PinnedRefreshTests(unittest.TestCase):
                 RAW_ROOT=raw_root,
                 UPSTREAM_REPO_DIR=checkout,
                 UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
             ), patch.object(
                 fetch_upstream.subprocess,
                 "Popen",
@@ -805,6 +1425,69 @@ class PinnedRefreshTests(unittest.TestCase):
             )
             self.assertFalse(report_path.exists())
 
+    def test_worktree_fsmonitor_bypass_is_rejected_without_execution(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-worktree-fsmonitor-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            marker = root / "fsmonitor-executed"
+            hook = root / "malicious-fsmonitor"
+            hook.write_text(
+                "#!/bin/sh\n"
+                f"/usr/bin/touch {shlex.quote(str(marker))}\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            hook.chmod(0o755)
+            fixture.write_first_lock(lock_path)
+            checkout.parent.mkdir(parents=True)
+            run_git(root, "clone", str(fixture.repository), str(checkout))
+            run_git(
+                checkout,
+                "config",
+                "extensions.worktreeConfig",
+                "true",
+            )
+            run_git(
+                checkout,
+                "config",
+                "--worktree",
+                "core.fsmonitor",
+                str(hook),
+            )
+            config_worktree = checkout / ".git" / "config.worktree"
+            config_before = config_worktree.read_bytes()
+            head_before = (checkout / ".git" / "HEAD").read_bytes()
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ):
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            self.assertFalse(marker.exists())
+            self.assertEqual(head_before, (checkout / ".git" / "HEAD").read_bytes())
+            self.assertEqual(config_before, config_worktree.read_bytes())
+            self.assertFalse(report_path.exists())
+
     def test_core_fsmonitor_cannot_execute_before_rejection(self) -> None:
         with TemporaryDirectory(prefix="pinned-fsmonitor-") as temp_root:
             root = Path(temp_root)
@@ -812,6 +1495,7 @@ class PinnedRefreshTests(unittest.TestCase):
             raw_root = root / "raw"
             checkout = raw_root / "upstream" / "stata-skill"
             report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
             marker = root / "fsmonitor-executed"
             hook = root / "malicious-fsmonitor"
             hook.write_text(
@@ -821,6 +1505,7 @@ class PinnedRefreshTests(unittest.TestCase):
                 encoding="utf-8",
             )
             hook.chmod(0o755)
+            fixture.write_first_lock(lock_path)
             checkout.parent.mkdir(parents=True)
             run_git(root, "clone", str(fixture.repository), str(checkout))
             run_git(checkout, "config", "core.fsmonitor", str(hook))
@@ -831,6 +1516,7 @@ class PinnedRefreshTests(unittest.TestCase):
                 RAW_ROOT=raw_root,
                 UPSTREAM_REPO_DIR=checkout,
                 UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
             ), patch.object(
                 fetch_upstream.subprocess,
                 "Popen",
@@ -1288,12 +1974,14 @@ class PinnedRefreshTests(unittest.TestCase):
             raw_root = root / "raw"
             checkout = raw_root / "upstream" / "stata-skill"
             report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
             external = root / "external-checkout"
             displaced_git = checkout / ".git-owned"
             run_git(root, "clone", str(fixture.repository), str(external))
             external_head = run_git(external, "rev-parse", "HEAD").stdout.strip()
             external_config = (external / ".git" / "config").read_bytes()
             external_worktree = (external / CORE_PATH).read_bytes()
+            fixture.write_first_lock(lock_path)
             real_run_anchored_git = fetch_upstream.run_anchored_git
             substituted = False
 
@@ -1326,6 +2014,7 @@ class PinnedRefreshTests(unittest.TestCase):
                 RAW_ROOT=raw_root,
                 UPSTREAM_REPO_DIR=checkout,
                 UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
             ), patch.object(
                 fetch_upstream,
                 "run_anchored_git",
@@ -1848,6 +2537,102 @@ class PinnedRefreshTests(unittest.TestCase):
             self.assertTrue(displaced_owned.is_file())
             self.assertFalse(checkout.exists())
 
+    def test_quarantine_recovery_is_parent_identity_aware_after_displacement(
+        self,
+    ) -> None:
+        for create_restore_conflict in (False, True):
+            with self.subTest(
+                create_restore_conflict=create_restore_conflict
+            ), TemporaryDirectory(
+                prefix="pinned-report-parent-displacement-"
+            ) as temp_root:
+                root = Path(temp_root)
+                raw_root = root / "raw"
+                report_path = (
+                    raw_root / "candidates" / "upstream-comparison.yaml"
+                )
+                displaced_parent = raw_root / "candidates-displaced"
+                report_path.parent.mkdir(parents=True)
+                report_bytes = (
+                    "schema_version: 1\n"
+                    "report_type: upstream-comparison\n"
+                    f"report_owner: {fetch_upstream.REPORT_OWNER}\n"
+                ).encode("utf-8")
+                report_path.write_bytes(report_bytes)
+                with patch.multiple(
+                    fetch_upstream,
+                    REPO_ROOT=root,
+                    RAW_ROOT=raw_root,
+                    UPSTREAM_REPO_DIR=(
+                        raw_root / "upstream" / "stata-skill"
+                    ),
+                ):
+                    target = fetch_upstream.open_report_target(report_path)
+                    displaced = False
+
+                    def displace_parent_then_fail_verification(
+                        candidate_target: fetch_upstream.ReportTarget,
+                        entry_name: str,
+                        owner_descriptor: int,
+                        expected: fetch_upstream.TemporaryFileState,
+                    ) -> None:
+                        del entry_name, owner_descriptor, expected
+                        nonlocal displaced
+                        self.assertIs(candidate_target, target)
+                        report_path.parent.rename(displaced_parent)
+                        report_path.parent.mkdir()
+                        if create_restore_conflict:
+                            conflict_fd = fetch_upstream.os.open(
+                                target.name,
+                                fetch_upstream.os.O_WRONLY
+                                | fetch_upstream.os.O_CREAT
+                                | fetch_upstream.os.O_EXCL,
+                                0o600,
+                                dir_fd=target.parent_fd,
+                            )
+                            with fetch_upstream.os.fdopen(
+                                conflict_fd,
+                                "wb",
+                            ) as handle:
+                                handle.write(b"foreign restore conflict\n")
+                        displaced = True
+                        raise RuntimeError("forced verification failure")
+
+                    try:
+                        with patch.object(
+                            fetch_upstream,
+                            "verify_owned_temporary_entry",
+                            side_effect=displace_parent_then_fail_verification,
+                        ), self.assertRaises(RuntimeError) as raised:
+                            fetch_upstream.remove_stale_report(target)
+                    finally:
+                        target.close()
+
+                self.assertTrue(displaced)
+                self.assertFalse(report_path.exists())
+                message = str(raised.exception)
+                self.assertIn("descriptor-held displaced report directory", message)
+                self.assertIn("no verified current pathname", message)
+                self.assertNotIn(
+                    f"survives unchanged at {report_path}",
+                    message,
+                )
+                if create_restore_conflict:
+                    self.assertEqual(
+                        b"foreign restore conflict\n",
+                        (displaced_parent / report_path.name).read_bytes(),
+                    )
+                    quarantines = list(
+                        displaced_parent.glob(f".{report_path.name}.*.stale")
+                    )
+                    self.assertEqual(1, len(quarantines))
+                    self.assertEqual(report_bytes, quarantines[0].read_bytes())
+                else:
+                    self.assertEqual(
+                        report_bytes,
+                        (displaced_parent / report_path.name).read_bytes(),
+                    )
+
     def test_fetch_timeout_fails_without_writing_a_report(self) -> None:
         with TemporaryDirectory(prefix="pinned-timeout-") as temp_root:
             root = Path(temp_root)
@@ -1856,7 +2641,15 @@ class PinnedRefreshTests(unittest.TestCase):
             report_path = raw_root / "candidates" / "upstream-comparison.yaml"
             lock_path = root / "locks" / "upstream.yaml"
             lock_path.parent.mkdir()
-            lock_path.write_text("repository: {}\nfiles: {}\n", encoding="utf-8")
+            lock_path.write_text(
+                "schema_version: 1\n"
+                "repository:\n"
+                "  url: https://example.invalid/upstream.git\n"
+                f"  commit: {'a' * 40}\n"
+                f"  expected_commit: {'a' * 40}\n"
+                "files: {}\n",
+                encoding="utf-8",
+            )
             report_path.parent.mkdir(parents=True)
             report_path.write_text(
                 "schema_version: 1\n"
@@ -1891,7 +2684,7 @@ class PinnedRefreshTests(unittest.TestCase):
                 fetch_upstream,
                 "run_anchored_git",
                 side_effect=timed_out,
-            ):
+            ), patch("builtins.print") as mocked_print:
                 exit_code = fetch_upstream.main(
                     [
                         "--upstream-ref",
@@ -1916,6 +2709,77 @@ class PinnedRefreshTests(unittest.TestCase):
                 fetch_upstream.LOCAL_GIT_TIMEOUT_SECONDS,
                 calls[0][1],
             )
+            output = "\n".join(
+                str(call.args[0]) for call in mocked_print.call_args_list
+            )
+            self.assertIn(str(quarantines[0]), output)
+            self.assertIn("survives unchanged", output)
+
+    def test_stale_report_quarantine_failure_reports_exact_surviving_path(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-stale-report-fsync-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+            report_path.parent.mkdir(parents=True)
+            report_bytes = (
+                "schema_version: 1\n"
+                "report_type: upstream-comparison\n"
+                f"report_owner: {fetch_upstream.REPORT_OWNER}\n"
+            ).encode("utf-8")
+            report_path.write_bytes(report_bytes)
+            real_fsync = fetch_upstream.os.fsync
+
+            def fail_quarantine_fsync(file_descriptor: int) -> None:
+                quarantines = list(
+                    report_path.parent.glob(f".{report_path.name}.*.stale")
+                )
+                if quarantines and not report_path.exists():
+                    raise OSError("forced stale-report directory fsync failure")
+                real_fsync(file_descriptor)
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ), patch.object(
+                fetch_upstream.os,
+                "fsync",
+                side_effect=fail_quarantine_fsync,
+            ), patch.object(
+                fetch_upstream.subprocess,
+                "Popen",
+            ) as mocked_popen, patch("builtins.print") as mocked_print:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            quarantines = list(
+                report_path.parent.glob(f".{report_path.name}.*.stale")
+            )
+            output = "\n".join(
+                str(call.args[0]) for call in mocked_print.call_args_list
+            )
+            self.assertEqual(1, exit_code)
+            mocked_popen.assert_not_called()
+            self.assertFalse(report_path.exists())
+            self.assertEqual(1, len(quarantines))
+            self.assertEqual(report_bytes, quarantines[0].read_bytes())
+            self.assertIn(str(quarantines[0]), output)
+            self.assertIn("survives unchanged", output)
 
     def test_report_swap_failure_preserves_owned_candidate_without_unlink(
         self,
@@ -1988,6 +2852,52 @@ class PinnedRefreshTests(unittest.TestCase):
                 fetch_upstream.REPORT_OWNER,
                 candidates[0].read_text(encoding="utf-8"),
             )
+
+    def test_post_rename_failure_reports_public_surviving_path(self) -> None:
+        with TemporaryDirectory(prefix="pinned-report-post-rename-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            lock_path = root / "locks" / "upstream.yaml"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            fixture.write_first_lock(lock_path)
+            real_fsync = fetch_upstream.os.fsync
+
+            def fail_public_report_fsync(file_descriptor: int) -> None:
+                if report_path.exists():
+                    raise OSError("forced final report fsync failure")
+                real_fsync(file_descriptor)
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ), patch.object(
+                fetch_upstream.os,
+                "fsync",
+                side_effect=fail_public_report_fsync,
+            ), patch("builtins.print") as mocked_print:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            output = "\n".join(
+                str(call.args[0]) for call in mocked_print.call_args_list
+            )
+            self.assertEqual(1, exit_code)
+            self.assertTrue(report_path.is_file(), output)
+            self.assertIn(str(report_path), output)
+            self.assertIn("survives unchanged", output)
+            self.assertNotIn("preserved failed candidate as .", output)
 
     def test_concurrent_report_is_preserved_by_no_replace_publication(self) -> None:
         with TemporaryDirectory(prefix="pinned-report-concurrent-") as temp_root:

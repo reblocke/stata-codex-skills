@@ -775,7 +775,22 @@ def main(argv: list[str] | None = None) -> int:
         if args.keep_workdir and failed:
             print(f"failed validation workdir preserved at: {work_root}")
         else:
-            shutil.rmtree(work_root, ignore_errors=True)
+            try:
+                shutil.rmtree(work_root)
+            except OSError as cleanup_error:
+                record(
+                    "validation workspace cleanup",
+                    False,
+                    (
+                        f"{type(cleanup_error).__name__}: {cleanup_error}; "
+                        "validation workdir may remain at "
+                        f"{work_root}"
+                    ),
+                )
+                print(
+                    "validation workdir cleanup failed; inspect the preserved "
+                    f"path before retrying: {work_root}"
+                )
 
     failed = any(not success for _, success, _ in results)
     if not failed and args.write_receipt:

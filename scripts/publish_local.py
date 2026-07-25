@@ -140,32 +140,244 @@ def default_skills_dir() -> Path:
     return codex_home / "skills"
 
 
+def _effective_user_id() -> int:
+    """Return the effective user that must own publication-controlled paths."""
+
+    if not hasattr(os, "geteuid"):
+        raise PublishError(
+            "Publication destination ownership checks require a POSIX "
+            "effective user ID"
+        )
+    return os.geteuid()
+
+
+def _is_group_or_other_writable(metadata: os.stat_result) -> bool:
+    return bool(metadata.st_mode & (stat.S_IWGRP | stat.S_IWOTH))
+
+
+def _assert_trusted_destination_ancestor(
+    metadata: os.stat_result,
+    display_path: Path,
+) -> bool:
+    """Validate an ancestor and report whether sticky-child ownership applies."""
+
+    if not _is_group_or_other_writable(metadata):
+        return False
+    if not metadata.st_mode & stat.S_ISVTX:
+        raise PublishError(
+            "Publication destination has an unsafe group/other-writable "
+            f"ancestor without the sticky bit: {display_path}"
+        )
+    return True
+
+
+def _assert_trusted_sticky_child(
+    metadata: os.stat_result,
+    display_path: Path,
+) -> None:
+    if metadata.st_uid != _effective_user_id():
+        raise PublishError(
+            "Publication destination traverses a sticky writable ancestor, "
+            "but its next child is not owned by the current effective user: "
+            f"{display_path}"
+        )
+
+
+def _assert_secure_destination_root(
+    metadata: os.stat_result,
+    display_path: Path,
+) -> None:
+    expected_owner = _effective_user_id()
+    if metadata.st_uid != expected_owner:
+        raise PublishError(
+            "Publication destination root must be owned by the current "
+            f"effective user {expected_owner}: {display_path}"
+        )
+    if _is_group_or_other_writable(metadata):
+        raise PublishError(
+            "Publication destination root must not be group/other writable: "
+            f"{display_path}"
+        )
+
+
+def _capture_authorized_destination_path(
+    destination_root: Path,
+    *,
+    allow_missing: bool,
+) -> DestinationRootIdentity | None:
+    """Traverse and authorize a destination without following path symlinks."""
+
+    if not destination_root.is_absolute():
+        raise PublishError(
+            f"Publication destination must be absolute: {destination_root}"
+        )
+    anchor = Path(destination_root.anchor)
+    root_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    try:
+        root_descriptor = os.open(anchor, root_flags)
+        root_metadata = os.fstat(root_descriptor)
+    except OSError as error:
+        raise PublishError(
+            f"Could not anchor publication filesystem root {anchor}: {error}"
+        ) from error
+    current = DirectoryHandle(
+        name=str(anchor),
+        display_path=anchor,
+        device=root_metadata.st_dev,
+        inode=root_metadata.st_ino,
+        file_descriptor=root_descriptor,
+    )
+    result: DestinationRootIdentity | None = None
+    try:
+        current_metadata = root_metadata
+        relative_parts = destination_root.relative_to(anchor).parts
+        for name in relative_parts:
+            parent_descriptor = _require_directory_descriptor(current)
+            parent_path = current.display_path
+            sticky_child_required = _assert_trusted_destination_ancestor(
+                current_metadata,
+                parent_path,
+            )
+            child_path = parent_path / name
+            try:
+                child = _open_directory_handle_at(
+                    parent_descriptor,
+                    name,
+                    child_path,
+                )
+            except PublishError as error:
+                if not (
+                    allow_missing
+                    and isinstance(error.__cause__, FileNotFoundError)
+                ):
+                    raise
+                if sticky_child_required:
+                    raise PublishError(
+                        "Publication destination cannot create an unowned "
+                        "next child directly beneath a sticky writable "
+                        f"ancestor: {child_path}"
+                    ) from error
+                break
+            try:
+                child_descriptor = _require_directory_descriptor(child)
+                child_metadata = os.fstat(child_descriptor)
+                parent_after = os.fstat(parent_descriptor)
+            except (OSError, PublishError) as error:
+                close_errors = _close_directory_handle(child)
+                close_suffix = (
+                    "; child descriptor cleanup also reported: "
+                    + "; ".join(close_errors)
+                    if close_errors
+                    else ""
+                )
+                raise PublishError(
+                    "Could not verify publication destination traversal at "
+                    f"{child_path}: {error}{close_suffix}"
+                ) from error
+            parent_before_identity = (
+                current_metadata.st_dev,
+                current_metadata.st_ino,
+                current_metadata.st_uid,
+                current_metadata.st_mode,
+            )
+            parent_after_identity = (
+                parent_after.st_dev,
+                parent_after.st_ino,
+                parent_after.st_uid,
+                parent_after.st_mode,
+            )
+            if parent_before_identity != parent_after_identity:
+                close_errors = _close_directory_handle(child)
+                close_suffix = (
+                    "; child descriptor cleanup also reported: "
+                    + "; ".join(close_errors)
+                    if close_errors
+                    else ""
+                )
+                raise PublishError(
+                    "Publication destination ancestor changed during "
+                    f"authorization: {parent_path}{close_suffix}"
+                )
+            if sticky_child_required:
+                try:
+                    _assert_trusted_sticky_child(child_metadata, child_path)
+                except PublishError as error:
+                    close_errors = _close_directory_handle(child)
+                    if close_errors:
+                        raise PublishError(
+                            f"{error}; child descriptor cleanup also "
+                            "reported: " + "; ".join(close_errors)
+                        ) from error
+                    raise
+            close_errors = _close_directory_handle(current)
+            if close_errors:
+                child_close_errors = _close_directory_handle(child)
+                suffix = (
+                    "; child descriptor cleanup also reported: "
+                    + "; ".join(child_close_errors)
+                    if child_close_errors
+                    else ""
+                )
+                raise PublishError(
+                    "Could not close an authorized publication path "
+                    f"component {parent_path}: "
+                    f"{'; '.join(close_errors)}{suffix}"
+                )
+            current = child
+            current_metadata = child_metadata
+
+        else:
+            _assert_secure_destination_root(current_metadata, destination_root)
+            result = DestinationRootIdentity(
+                path=destination_root,
+                device=current_metadata.st_dev,
+                inode=current_metadata.st_ino,
+            )
+    except BaseException as error:
+        close_errors = _close_directory_handle(current)
+        if close_errors:
+            raise PublishError(
+                f"{error}; authorized destination descriptor cleanup also "
+                "reported: " + "; ".join(close_errors),
+                preserve_transaction=(
+                    isinstance(error, PublishError)
+                    and error.preserve_transaction
+                ),
+            ) from error
+        raise
+    else:
+        close_errors = _close_directory_handle(current)
+        if close_errors:
+            raise PublishError(
+                "Could not close authorized publication destination "
+                f"{current.display_path}: {'; '.join(close_errors)}"
+            )
+        return result
+
+
 def _capture_destination_root_identity(
     destination_root: Path,
     approved_destination: Path,
 ) -> DestinationRootIdentity:
-    try:
-        metadata = destination_root.lstat()
-        resolved = destination_root.resolve(strict=True)
-    except (OSError, RuntimeError) as error:
+    if destination_root != approved_destination:
         raise PublishError(
-            f"Could not verify publication destination root: {destination_root}"
-        ) from error
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
-        raise PublishError(
-            "Publication destination root must be a non-symlink directory: "
-            f"{destination_root}"
+            "Publication destination root no longer names the approved "
+            f"path: expected {approved_destination}; observed {destination_root}"
         )
-    if resolved != approved_destination:
-        raise PublishError(
-            "Publication destination root no longer resolves to the approved "
-            f"path: expected {approved_destination}; observed {resolved}"
-        )
-    return DestinationRootIdentity(
-        path=approved_destination,
-        device=metadata.st_dev,
-        inode=metadata.st_ino,
+    observed = _capture_authorized_destination_path(
+        destination_root,
+        allow_missing=False,
     )
+    if observed is None:
+        raise PublishError(
+            f"Publication destination root does not exist: {destination_root}"
+        )
+    return observed
 
 
 def _assert_destination_root(identity: DestinationRootIdentity) -> None:
@@ -688,6 +900,244 @@ def _filesystem_identity(path: Path) -> tuple[int, int]:
     return metadata.st_dev, metadata.st_ino
 
 
+def _read_git_control_file(path: Path, label: str) -> str:
+    """Read a small Git path-control file without following its final entry."""
+
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    file_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0)
+    )
+    parent_descriptor: int | None = None
+    file_descriptor: int | None = None
+    try:
+        parent_descriptor = os.open(path.parent, directory_flags)
+        before = os.stat(
+            path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if not stat.S_ISREG(before.st_mode):
+            raise PublishError(f"{label} must be a regular file: {path}")
+        if before.st_size > 4096:
+            raise PublishError(f"{label} is unexpectedly large: {path}")
+        file_descriptor = os.open(
+            path.name,
+            file_flags,
+            dir_fd=parent_descriptor,
+        )
+        opened = os.fstat(file_descriptor)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or before.st_dev != opened.st_dev
+            or before.st_ino != opened.st_ino
+        ):
+            raise PublishError(f"{label} changed while opening it: {path}")
+        payload = bytearray()
+        while len(payload) <= 4096:
+            chunk = os.read(file_descriptor, 4097 - len(payload))
+            if not chunk:
+                break
+            payload.extend(chunk)
+        after = os.fstat(file_descriptor)
+        before_identity = (
+            before.st_dev,
+            before.st_ino,
+            before.st_mode,
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        )
+        after_identity = (
+            after.st_dev,
+            after.st_ino,
+            after.st_mode,
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        )
+        if len(payload) > 4096 or before_identity != after_identity:
+            raise PublishError(f"{label} changed while reading it: {path}")
+        try:
+            value = bytes(payload).decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise PublishError(f"{label} is not valid UTF-8: {path}") from error
+    except BaseException as error:
+        close_errors: list[str] = []
+        if file_descriptor is not None:
+            close_errors.extend(_close_file_descriptor(file_descriptor))
+            file_descriptor = None
+        if parent_descriptor is not None:
+            close_errors.extend(_close_file_descriptor(parent_descriptor))
+            parent_descriptor = None
+        if close_errors:
+            raise PublishError(
+                f"{error}; Git control descriptor cleanup also reported: "
+                + "; ".join(close_errors)
+            ) from error
+        raise
+    else:
+        close_errors = []
+        if file_descriptor is not None:
+            close_errors.extend(_close_file_descriptor(file_descriptor))
+        if parent_descriptor is not None:
+            close_errors.extend(_close_file_descriptor(parent_descriptor))
+        if close_errors:
+            raise PublishError(
+                f"Could not close {label} descriptors for {path}: "
+                + "; ".join(close_errors)
+            )
+        return value
+
+
+def _anchor_git_directory(
+    candidate: Path,
+    label: str,
+) -> tuple[Path, tuple[int, int]]:
+    """Canonicalize and identity-anchor an existing Git metadata directory."""
+
+    try:
+        canonical = candidate.resolve(strict=True)
+        metadata = canonical.lstat()
+    except (OSError, RuntimeError) as error:
+        raise PublishError(f"Could not resolve {label}: {candidate}") from error
+    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISDIR(metadata.st_mode):
+        raise PublishError(f"{label} must resolve to a directory: {candidate}")
+    flags = (
+        os.O_RDONLY
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    file_descriptor: int | None = None
+    try:
+        file_descriptor = os.open(canonical, flags)
+        opened = os.fstat(file_descriptor)
+    except OSError as error:
+        close_errors = (
+            _close_file_descriptor(file_descriptor)
+            if file_descriptor is not None
+            else []
+        )
+        close_suffix = (
+            "; descriptor cleanup also reported: "
+            + "; ".join(close_errors)
+            if close_errors
+            else ""
+        )
+        raise PublishError(
+            f"Could not anchor {label}: {canonical}{close_suffix}"
+        ) from error
+    try:
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or metadata.st_dev != opened.st_dev
+            or metadata.st_ino != opened.st_ino
+        ):
+            raise PublishError(f"{label} changed while anchoring it: {canonical}")
+    except BaseException as error:
+        close_errors = _close_file_descriptor(file_descriptor)
+        if close_errors:
+            raise PublishError(
+                f"{error}; Git directory descriptor cleanup also reported: "
+                + "; ".join(close_errors)
+            ) from error
+        raise
+    else:
+        close_errors = _close_file_descriptor(file_descriptor)
+        if close_errors:
+            raise PublishError(
+                f"Could not close {label} descriptor for {canonical}: "
+                + "; ".join(close_errors)
+            )
+    return canonical, (opened.st_dev, opened.st_ino)
+
+
+def _git_metadata_roots(
+    repository_root: Path,
+) -> tuple[tuple[Path, tuple[int, int]], ...]:
+    """Resolve the per-worktree and common Git metadata directories."""
+
+    dot_git = repository_root / ".git"
+    try:
+        dot_git_metadata = dot_git.lstat()
+    except OSError as error:
+        raise PublishError(
+            f"Could not inspect repository Git metadata entry: {dot_git}"
+        ) from error
+    if stat.S_ISLNK(dot_git_metadata.st_mode):
+        raise PublishError(
+            f"Repository Git metadata entry must not be a symlink: {dot_git}"
+        )
+    if stat.S_ISDIR(dot_git_metadata.st_mode):
+        git_directory_candidate = dot_git
+    elif stat.S_ISREG(dot_git_metadata.st_mode):
+        directive = _read_git_control_file(
+            dot_git,
+            "Repository .git control file",
+        ).strip()
+        prefix = "gitdir:"
+        if not directive.startswith(prefix):
+            raise PublishError(
+                f"Repository .git control file is malformed: {dot_git}"
+            )
+        configured = directive[len(prefix) :].strip()
+        if not configured or "\n" in configured or "\r" in configured:
+            raise PublishError(
+                f"Repository .git control file is malformed: {dot_git}"
+            )
+        git_directory_candidate = Path(configured)
+        if not git_directory_candidate.is_absolute():
+            git_directory_candidate = dot_git.parent / git_directory_candidate
+    else:
+        raise PublishError(
+            f"Repository Git metadata entry is unsupported: {dot_git}"
+        )
+
+    git_directory, git_identity = _anchor_git_directory(
+        git_directory_candidate,
+        "per-worktree Git directory",
+    )
+    common_control = git_directory / "commondir"
+    try:
+        common_control.lstat()
+    except FileNotFoundError:
+        common_directory = git_directory
+        common_identity = git_identity
+    except OSError as error:
+        raise PublishError(
+            f"Could not inspect Git common-directory control: {common_control}"
+        ) from error
+    else:
+        configured = _read_git_control_file(
+            common_control,
+            "Git common-directory control file",
+        ).strip()
+        if not configured or "\n" in configured or "\r" in configured:
+            raise PublishError(
+                f"Git common-directory control file is malformed: {common_control}"
+            )
+        common_candidate = Path(configured)
+        if not common_candidate.is_absolute():
+            common_candidate = git_directory / common_candidate
+        common_directory, common_identity = _anchor_git_directory(
+            common_candidate,
+            "common Git directory",
+        )
+
+    roots = [(git_directory, git_identity)]
+    if common_identity != git_identity:
+        roots.append((common_directory, common_identity))
+    return tuple(roots)
+
+
 def _existing_ancestor_identities(
     path: Path,
 ) -> tuple[bool, tuple[tuple[int, int], ...]]:
@@ -777,6 +1227,28 @@ def preflight_publication_paths(
             "Publication destination must be outside the repository: "
             f"{canonical_destination}"
         )
+    try:
+        git_metadata_roots = _git_metadata_roots(canonical_repo)
+    except (OSError, RuntimeError) as error:
+        raise PublishError(
+            f"Could not resolve repository Git metadata roots: {error}"
+        ) from error
+    for metadata_path, metadata_identity in git_metadata_roots:
+        _metadata_exists, metadata_ancestors = _existing_ancestor_identities(
+            metadata_path
+        )
+        if (
+            metadata_identity in destination_ancestors
+            or (
+                destination_identity is not None
+                and destination_identity in metadata_ancestors
+            )
+        ):
+            raise PublishError(
+                "Publication destination must be outside Git metadata "
+                "directories and must not contain them: "
+                f"destination={canonical_destination}; metadata={metadata_path}"
+            )
     return canonical_source, canonical_destination
 
 
@@ -3559,6 +4031,13 @@ def publish_skills(
     except (OSError, ValueError) as error:
         raise PublishError(str(error)) from error
     require_fresh_receipt(receipt, now=now)
+
+    # Authorize every existing destination component before mkdir or lock-file
+    # creation can mutate the requested publication path.
+    _capture_authorized_destination_path(
+        destination_root,
+        allow_missing=True,
+    )
 
     transaction_lock: TransactionLock | None = None
     transaction_root: DirectoryHandle | None = None

@@ -737,6 +737,84 @@ class AtomicRenderTests(unittest.TestCase):
                 (backup / "accepted-moved.txt").read_text(encoding="utf-8"),
             )
 
+    def test_double_failure_reports_surviving_quarantine_path(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            owned = parent / "owned"
+            owned.mkdir()
+            (owned / "accepted.txt").write_text(
+                "accepted quarantined bytes\n",
+                encoding="utf-8",
+            )
+            different_entry = parent / "different-entry"
+            different_entry.mkdir()
+            expected = different_entry.stat()
+            parent_descriptor = os.open(
+                parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            real_rename = render_skills._atomic_rename_at_no_replace
+            move_count = 0
+
+            def fail_move_then_fail_restore(
+                source_descriptor: int,
+                source_name: str,
+                destination_descriptor: int,
+                destination_name: str,
+            ) -> None:
+                nonlocal move_count
+                if source_name != "owned":
+                    real_rename(
+                        source_descriptor,
+                        source_name,
+                        destination_descriptor,
+                        destination_name,
+                    )
+                    return
+                move_count += 1
+                if move_count == 1:
+                    real_rename(
+                        source_descriptor,
+                        source_name,
+                        destination_descriptor,
+                        destination_name,
+                    )
+                    return
+                os.mkdir(destination_name, dir_fd=destination_descriptor)
+                (parent / destination_name / "concurrent.txt").write_text(
+                    "concurrent destination bytes\n",
+                    encoding="utf-8",
+                )
+                raise OSError("forced restoration failure")
+
+            try:
+                with patch.object(
+                    render_skills,
+                    "_atomic_rename_at_no_replace",
+                    side_effect=fail_move_then_fail_restore,
+                ), self.assertRaises(
+                    render_skills.RenderTransactionError,
+                ) as raised:
+                    render_skills._remove_verified_empty_directory_via_quarantine(
+                        parent_descriptor,
+                        owned.name,
+                        owned,
+                        expected,
+                    )
+            finally:
+                os.close(parent_descriptor)
+
+            cleanup_roots = sorted(parent.glob(".render-cleanup-*"))
+            self.assertEqual(2, move_count)
+            self.assertEqual(1, len(cleanup_roots))
+            surviving_path = cleanup_roots[0] / owned.name
+            self.assertIn(str(surviving_path), str(raised.exception))
+            self.assertTrue(surviving_path.is_dir())
+            self.assertEqual(
+                "accepted quarantined bytes\n",
+                (surviving_path / "accepted.txt").read_text(encoding="utf-8"),
+            )
+
     def test_backup_cleanup_preserves_same_inode_content_mutation(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
@@ -1848,6 +1926,334 @@ class AtomicRenderTests(unittest.TestCase):
                 render_skills.render_all(output_root=target)
 
             self.assertFalse(target.exists())
+
+    def test_renderer_source_overlap_is_rejected_before_staging(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            repository = parent / "repo"
+            repository.mkdir()
+            build_root = repository / "build" / "generated"
+            source_labels = (
+                "config",
+                "content",
+                "templates",
+                "locks",
+            )
+            relations = ("equal", "output-below", "source-below")
+
+            for source_label in source_labels:
+                for relation in relations:
+                    with self.subTest(source=source_label, relation=relation):
+                        case_root = parent / f"{source_label}-{relation}"
+                        case_root.mkdir()
+                        if relation == "equal":
+                            output = case_root / "shared"
+                            selected_source = output
+                        elif relation == "output-below":
+                            selected_source = case_root / "source"
+                            output = selected_source / "generated"
+                        else:
+                            output = case_root / "generated"
+                            selected_source = output / "source"
+
+                        sources = {
+                            "config": case_root / "independent-config.yaml",
+                            "content": case_root / "independent-content",
+                            "templates": case_root / "independent-templates",
+                            "locks": case_root / "independent-locks",
+                        }
+                        sources[source_label] = selected_source
+
+                        with patch.multiple(
+                            render_skills,
+                            REPO_ROOT=repository,
+                            BUILD_ROOT=build_root,
+                            TEMPLATES_ROOT=sources["templates"],
+                            LOCK_ROOT=sources["locks"],
+                        ), self.assertRaisesRegex(
+                            ValueError,
+                            "overlaps a renderer source",
+                        ):
+                            render_skills.render_all(
+                                output_root=output,
+                                content_root=sources["content"],
+                                config_path=sources["config"],
+                            )
+
+                        self.assertFalse(output.exists())
+                        self.assertEqual(
+                            [],
+                            list(case_root.rglob(f".{output.name}.stage-*")),
+                        )
+
+    @unittest.skipUnless(
+        sys.platform == "darwin",
+        "macOS case-alias behavior",
+    )
+    def test_case_insensitive_source_alias_overlap_is_rejected(self) -> None:
+        with TemporaryDirectory(
+            prefix=".atomic-render-case-",
+            dir=REPO_ROOT,
+        ) as temp_root:
+            parent = Path(temp_root)
+            repository = parent / "repo"
+            repository.mkdir()
+            build_root = repository / "build" / "generated"
+
+            for relation in ("equal", "output-below", "source-below"):
+                with self.subTest(relation=relation):
+                    case_root = parent / relation
+                    case_root.mkdir()
+                    if relation == "source-below":
+                        output = case_root / "Output"
+                        output.mkdir()
+                        selected_source = case_root / "oUTPUT" / "content"
+                        alias = case_root / "oUTPUT"
+                    else:
+                        selected_source = case_root / "Source"
+                        selected_source.mkdir()
+                        alias = case_root / "sOURCE"
+                        output = (
+                            alias
+                            if relation == "equal"
+                            else alias / "generated"
+                        )
+                    existing = output if relation == "source-below" else selected_source
+                    if not alias.exists() or not os.path.samefile(existing, alias):
+                        self.skipTest("test filesystem is case-sensitive")
+
+                    config = case_root / "independent-config.yaml"
+                    config.write_text("{}\n", encoding="utf-8")
+                    templates = case_root / "independent-templates"
+                    locks = case_root / "independent-locks"
+                    templates.mkdir()
+                    locks.mkdir()
+
+                    with patch.multiple(
+                        render_skills,
+                        REPO_ROOT=repository,
+                        BUILD_ROOT=build_root,
+                        TEMPLATES_ROOT=templates,
+                        LOCK_ROOT=locks,
+                    ), self.assertRaisesRegex(
+                        ValueError,
+                        "overlaps a renderer source",
+                    ):
+                        render_skills.render_all(
+                            output_root=output,
+                            content_root=selected_source,
+                            config_path=config,
+                        )
+
+                    self.assertEqual(
+                        [],
+                        list(case_root.rglob(f".{output.name}.stage-*")),
+                    )
+
+    @unittest.skipUnless(
+        sys.platform == "darwin",
+        "macOS case-alias behavior",
+    )
+    def test_case_insensitive_tracked_canonical_alias_is_rejected(self) -> None:
+        with TemporaryDirectory(
+            prefix=".atomic-render-case-",
+            dir=REPO_ROOT,
+        ) as temp_root:
+            repository = Path(temp_root) / "repo"
+            repository.mkdir()
+            build_root = repository / "build" / "generated"
+
+            with patch.multiple(
+                render_skills,
+                REPO_ROOT=repository,
+                BUILD_ROOT=build_root,
+            ), patch.object(
+                render_skills,
+                "tracked_source_paths",
+                return_value=(),
+            ):
+                render_skills.render_all(output_root=build_root)
+
+            build_alias = repository / "Build"
+            if (
+                not build_alias.exists()
+                or not os.path.samefile(build_root.parent, build_alias)
+            ):
+                self.skipTest("test filesystem is case-sensitive")
+
+            tracked = Path("Build/generated/stata-core/SKILL.md")
+            marker = repository / tracked
+            marker.write_text(
+                "# Modified force-tracked alias\n",
+                encoding="utf-8",
+            )
+            before = self.snapshot(build_root)
+            output_alias = repository / "BUILD" / "GENERATED"
+            with patch.multiple(
+                render_skills,
+                REPO_ROOT=repository,
+                BUILD_ROOT=build_root,
+            ), patch.object(
+                render_skills,
+                "tracked_source_paths",
+                return_value=(tracked,),
+            ), patch.object(
+                render_skills,
+                "_render_tree",
+                wraps=render_skills._render_tree,
+            ) as render_tree, self.assertRaisesRegex(
+                ValueError,
+                "contains Git-tracked paths",
+            ):
+                render_skills.render_all(output_root=output_alias)
+
+            render_tree.assert_not_called()
+            self.assertEqual(before, self.snapshot(build_root))
+            self.assertEqual(
+                [],
+                self.transaction_artifacts(build_root.parent, build_root.name),
+            )
+
+    @unittest.skipUnless(
+        sys.platform.startswith("linux"),
+        "Linux case-sensitive behavior",
+    )
+    def test_case_distinct_linux_renderer_paths_remain_distinct(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            source = parent / "Source"
+            output_parent = parent / "source"
+            source.mkdir()
+            output_parent.mkdir()
+            if os.path.samefile(source, output_parent):
+                self.skipTest("test filesystem is not case-sensitive")
+
+            config = parent / "config.yaml"
+            config.write_text("{}\n", encoding="utf-8")
+            templates = parent / "templates"
+            locks = parent / "locks"
+            templates.mkdir()
+            locks.mkdir()
+            with patch.multiple(
+                render_skills,
+                TEMPLATES_ROOT=templates,
+                LOCK_ROOT=locks,
+            ):
+                render_skills._validate_renderer_source_separation(
+                    output_parent / "generated",
+                    source,
+                    config,
+                )
+
+            repository = parent / "repo"
+            canonical_output = repository / "build" / "generated"
+            tracked_file = (
+                repository / "Build" / "generated" / "stata-core" / "SKILL.md"
+            )
+            canonical_output.mkdir(parents=True)
+            tracked_file.parent.mkdir(parents=True)
+            tracked_file.write_text("# Distinct tracked file\n", encoding="utf-8")
+            with patch.multiple(
+                render_skills,
+                REPO_ROOT=repository,
+                BUILD_ROOT=canonical_output,
+            ), patch.object(
+                render_skills,
+                "tracked_source_paths",
+                return_value=(Path("Build/generated/stata-core/SKILL.md"),),
+            ):
+                render_skills._assert_no_tracked_canonical_output_paths(
+                    canonical_output
+                )
+
+    def test_force_tracked_canonical_output_fails_before_rendering(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            repository = Path(temp_root) / "repo"
+            repository.mkdir()
+            build_root = repository / "build" / "generated"
+            tracked = Path("build/generated/stata-core/SKILL.md")
+
+            with patch.multiple(
+                render_skills,
+                REPO_ROOT=repository,
+                BUILD_ROOT=build_root,
+            ), patch.object(
+                render_skills,
+                "tracked_source_paths",
+                return_value=(),
+            ):
+                render_skills.render_all(output_root=build_root)
+
+            marker = build_root / "stata-core" / "SKILL.md"
+            marker.write_text("# Modified force-tracked tree\n", encoding="utf-8")
+            before = self.snapshot(build_root)
+            with patch.multiple(
+                render_skills,
+                REPO_ROOT=repository,
+                BUILD_ROOT=build_root,
+            ), patch.object(
+                render_skills,
+                "tracked_source_paths",
+                return_value=(tracked,),
+            ), patch.object(
+                render_skills,
+                "_render_tree",
+                wraps=render_skills._render_tree,
+            ) as render_tree, self.assertRaisesRegex(
+                ValueError,
+                "contains Git-tracked paths",
+            ):
+                render_skills.render_all(output_root=build_root)
+
+            render_tree.assert_not_called()
+            self.assertEqual(before, self.snapshot(build_root))
+            self.assertEqual(
+                [],
+                self.transaction_artifacts(build_root.parent, build_root.name),
+            )
+
+    def test_new_force_tracked_path_before_swap_preserves_canonical_output(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            repository = Path(temp_root) / "repo"
+            repository.mkdir()
+            build_root = repository / "build" / "generated"
+            tracked = Path("build/generated/stata-core/SKILL.md")
+
+            with patch.multiple(
+                render_skills,
+                REPO_ROOT=repository,
+                BUILD_ROOT=build_root,
+            ), patch.object(
+                render_skills,
+                "tracked_source_paths",
+                return_value=(),
+            ):
+                render_skills.render_all(output_root=build_root)
+
+            marker = build_root / "stata-core" / "SKILL.md"
+            marker.write_text("# Accepted modified tree\n", encoding="utf-8")
+            before = self.snapshot(build_root)
+            with patch.multiple(
+                render_skills,
+                REPO_ROOT=repository,
+                BUILD_ROOT=build_root,
+            ), patch.object(
+                render_skills,
+                "tracked_source_paths",
+                side_effect=((), (tracked,)),
+            ), self.assertRaisesRegex(
+                ValueError,
+                "contains Git-tracked paths",
+            ):
+                render_skills.render_all(output_root=build_root)
+
+            self.assertEqual(before, self.snapshot(build_root))
+            self.assertEqual(
+                [],
+                self.transaction_artifacts(build_root.parent, build_root.name),
+            )
 
     def test_symlinked_build_ancestor_cannot_redirect_canonical_render(
         self,

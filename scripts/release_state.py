@@ -24,6 +24,28 @@ CANONICAL_DIRECTORY_MODE = 0o755
 CANONICAL_FILE_MODE = 0o644
 SKILL_FOLDERS = ("stata-core", "stata-packages", "stata-c-plugins")
 GIT_INVENTORY_TIMEOUT_SECONDS = 30
+GATE_INPUT_DIRECTORY_ROOTS = (
+    Path(".github"),
+    Path("config"),
+    Path("content"),
+    Path("locks"),
+    Path("manifests"),
+    Path("scripts"),
+    Path("templates"),
+    Path("tests"),
+)
+GATE_INPUT_ROOT_FILES = (
+    Path(".gitignore"),
+    Path("Makefile"),
+    Path("pyproject.toml"),
+    Path("uv.lock"),
+)
+GATE_RUNTIME_DIRECTORY_NAMES = {
+    "__pycache__",
+}
+GATE_RUNTIME_PATHS = {
+    Path("tests/tmp"),
+}
 DIRECTORY_OPEN_FLAGS = (
     os.O_RDONLY
     | getattr(os, "O_DIRECTORY", 0)
@@ -48,6 +70,21 @@ class _GitIndexBinding:
     git_directory_identity: tuple[int, int, int]
     index: _GitFileSnapshot | None
     shared_indexes: tuple[_GitFileSnapshot, ...]
+
+
+@dataclass(frozen=True)
+class SourcePathInventory:
+    """Paths observed against one stable, descriptor-anchored Git index."""
+
+    tracked: tuple[Path, ...]
+    untracked: tuple[Path, ...]
+    untracked_gate_inputs: tuple[Path, ...]
+
+
+@dataclass(frozen=True)
+class _SourceSnapshot:
+    inventory: SourcePathInventory
+    digest: str | None
 
 
 def _hash_records(records: list[tuple[str, bytes]]) -> str:
@@ -720,6 +757,94 @@ def _assert_repository_identity(repo_root: Path, repository_fd: int) -> None:
         os.close(observed_fd)
 
 
+def _is_gate_runtime_path(relative: Path) -> bool:
+    return (
+        relative in GATE_RUNTIME_PATHS
+        or any(runtime_path in relative.parents for runtime_path in GATE_RUNTIME_PATHS)
+        or any(part in GATE_RUNTIME_DIRECTORY_NAMES for part in relative.parts)
+    )
+
+
+def _walk_gate_input_entry(
+    parent_fd: int,
+    name: str,
+    relative: Path,
+    *,
+    expected_file: bool = False,
+) -> list[Path]:
+    """Inventory one gate-input entry without following symbolic links."""
+
+    if _is_gate_runtime_path(relative):
+        return []
+    try:
+        named = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        raise ValueError(f"Could not inspect gate input: {relative}") from error
+    if expected_file or not stat.S_ISDIR(named.st_mode):
+        return [relative]
+
+    child_fd: int | None = None
+    try:
+        child_fd = os.open(name, DIRECTORY_OPEN_FLAGS, dir_fd=parent_fd)
+        opened = os.fstat(child_fd)
+        if _metadata_fingerprint(opened) != _metadata_fingerprint(named):
+            raise ValueError(f"Gate input changed while opening: {relative}")
+        before_names = tuple(sorted(os.listdir(child_fd)))
+        observed: list[Path] = []
+        for child_name in before_names:
+            observed.extend(
+                _walk_gate_input_entry(
+                    child_fd,
+                    child_name,
+                    relative / child_name,
+                )
+            )
+        after_names = tuple(sorted(os.listdir(child_fd)))
+        after = os.fstat(child_fd)
+        named_after = os.stat(name, dir_fd=parent_fd, follow_symlinks=False)
+        if (
+            before_names != after_names
+            or _metadata_fingerprint(after) != _metadata_fingerprint(opened)
+            or _metadata_fingerprint(named_after)
+            != _metadata_fingerprint(opened)
+        ):
+            raise ValueError(f"Gate input membership changed: {relative}")
+        return observed
+    except ValueError:
+        raise
+    except OSError as error:
+        raise ValueError(f"Could not inventory gate input: {relative}") from error
+    finally:
+        if child_fd is not None:
+            os.close(child_fd)
+
+
+def _gate_input_inventory(repository_fd: int) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for relative in GATE_INPUT_DIRECTORY_ROOTS:
+        paths.extend(
+            _walk_gate_input_entry(
+                repository_fd,
+                relative.as_posix(),
+                relative,
+            )
+        )
+    for relative in GATE_INPUT_ROOT_FILES:
+        paths.extend(
+            _walk_gate_input_entry(
+                repository_fd,
+                relative.as_posix(),
+                relative,
+                expected_file=True,
+            )
+        )
+    if len(paths) != len(set(paths)):
+        raise ValueError("Gate input inventory returned duplicate paths")
+    return tuple(sorted(paths, key=Path.as_posix))
+
+
 def _parse_staged_inventory(payload: bytes) -> bytes:
     paths: list[bytes] = []
     for record in payload.split(b"\0"):
@@ -773,22 +898,12 @@ def _git_index_object_format(index: _GitFileSnapshot | None) -> str:
 def _run_private_inventory(
     binding: _GitIndexBinding,
     object_format: str,
+    *,
+    repository_fd: int | None = None,
 ) -> subprocess.CompletedProcess[bytes]:
     environment = os.environ.copy()
     for variable in tuple(environment):
-        if variable in {
-            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-            "GIT_COMMON_DIR",
-            "GIT_CONFIG",
-            "GIT_CONFIG_COUNT",
-            "GIT_CONFIG_GLOBAL",
-            "GIT_CONFIG_PARAMETERS",
-            "GIT_CONFIG_SYSTEM",
-            "GIT_DIR",
-            "GIT_INDEX_FILE",
-            "GIT_OBJECT_DIRECTORY",
-            "GIT_WORK_TREE",
-        } or variable.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
+        if variable.startswith("GIT_"):
             environment.pop(variable, None)
     environment.update(
         {
@@ -814,7 +929,11 @@ def _run_private_inventory(
                 if object_format == "sha256"
                 else "\trepositoryformatversion = 0"
             ),
-            "\tbare = true",
+            f"\tbare = {'false' if repository_fd is not None else 'true'}",
+            f"\texcludesFile = {os.devnull}",
+            "\tfsmonitor = false",
+            f"\thooksPath = {os.devnull}",
+            "\tuntrackedCache = false",
             "\tsparseCheckout = true",
             "\tsparseCheckoutCone = true",
             "[index]",
@@ -837,27 +956,47 @@ def _run_private_inventory(
             (private_git / shared_index.name).write_bytes(shared_index.payload)
         private_git_fd = os.open(private_git, DIRECTORY_OPEN_FLAGS)
 
-        def enter_private_git_directory() -> None:
-            os.fchdir(private_git_fd)
+        if repository_fd is None:
 
-        environment["GIT_DIR"] = "."
-        environment["GIT_INDEX_FILE"] = "index"
+            def enter_anchored_directory() -> None:
+                os.fchdir(private_git_fd)
+
+            command = [
+                "git",
+                "ls-files",
+                "--cached",
+                "--stage",
+                "--sparse",
+                "-z",
+            ]
+            environment["GIT_DIR"] = "."
+            environment["GIT_INDEX_FILE"] = "index"
+            pass_fds = (private_git_fd,)
+        else:
+
+            def enter_anchored_directory() -> None:
+                os.fchdir(repository_fd)
+
+            command = [
+                "git",
+                "ls-files",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ]
+            environment["GIT_DIR"] = str(private_git)
+            environment["GIT_INDEX_FILE"] = str(private_git / "index")
+            environment["GIT_WORK_TREE"] = "."
+            pass_fds = (repository_fd,)
         try:
             try:
                 return subprocess.run(
-                    [
-                        "git",
-                        "ls-files",
-                        "--cached",
-                        "--stage",
-                        "--sparse",
-                        "-z",
-                    ],
+                    command,
                     check=False,
                     capture_output=True,
                     timeout=GIT_INVENTORY_TIMEOUT_SECONDS,
-                    pass_fds=(private_git_fd,),
-                    preexec_fn=enter_private_git_directory,
+                    pass_fds=pass_fds,
+                    preexec_fn=enter_anchored_directory,
                     env=environment,
                 )
             except (OSError, subprocess.TimeoutExpired) as error:
@@ -886,8 +1025,67 @@ def _tracked_inventory(binding: _GitIndexBinding) -> bytes:
     return _parse_staged_inventory(inventory.stdout)
 
 
-def source_digest(repo_root: Path = REPO_ROOT) -> str:
-    """Hash every Git-tracked working-tree file and no untracked runtime files."""
+def _untracked_inventory(
+    binding: _GitIndexBinding,
+    repository_fd: int,
+) -> bytes:
+    object_format = _git_index_object_format(binding.index)
+    inventory = _run_private_inventory(
+        binding,
+        object_format,
+        repository_fd=repository_fd,
+    )
+    detail = inventory.stderr.decode("utf-8", errors="replace").strip()
+    if inventory.returncode != 0 or detail:
+        raise ValueError(
+            "Could not inventory untracked source files: "
+            f"{detail or 'git ls-files failed'}"
+        )
+    return inventory.stdout
+
+
+def _decode_tracked_paths(inventory: bytes) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for encoded_relative in inventory.split(b"\0"):
+        if not encoded_relative:
+            continue
+        try:
+            relative = Path(encoded_relative.decode("utf-8"))
+        except UnicodeDecodeError as error:
+            raise ValueError("Tracked source path is not valid UTF-8") from error
+        if relative.is_absolute() or any(
+            part in {"", ".", ".."} for part in relative.parts
+        ):
+            raise ValueError(f"Unsafe tracked source path: {relative}")
+        paths.append(relative)
+    return tuple(sorted(paths, key=Path.as_posix))
+
+
+def _decode_untracked_paths(inventory: bytes) -> tuple[Path, ...]:
+    paths: list[Path] = []
+    for encoded_relative in inventory.split(b"\0"):
+        if not encoded_relative:
+            continue
+        try:
+            relative = Path(encoded_relative.decode("utf-8"))
+        except UnicodeDecodeError as error:
+            raise ValueError("Untracked source path is not valid UTF-8") from error
+        if relative.is_absolute() or any(
+            part in {"", ".", ".."} for part in relative.parts
+        ):
+            raise ValueError(f"Unsafe untracked source path: {relative}")
+        paths.append(relative)
+    if len(paths) != len(set(paths)):
+        raise ValueError("Git returned duplicate untracked source paths")
+    return tuple(sorted(paths, key=Path.as_posix))
+
+
+def _capture_source_snapshot(
+    repo_root: Path,
+    *,
+    include_digest: bool,
+) -> _SourceSnapshot:
+    """Bind tracked, untracked, and gate-input paths to one Git-index snapshot."""
 
     try:
         repository_fd = os.open(repo_root, DIRECTORY_OPEN_FLAGS)
@@ -899,27 +1097,126 @@ def source_digest(repo_root: Path = REPO_ROOT) -> str:
         _assert_repository_identity(repo_root, repository_fd)
         binding = _capture_git_index_binding(repo_root, repository_fd)
         try:
-            inventory = _tracked_inventory(binding)
+            tracked = _decode_tracked_paths(_tracked_inventory(binding))
+            untracked_before = _decode_untracked_paths(
+                _untracked_inventory(binding, repository_fd)
+            )
+            gate_inputs_before = _gate_input_inventory(repository_fd)
             _assert_git_index_binding(repo_root, repository_fd, binding)
             _assert_repository_identity(repo_root, repository_fd)
+
             records: list[tuple[str, bytes]] = []
-            for encoded_relative in inventory.split(b"\0"):
-                if not encoded_relative:
-                    continue
-                try:
-                    relative = Path(encoded_relative.decode("utf-8"))
-                except UnicodeDecodeError as error:
-                    raise ValueError(
-                        "Tracked source path is not valid UTF-8"
-                    ) from error
-                records.append(_tracked_file_record(repository_fd, relative))
-            _assert_repository_identity(repo_root, repository_fd)
+            if include_digest:
+                for relative in tracked:
+                    records.append(_tracked_file_record(repository_fd, relative))
+
+            untracked_after = _decode_untracked_paths(
+                _untracked_inventory(binding, repository_fd)
+            )
+            gate_inputs_after = _gate_input_inventory(repository_fd)
             _assert_git_index_binding(repo_root, repository_fd, binding)
-            return _hash_records(sorted(records))
+            _assert_repository_identity(repo_root, repository_fd)
         finally:
             os.close(binding.git_directory_fd)
     finally:
         os.close(repository_fd)
+
+    if untracked_before != untracked_after:
+        raise ValueError(
+            "Untracked source membership changed during inventory. "
+            "Retry from a stable working tree."
+        )
+    if gate_inputs_before != gate_inputs_after:
+        raise ValueError(
+            "Gate input membership changed during inventory. "
+            "Retry from a stable working tree."
+        )
+    tracked_set = set(tracked)
+    inventory = SourcePathInventory(
+        tracked=tracked,
+        untracked=untracked_before,
+        untracked_gate_inputs=tuple(
+            path for path in gate_inputs_before if path not in tracked_set
+        ),
+    )
+    return _SourceSnapshot(
+        inventory=inventory,
+        digest=_hash_records(sorted(records)) if include_digest else None,
+    )
+
+
+def source_path_inventory(
+    repo_root: Path = REPO_ROOT,
+) -> SourcePathInventory:
+    """Return one stable tracked/untracked inventory for repository checks."""
+
+    return _capture_source_snapshot(
+        repo_root,
+        include_digest=False,
+    ).inventory
+
+
+def untracked_source_paths(
+    repo_root: Path = REPO_ROOT,
+) -> tuple[Path, ...]:
+    """Inventory nonignored worktree files absent from a stable Git index."""
+
+    return source_path_inventory(repo_root).untracked
+
+
+def _assert_no_untracked_source_files(
+    repo_root: Path = REPO_ROOT,
+    *,
+    inventory: SourcePathInventory | None = None,
+) -> None:
+    """Reject unreviewed worktree files that can affect validation."""
+
+    observed = inventory or source_path_inventory(repo_root)
+    untracked = observed.untracked
+    if untracked:
+        displayed = ", ".join(
+            json.dumps(path.as_posix(), ensure_ascii=True)
+            for path in untracked[:10]
+        )
+        if len(untracked) > 10:
+            displayed += f", and {len(untracked) - 10} more"
+        raise ValueError(
+            "Untracked, nonignored working-tree files prevent "
+            f"receipt-bearing validation: {displayed}. Add, ignore, or "
+            "remove them, then rerun validation."
+        )
+    untracked_set = set(observed.untracked)
+    ignored_gate_inputs = tuple(
+        path
+        for path in observed.untracked_gate_inputs
+        if path not in untracked_set
+    )
+    if ignored_gate_inputs:
+        displayed = ", ".join(
+            json.dumps(path.as_posix(), ensure_ascii=True)
+            for path in ignored_gate_inputs[:10]
+        )
+        if len(ignored_gate_inputs) > 10:
+            displayed += f", and {len(ignored_gate_inputs) - 10} more"
+        raise ValueError(
+            "Ignored, untracked validation inputs prevent receipt-bearing "
+            f"validation: {displayed}. Build configuration, lock files, "
+            "manifests, scripts, templates, tests, and CI inputs must be tracked."
+        )
+
+
+def tracked_source_paths(repo_root: Path = REPO_ROOT) -> tuple[Path, ...]:
+    """Inventory index paths without consulting ambient Git configuration."""
+
+    return source_path_inventory(repo_root).tracked
+
+
+def source_digest(repo_root: Path = REPO_ROOT) -> str:
+    """Hash every Git-tracked working-tree file and no untracked runtime files."""
+
+    snapshot = _capture_source_snapshot(repo_root, include_digest=True)
+    assert snapshot.digest is not None
+    return snapshot.digest
 
 
 def expected_skill_folders(root: Path) -> tuple[str, ...]:
@@ -955,13 +1252,35 @@ def validate_complete_skill_tree(root: Path) -> list[str]:
     return errors
 
 
-def validation_state(build_root: Path = BUILD_ROOT) -> dict[str, str]:
+def validation_state(
+    build_root: Path = BUILD_ROOT,
+    *,
+    repo_root: Path = REPO_ROOT,
+) -> dict[str, str]:
+    source_before = _capture_source_snapshot(repo_root, include_digest=True)
+    _assert_no_untracked_source_files(
+        repo_root,
+        inventory=source_before.inventory,
+    )
     errors = validate_complete_skill_tree(build_root)
     if errors:
         raise ValueError("; ".join(errors))
+    tree_before = tree_digest(build_root)
+    source_after = _capture_source_snapshot(repo_root, include_digest=True)
+    _assert_no_untracked_source_files(
+        repo_root,
+        inventory=source_after.inventory,
+    )
+    tree_after = tree_digest(build_root)
+    if source_before != source_after or tree_before != tree_after:
+        raise ValueError(
+            "Source or generated bytes changed while computing validation "
+            "state; run make validate again."
+        )
+    assert source_after.digest is not None
     return {
-        "source_sha256": source_digest(),
-        "tree_sha256": tree_digest(build_root),
+        "source_sha256": source_after.digest,
+        "tree_sha256": tree_after,
     }
 
 
@@ -969,8 +1288,10 @@ def write_validation_receipt(
     build_root: Path = BUILD_ROOT,
     receipt_path: Path = VALIDATION_RECEIPT_PATH,
     expected_state: dict[str, str] | None = None,
+    *,
+    repo_root: Path = REPO_ROOT,
 ) -> dict:
-    current_state = validation_state(build_root)
+    current_state = validation_state(build_root, repo_root=repo_root)
     if expected_state is not None and current_state != expected_state:
         raise ValueError(
             "Source or generated bytes changed during validation; "
@@ -1001,6 +1322,12 @@ def write_validation_receipt(
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
+        final_state = validation_state(build_root, repo_root=repo_root)
+        if final_state != current_state:
+            raise ValueError(
+                "Source or generated bytes changed before receipt publication; "
+                "run make validate again."
+            )
         temporary.replace(receipt_path)
     except BaseException:
         temporary.unlink(missing_ok=True)
@@ -1045,11 +1372,10 @@ def read_validation_receipt(
 def verify_validation_receipt(
     build_root: Path = BUILD_ROOT,
     receipt_path: Path = VALIDATION_RECEIPT_PATH,
+    *,
+    repo_root: Path = REPO_ROOT,
 ) -> dict:
     payload = read_validation_receipt(receipt_path)
-    errors = validate_complete_skill_tree(build_root)
-    if errors:
-        raise ValueError("; ".join(errors))
     if payload.get("skill_folders") != list(SKILL_FOLDERS):
         raise ValueError("Validation receipt does not cover all three skills.")
     if payload.get("suites") != [
@@ -1059,14 +1385,13 @@ def verify_validation_receipt(
         "plugin-compile",
     ]:
         raise ValueError("Validation receipt does not cover the default gate.")
-    actual_source = source_digest()
-    if payload.get("source_sha256") != actual_source:
+    actual_state = validation_state(build_root, repo_root=repo_root)
+    if payload.get("source_sha256") != actual_state["source_sha256"]:
         raise ValueError(
             "Validation receipt is stale for the current source state. "
             "Run make validate."
         )
-    actual_tree = tree_digest(build_root)
-    if payload.get("tree_sha256") != actual_tree:
+    if payload.get("tree_sha256") != actual_state["tree_sha256"]:
         raise ValueError(
             "Validation receipt is stale for build/generated. Run make validate."
         )

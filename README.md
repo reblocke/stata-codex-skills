@@ -38,7 +38,10 @@ Generated skills are written to `build/generated/` and published into:
 
 If `CODEX_HOME` is set, the default publication root is
 `$CODEX_HOME/skills/`. Custom publication roots must resolve outside this
-repository and must not overlap `build/generated/`.
+repository, its Git metadata, and `build/generated/`. The final destination
+must be owned by the effective user and must not be group- or other-writable;
+writable ancestors are rejected unless the ancestor is sticky and the next
+existing child is owned by the effective user.
 Publication holds a kernel advisory lock on that destination directory and
 keeps `.stata-codex-skills-publish.lock` as a protocol sentinel. Unresolved
 `.stata-codex-skills-publish-*` recovery directories block later publication
@@ -119,15 +122,17 @@ make validate
 make publish
 ```
 
-`make validate` writes a digest-bound receipt only after the complete default
-gate succeeds. `make publish` requires that receipt to be less than one hour
-old and to match both the current source state and the exact staged tree.
-Schema 3 receipts also require the deterministic publication modes used by the
-renderer and publisher: `0755` for generated skill directories and `0644` for
-generated skill files. A permission change requires a fresh render and
-validation before publication. Existing installed skill trees with other modes
-must be corrected to this policy, or moved aside after review, before a later
-publication can replace them.
+`make validate` invalidates any prior receipt before running `make check`, then
+writes a new digest-bound receipt only after the complete default gate
+succeeds. `make publish` requires that receipt to be less than one hour old,
+rejects both nonignored untracked files and ignored executable inputs, and
+requires the tracked source paths and bytes and exact staged tree to remain
+unchanged. Schema 3 receipts also require the deterministic publication modes
+used by the renderer and publisher: `0755` for generated skill directories and
+`0644` for generated skill files. A generated-tree permission change requires
+a fresh render and validation before publication. Existing installed skill
+trees with other modes must be corrected to this policy, or moved aside after
+review, before a later publication can replace them.
 
 Useful targeted validation commands:
 
@@ -285,19 +290,26 @@ When you update the repo, the normal order is:
 `make build` stages and validates the complete three-skill tree beside
 `build/generated/`, then swaps it as one filesystem transaction. A render or
 staged-tree failure leaves the prior generated tree untouched when rollback
-completes. If identity or content changes make automatic cleanup uncertain,
-the renderer preserves the hidden stage or prior-tree backup and reports its
-path for review. These render and publication transactions restore or preserve
-state after handled Python exceptions and catchable process interruptions;
-they do not promise durability across sudden power loss, forced termination, or
-storage-device failure. Complete-tree preservation extends through the final
-public-name and private-quarantine checks. POSIX lacks inode-conditional
-`unlink` and `rmdir`, so a same-UID process deliberately racing the verified
-private tree or its parent/public transaction names after that boundary is
-outside the automatic cleanup guarantee. `make all`
-remains a compatibility alias for `make check`. Direct `--output-root` renders
-accept absent or empty external directories; an existing target must already
-have the dedicated three-skill generated-tree layout.
+completes. The build refuses tracked entries under canonical
+`build/generated/`, runs a no-follow repository scan before linting or
+rendering, and rejects any overlap between the output root and configuration,
+content, template, or lock inputs. The scan binds tracked, untracked, and
+ignored gate inputs to one stable Git-index snapshot; executable inputs must be
+tracked. Path containment checks use filesystem identities so case aliases on
+case-insensitive filesystems cannot bypass them. If identity or content changes
+make automatic cleanup uncertain, the renderer preserves the hidden stage or
+prior-tree backup and reports its exact surviving path for review. These render
+and publication transactions
+restore or preserve state after handled Python exceptions and catchable process
+interruptions; they do not promise durability across sudden power loss, forced
+termination, or storage-device failure. Complete-tree preservation extends
+through the final public-name and private-quarantine checks. POSIX lacks
+inode-conditional `unlink` and `rmdir`, so a same-UID process deliberately
+racing the verified private tree or its parent/public transaction names after
+that boundary is outside the automatic cleanup guarantee. `make all` remains a
+compatibility alias for `make check`. Direct `--output-root` renders accept
+absent or empty external directories; an existing target must already have the
+dedicated three-skill generated-tree layout.
 
 Fetching upstream material, harvesting help, scaffolding candidates, and
 refreshing locks are explicit maintenance operations. Review their ignored
@@ -309,14 +321,22 @@ To compare one exact upstream revision:
 make refresh UPSTREAM_REF=33a7efc85e92cd30edc7b907f1deb9d7038397bc
 ```
 
-The refresh checks out that full commit in detached-head state and atomically
-writes only `raw/candidates/upstream-comparison.yaml`; it never changes curated
-content or locks. A verified prior report is moved to a uniquely named ignored
-`.stale` quarantine before refresh, so failed runs cannot leave stale evidence
-at the canonical path. Reports created before ownership metadata was added must
-be reviewed and then moved or deleted explicitly before the next refresh.
-Failed atomic publications retain their uniquely named ignored `.tmp` candidate
-for inspection rather than risk deleting a concurrent replacement.
+The refresh first validates the complete reviewed upstream lock, including an
+exact match to the configured repository URL. It clears inherited Git helper
+and configuration variables and checks the dedicated checkout's complete
+`.git` tree before every Git launch: metadata must stay on the checkout device,
+redirecting or special entries are rejected, and mutable files must be singly
+linked. It then checks out the full commit in detached-head state and
+atomically writes only `raw/candidates/upstream-comparison.yaml`; it never
+changes curated content or locks. A verified prior report is moved to a
+uniquely named ignored `.stale` quarantine before refresh, so failed runs
+cannot leave stale evidence at the canonical path. Recovery diagnostics name
+only an identity-verified path, or explicitly state that a displaced
+descriptor-held directory has no verified current pathname. Reports created
+before ownership metadata was added must be reviewed and then moved or deleted
+explicitly before the next refresh. Failed atomic publications retain their
+uniquely named ignored `.tmp` candidate for inspection rather than risk
+deleting a concurrent replacement.
 
 ## What each script does
 
@@ -370,6 +390,8 @@ The validator uses bounded network, compiler, subprocess, and Stata timeouts
 and terminates lingering Stata processes. Failed runs print bounded diagnostics
 with repository, home-directory, temporary-path, and Stata license metadata
 sanitized. The workspace is then deleted unless `--keep-workdir` was supplied.
+If workspace deletion fails, the gate fails without issuing a receipt and
+reports the retained temporary path for inspection.
 Package tests use isolated temporary `PLUS` and `PERSONAL` paths, and stochastic
 smoke tests use a fixed seed.
 
@@ -389,7 +411,7 @@ tests remain documented local integrations because CI has no Stata license.
 ### Static and core validation
 
 - Static schema, provenance, lock, prompt-case, and generated-drift lint: pass
-- Python unit tests: 77 passed
+- Python unit suite: pass (see the current CI run for the discovered test count)
 - Structured routing cases: 76 (63 canonical plus 13 boundary cases)
 - Fresh-agent forward routing: 76/76 selected the expected route and no forbidden route
 - Deterministic clean double render and repository secret/artifact scan: pass

@@ -22,6 +22,7 @@ from libskillpack import (
     CONTENT_ROOT,
     LOCK_ROOT,
     REPO_ROOT,
+    SKILL_CONFIG_PATH,
     TEMPLATES_ROOT,
     content_entries_by_skill,
     iter_content_entries,
@@ -34,6 +35,7 @@ from release_state import (
     CANONICAL_DIRECTORY_MODE,
     CANONICAL_FILE_MODE,
     SKILL_FOLDERS,
+    tracked_source_paths,
     tree_digest,
     validate_complete_skill_tree,
 )
@@ -138,15 +140,19 @@ def _safe_render_path(root: Path, *parts: str | Path) -> Path:
     return resolved_candidate
 
 
-def _existing_ancestor_identities(path: Path) -> tuple[tuple[int, int], ...]:
-    """Return filesystem identities from the deepest existing ancestor upward."""
+def _existing_ancestor_identities(
+    path: Path,
+) -> tuple[bool, tuple[tuple[int, int], ...]]:
+    """Return path existence and identities from its deepest existing ancestor."""
 
     current = path
+    path_exists = True
     while True:
         try:
             current.stat()
             break
         except FileNotFoundError:
+            path_exists = False
             parent = current.parent
             if parent == current:
                 raise
@@ -162,8 +168,56 @@ def _existing_ancestor_identities(path: Path) -> tuple[tuple[int, int], ...]:
         identities.append((metadata.st_dev, metadata.st_ino))
         parent = current.parent
         if parent == current:
-            return tuple(identities)
+            return path_exists, tuple(identities)
         current = parent
+
+
+def _paths_share_location(first: Path, second: Path) -> bool:
+    """Compare path locations by identity, with spelling fallback if absent."""
+
+    resolved_first = Path(first).expanduser().resolve(strict=False)
+    resolved_second = Path(second).expanduser().resolve(strict=False)
+    if resolved_first == resolved_second:
+        return True
+    first_exists, first_ancestors = _existing_ancestor_identities(
+        resolved_first
+    )
+    second_exists, second_ancestors = _existing_ancestor_identities(
+        resolved_second
+    )
+    return (
+        first_exists
+        and second_exists
+        and first_ancestors[0] == second_ancestors[0]
+    )
+
+
+def _path_contains(container: Path, candidate: Path) -> bool:
+    """Return whether container equals or contains candidate by filesystem identity."""
+
+    resolved_container = Path(container).expanduser().resolve(strict=False)
+    resolved_candidate = Path(candidate).expanduser().resolve(strict=False)
+    if (
+        resolved_candidate == resolved_container
+        or resolved_candidate.is_relative_to(resolved_container)
+    ):
+        return True
+    container_exists, container_ancestors = _existing_ancestor_identities(
+        resolved_container
+    )
+    _candidate_exists, candidate_ancestors = _existing_ancestor_identities(
+        resolved_candidate
+    )
+    return (
+        container_exists
+        and container_ancestors[0] in candidate_ancestors
+    )
+
+
+def _paths_overlap(first: Path, second: Path) -> bool:
+    """Return whether either path equals or contains the other."""
+
+    return _path_contains(first, second) or _path_contains(second, first)
 
 
 def _validated_canonical_build_root(requested: Path) -> Path:
@@ -174,12 +228,12 @@ def _validated_canonical_build_root(requested: Path) -> Path:
     resolved_build_root = expected_build_root.resolve(strict=False)
     configured_build_root = Path(os.path.abspath(BUILD_ROOT.expanduser()))
     requested_root = Path(os.path.abspath(requested))
-    if configured_build_root != expected_build_root:
+    if not _paths_share_location(configured_build_root, expected_build_root):
         raise ValueError(
             "canonical render output must be configured as "
             "REPO_ROOT/build/generated"
         )
-    if requested_root != expected_build_root:
+    if not _paths_share_location(requested_root, expected_build_root):
         raise ValueError(
             "canonical build output must use the repository-anchored "
             f"path {expected_build_root}"
@@ -265,19 +319,71 @@ def _resolved_output_root(output_root: Path) -> Path:
         raise ValueError("refusing to render over a filesystem root")
     repository_root = REPO_ROOT.resolve(strict=True)
     canonical_build_root = BUILD_ROOT.resolve(strict=False)
-    if resolved == canonical_build_root:
+    if _paths_share_location(resolved, canonical_build_root):
         return _validated_canonical_build_root(requested)
     repository_metadata = repository_root.stat()
     repository_identity = (
         repository_metadata.st_dev,
         repository_metadata.st_ino,
     )
-    if repository_identity in _existing_ancestor_identities(resolved):
+    _resolved_exists, resolved_ancestors = _existing_ancestor_identities(
+        resolved
+    )
+    if repository_identity in resolved_ancestors:
         raise ValueError(
             "in-repository render output must be build/generated; "
             f"refusing {resolved}"
         )
     return resolved
+
+
+def _validate_renderer_source_separation(
+    output_root: Path,
+    content_root: Path,
+    config_path: Path,
+) -> None:
+    """Keep a whole-root replacement separate from every renderer input."""
+
+    sources = (
+        ("skill configuration", config_path),
+        ("content", content_root),
+        ("templates", TEMPLATES_ROOT),
+        ("locks", LOCK_ROOT),
+    )
+    for label, source in sources:
+        if _paths_overlap(output_root, source):
+            resolved_output = output_root.resolve(strict=False)
+            resolved_source = Path(source).expanduser().resolve(strict=False)
+            raise ValueError(
+                "render output root overlaps a renderer source in either "
+                f"direction ({label}): output={resolved_output}; "
+                f"source={resolved_source}"
+            )
+
+
+def _assert_no_tracked_canonical_output_paths(output_root: Path) -> None:
+    """Refuse to replace force-tracked files beneath build/generated."""
+
+    repository_root = REPO_ROOT.resolve(strict=True)
+    canonical_output = (repository_root / "build" / "generated").resolve(
+        strict=False
+    )
+    if not _paths_share_location(output_root, canonical_output):
+        return
+    conflicts = tuple(
+        relative
+        for relative in tracked_source_paths(REPO_ROOT)
+        if _path_contains(
+            canonical_output,
+            repository_root / relative,
+        )
+    )
+    if conflicts:
+        rendered = ", ".join(path.as_posix() for path in conflicts)
+        raise ValueError(
+            "canonical render output contains Git-tracked paths and cannot be "
+            f"replaced: {rendered}"
+        )
 
 
 def preflight_existing_output_root(output_root: Path) -> None:
@@ -1278,6 +1384,7 @@ def _restore_quarantined_entry(
     name: str,
     moved_metadata: os.stat_result,
     display_path: Path,
+    quarantine_path: Path,
 ) -> None:
     """Restore or preserve a mismatched entry without deleting its bytes."""
 
@@ -1300,7 +1407,8 @@ def _restore_quarantined_entry(
             return
         raise RenderTransactionError(
             "render cleanup moved a changed entry into private quarantine and "
-            f"could not restore it at {display_path}; its bytes remain preserved"
+            f"could not restore it at {display_path}; its bytes remain "
+            f"preserved at {quarantine_path}"
         ) from restore_error
 
 
@@ -1386,6 +1494,7 @@ def _remove_verified_empty_directory_via_quarantine(
                     name,
                     moved_after_error,
                     display_path,
+                    cleanup_path / name,
                 )
                 raise RenderTransactionError(
                     "verified empty render directory changed while moving into "
@@ -1406,6 +1515,7 @@ def _remove_verified_empty_directory_via_quarantine(
                     name,
                     moved,
                     display_path,
+                    cleanup_path / name,
                 )
             raise RenderTransactionError(
                 "verified empty render directory changed while moving into "
@@ -1443,6 +1553,7 @@ def _remove_verified_empty_directory_via_quarantine(
                     name,
                     current,
                     display_path,
+                    cleanup_path / name,
                 )
             raise RenderTransactionError(
                 "verified empty render directory changed in private cleanup "
@@ -1462,6 +1573,7 @@ def _remove_verified_empty_directory_via_quarantine(
                     name,
                     observed,
                     display_path,
+                    cleanup_path / name,
                 )
             raise RenderTransactionError(
                 "verified empty render directory changed before private removal "
@@ -1481,6 +1593,7 @@ def _remove_verified_empty_directory_via_quarantine(
                     name,
                     current,
                     display_path,
+                    cleanup_path / name,
                 )
             raise RenderTransactionError(
                 "verified empty render directory could not be removed from "
@@ -1589,6 +1702,7 @@ def _clear_directory_descriptor(
                         name,
                         moved,
                         child_path,
+                        display_path / quarantine_name / name,
                     )
                     raise RenderTransactionError(
                         "render backup entry changed while it was moved into "
@@ -1620,6 +1734,7 @@ def _clear_directory_descriptor(
                     name,
                     moved,
                     child_path,
+                    display_path / quarantine_name / name,
                 )
                 raise RenderTransactionError(
                     "render backup entry changed while it was moved into "
@@ -1666,6 +1781,7 @@ def _clear_directory_descriptor(
                     name,
                     moved,
                     child_path,
+                    display_path / quarantine_name / name,
                 )
                 raise RenderTransactionError(
                     "render backup file changed while its quarantined bytes "
@@ -1681,6 +1797,7 @@ def _clear_directory_descriptor(
                     name,
                     moved,
                     child_path,
+                    display_path / quarantine_name / name,
                 )
                 raise RenderTransactionError(
                     "render backup file contents changed before deletion and "
@@ -1713,6 +1830,7 @@ def _clear_directory_descriptor(
                     name,
                     current_metadata,
                     child_path,
+                    display_path / quarantine_name / name,
                 )
                 raise RenderTransactionError(
                     "render backup file changed during its final pre-delete "
@@ -1745,6 +1863,7 @@ def _clear_directory_descriptor(
                     name,
                     final_observed,
                     child_path,
+                    display_path / quarantine_name / name,
                 )
                 raise RenderTransactionError(
                     "render backup file changed immediately before deletion "
@@ -1872,6 +1991,7 @@ def _remove_owned_directory(
                     directory.name,
                     moved,
                     directory,
+                    moved_root_path,
                 )
             raise RenderTransactionError(
                 "render backup root changed while moving into private cleanup "
@@ -2005,6 +2125,7 @@ def _remove_owned_directory(
                         directory.name,
                         moved,
                         directory,
+                        cleanup_path / directory.name,
                     )
                 except BaseException as restore_error:
                     recovery_errors.append(str(restore_error))
@@ -2182,6 +2303,7 @@ def _replace_rendered_tree(
         )
 
     try:
+        _assert_no_tracked_canonical_output_paths(output_root)
         if backup_root is not None:
             _atomic_rename_no_replace(output_root, backup_root)
             _verify_moved_output_state(backup_root, expected_output_state)
@@ -2292,7 +2414,16 @@ def render_all(
     """Render, validate, and transactionally replace a complete skill tree."""
 
     output_root = _resolved_output_root(output_root)
-    config = load_skill_config(config_path) if config_path else load_skill_config()
+    effective_config_path = (
+        Path(config_path) if config_path is not None else SKILL_CONFIG_PATH
+    )
+    _validate_renderer_source_separation(
+        output_root,
+        Path(content_root),
+        effective_config_path,
+    )
+    _assert_no_tracked_canonical_output_paths(output_root)
+    config = load_skill_config(effective_config_path)
     validate_required_skills(config)
     validate_render_inputs(config, content_root)
     grouped, by_slug = prepare_catalog(config, content_root)

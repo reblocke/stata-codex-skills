@@ -41,6 +41,7 @@ scaffold:
 	$(UV_RUN) python scripts/scaffold_content.py
 
 build: lock-check
+	$(UV_RUN) python scripts/scan_repository.py
 	$(UV_RUN) python scripts/lint_skill_pack.py --no-generated-check
 	$(UV_RUN) python scripts/render_skills.py
 
@@ -71,7 +72,11 @@ check: build
 publish:
 	$(UV_RUN) python scripts/publish_local.py $(DEST_ARG)
 
-validate: check
+validate:
+	@test ! -L "$(CURDIR)/build" || \
+		(echo "ERROR: build must not be a symlink"; exit 2)
+	@/bin/rm -f -- "$(CURDIR)/build/validation-receipt.json"
+	$(MAKE) check
 	$(UV_RUN) python scripts/validate_skill_pack.py \
 		--suite default --write-receipt $(KEEP_WORKDIR_ARG)
 
