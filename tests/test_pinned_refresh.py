@@ -33,8 +33,16 @@ IGNORED_COLLISION_PATH = Path("local-cache.txt")
 
 
 def run_git(repository: Path, *arguments: str) -> CompletedProcess[str]:
+    arguments_list = list(arguments)
+    if (
+        arguments_list
+        and arguments_list[0] == "clone"
+        and "--no-hardlinks" not in arguments_list
+        and "--no-local" not in arguments_list
+    ):
+        arguments_list.insert(1, "--no-hardlinks")
     return subprocess.run(
-        ["git", "-C", str(repository), *arguments],
+        ["git", "-C", str(repository), *arguments_list],
         check=True,
         capture_output=True,
         text=True,
@@ -1257,6 +1265,65 @@ class PinnedRefreshTests(unittest.TestCase):
             mocked_popen.assert_not_called()
             self.assertEqual(sentinel, external.read_bytes())
             self.assertFalse(report_path.exists())
+
+    def test_git_object_namespace_hardlinks_are_rejected_before_git_launch(
+        self,
+    ) -> None:
+        for relative_path in (
+            Path("objects") / "info" / "packs",
+            Path("objects") / "pack" / "multi-pack-index",
+        ):
+            with self.subTest(path=relative_path), TemporaryDirectory(
+                prefix="pinned-object-hardlink-"
+            ) as temp_root:
+                root = Path(temp_root)
+                fixture = UpstreamFixture(root)
+                raw_root = root / "raw"
+                checkout = raw_root / "upstream" / "stata-skill"
+                report_path = (
+                    raw_root / "candidates" / "upstream-comparison.yaml"
+                )
+                lock_path = root / "locks" / "upstream.yaml"
+                fixture.write_first_lock(lock_path)
+                checkout.parent.mkdir(parents=True)
+                run_git(root, "clone", str(fixture.repository), str(checkout))
+                external = root / "external-object-metadata"
+                sentinel = b"external object metadata sentinel\n"
+                external.write_bytes(sentinel)
+                hardlink = checkout / ".git" / relative_path
+                hardlink.parent.mkdir(parents=True, exist_ok=True)
+                if hardlink.exists():
+                    hardlink.rename(
+                        hardlink.with_name(f"{hardlink.name}-owned")
+                    )
+                os.link(external, hardlink)
+                self.assertGreater(hardlink.stat().st_nlink, 1)
+
+                with patch.multiple(
+                    fetch_upstream,
+                    REPO_ROOT=root,
+                    RAW_ROOT=raw_root,
+                    UPSTREAM_REPO_DIR=checkout,
+                    UPSTREAM_REPO_URL=str(fixture.repository),
+                    UPSTREAM_LOCK_PATH=lock_path,
+                ), patch.object(
+                    fetch_upstream.subprocess,
+                    "Popen",
+                ) as mocked_popen:
+                    exit_code = fetch_upstream.main(
+                        [
+                            "--upstream-ref",
+                            fixture.first_commit,
+                            "--offline",
+                            "--report",
+                            str(report_path),
+                        ]
+                    )
+
+                self.assertEqual(1, exit_code)
+                mocked_popen.assert_not_called()
+                self.assertEqual(sentinel, external.read_bytes())
+                self.assertFalse(report_path.exists())
 
     def test_git_directory_must_share_the_checkout_device(self) -> None:
         with TemporaryDirectory(prefix="pinned-git-device-") as temp_root:
@@ -2632,6 +2699,185 @@ class PinnedRefreshTests(unittest.TestCase):
                         report_bytes,
                         (displaced_parent / report_path.name).read_bytes(),
                     )
+
+    def test_quarantine_recovery_handles_an_absent_public_parent(self) -> None:
+        with TemporaryDirectory(
+            prefix="pinned-report-parent-absent-"
+        ) as temp_root:
+            root = Path(temp_root)
+            raw_root = root / "raw"
+            report_path = (
+                raw_root / "candidates" / "upstream-comparison.yaml"
+            )
+            displaced_parent = raw_root / "candidates-displaced"
+            report_path.parent.mkdir(parents=True)
+            report_bytes = (
+                "schema_version: 1\n"
+                "report_type: upstream-comparison\n"
+                f"report_owner: {fetch_upstream.REPORT_OWNER}\n"
+            ).encode("utf-8")
+            report_path.write_bytes(report_bytes)
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=raw_root / "upstream" / "stata-skill",
+            ):
+                target = fetch_upstream.open_report_target(report_path)
+
+                def displace_parent_then_fail_verification(
+                    candidate_target: fetch_upstream.ReportTarget,
+                    entry_name: str,
+                    owner_descriptor: int,
+                    expected: fetch_upstream.TemporaryFileState,
+                ) -> None:
+                    del entry_name, owner_descriptor, expected
+                    self.assertIs(candidate_target, target)
+                    report_path.parent.rename(displaced_parent)
+                    raise RuntimeError("forced verification failure")
+
+                try:
+                    with patch.object(
+                        fetch_upstream,
+                        "verify_owned_temporary_entry",
+                        side_effect=displace_parent_then_fail_verification,
+                    ), self.assertRaises(RuntimeError) as raised:
+                        fetch_upstream.remove_stale_report(target)
+                finally:
+                    target.close()
+
+            message = str(raised.exception)
+            self.assertIn("descriptor-held displaced report directory", message)
+            self.assertIn("current pathname unknown", message)
+            self.assertIn(f"basename {report_path.name!r}", message)
+            self.assertIn("device=", message)
+            self.assertIn("inode=", message)
+            self.assertEqual(
+                report_bytes,
+                (displaced_parent / report_path.name).read_bytes(),
+            )
+
+    def test_unknown_candidate_state_does_not_report_a_former_public_path(
+        self,
+    ) -> None:
+        with TemporaryDirectory(
+            prefix="pinned-report-unknown-state-"
+        ) as temp_root:
+            root = Path(temp_root)
+            raw_root = root / "raw"
+            report_path = (
+                raw_root / "candidates" / "upstream-comparison.yaml"
+            )
+            displaced_parent = raw_root / "candidates-displaced"
+            report_path.parent.mkdir(parents=True)
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=raw_root / "upstream" / "stata-skill",
+            ):
+                target = fetch_upstream.open_report_target(report_path)
+
+                def displace_before_state_capture(
+                    file_descriptor: int,
+                    *,
+                    maximum_size: int | None = None,
+                ) -> fetch_upstream.TemporaryFileState:
+                    del file_descriptor, maximum_size
+                    report_path.parent.rename(displaced_parent)
+                    raise OSError("forced initial state-capture failure")
+
+                try:
+                    with patch.object(
+                        fetch_upstream,
+                        "temporary_file_state",
+                        side_effect=displace_before_state_capture,
+                    ), self.assertRaises(RuntimeError) as raised:
+                        fetch_upstream.write_report_atomically(
+                            target,
+                            {"schema_version": 1},
+                        )
+                finally:
+                    target.close()
+
+            candidates = list(
+                displaced_parent.glob(f".{report_path.name}.*.tmp")
+            )
+            self.assertEqual(1, len(candidates))
+            former_path = report_path.parent / candidates[0].name
+            message = str(raised.exception)
+            self.assertIn("candidate state could not be fully verified", message)
+            self.assertIn("descriptor-held displaced report directory", message)
+            self.assertIn("current pathname unknown", message)
+            self.assertIn(f"basename {candidates[0].name!r}", message)
+            self.assertIn("device=", message)
+            self.assertIn("inode=", message)
+            self.assertNotIn(str(former_path), message)
+
+    def test_unknown_candidate_state_does_not_name_a_substituted_entry(
+        self,
+    ) -> None:
+        with TemporaryDirectory(
+            prefix="pinned-report-unknown-substitution-"
+        ) as temp_root:
+            root = Path(temp_root)
+            raw_root = root / "raw"
+            report_path = (
+                raw_root / "candidates" / "upstream-comparison.yaml"
+            )
+            report_path.parent.mkdir(parents=True)
+            external = root / "external-candidate-bytes"
+            sentinel = b"external candidate sentinel\n"
+            external.write_bytes(sentinel)
+            candidate_path: Path | None = None
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=raw_root / "upstream" / "stata-skill",
+            ):
+                target = fetch_upstream.open_report_target(report_path)
+
+                def substitute_before_state_capture(
+                    file_descriptor: int,
+                    *,
+                    maximum_size: int | None = None,
+                ) -> fetch_upstream.TemporaryFileState:
+                    nonlocal candidate_path
+                    del file_descriptor, maximum_size
+                    candidates = list(
+                        report_path.parent.glob(f".{report_path.name}.*.tmp")
+                    )
+                    self.assertEqual(1, len(candidates))
+                    candidate_path = candidates[0]
+                    candidate_path.unlink()
+                    os.link(external, candidate_path)
+                    raise OSError("forced initial state-capture failure")
+
+                try:
+                    with patch.object(
+                        fetch_upstream,
+                        "temporary_file_state",
+                        side_effect=substitute_before_state_capture,
+                    ), self.assertRaises(RuntimeError) as raised:
+                        fetch_upstream.write_report_atomically(
+                            target,
+                            {"schema_version": 1},
+                        )
+                finally:
+                    target.close()
+
+            self.assertIsNotNone(candidate_path)
+            assert candidate_path is not None
+            message = str(raised.exception)
+            self.assertIn("candidate state could not be fully verified", message)
+            self.assertIn("descriptor-held report directory", message)
+            self.assertIn("no verified current pathname", message)
+            self.assertIn(f"basename {candidate_path.name!r}", message)
+            self.assertNotIn(str(candidate_path), message)
+            self.assertEqual(sentinel, external.read_bytes())
+            self.assertEqual(sentinel, candidate_path.read_bytes())
+            self.assertFalse(report_path.exists())
 
     def test_fetch_timeout_fails_without_writing_a_report(self) -> None:
         with TemporaryDirectory(prefix="pinned-timeout-") as temp_root:

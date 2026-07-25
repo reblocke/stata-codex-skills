@@ -1193,6 +1193,73 @@ class PublishTransactionTests(unittest.TestCase):
 
             self.assertFalse(destination.exists())
 
+    def test_revalidated_generation_change_after_staging_never_swaps(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "generation-a")
+            write_skill_tree(destination, "old")
+            initial_receipt = self.create_receipt(generated, receipt)
+            destination_before = {
+                folder: snapshot(destination / folder)
+                for folder in release_state.SKILL_FOLDERS
+            }
+            real_stage_all = publish_local._stage_all
+            final_receipt: dict | None = None
+
+            def stage_then_validate_generation_b(
+                source_root: Path,
+                transaction_root: publish_local.DirectoryHandle,
+            ) -> publish_local.DirectoryHandle:
+                nonlocal final_receipt
+                stage_root = real_stage_all(source_root, transaction_root)
+                (
+                    generated / "stata-core" / "SKILL.md"
+                ).write_text(
+                    "# stata-core\n\ngeneration-b\n",
+                    encoding="utf-8",
+                )
+                final_receipt = self.create_receipt(generated, receipt)
+                return stage_root
+
+            with patch.object(
+                publish_local,
+                "_stage_all",
+                side_effect=stage_then_validate_generation_b,
+            ), patch.object(
+                publish_local,
+                "_swap_all",
+            ) as swap_all, self.assertRaisesRegex(
+                publish_local.PublishError,
+                "receipt source/tree identity changed",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            swap_all.assert_not_called()
+            self.assertIsNotNone(final_receipt)
+            assert final_receipt is not None
+            self.assertEqual(3, initial_receipt["schema_version"])
+            self.assertEqual(3, final_receipt["schema_version"])
+            self.assertEqual(
+                initial_receipt["source_sha256"],
+                final_receipt["source_sha256"],
+            )
+            self.assertNotEqual(
+                initial_receipt["tree_sha256"],
+                final_receipt["tree_sha256"],
+            )
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(
+                    destination_before[folder],
+                    snapshot(destination / folder),
+                )
+
     def test_destination_chmod_after_preflight_is_preserved_before_backup(
         self,
     ) -> None:
@@ -2205,6 +2272,8 @@ class PublishTransactionTests(unittest.TestCase):
             marker = unintended_target / "owner.txt"
             marker.write_text("concurrent owner\n", encoding="utf-8")
             unintended_before = snapshot(unintended_target)
+            anchored_root = destination.stat()
+            original_core = snapshot(destination / "stata-core")
             self.create_receipt(generated, receipt)
             real_replace = publish_local._atomic_rename_no_replace
             replace_calls = 0
@@ -2231,7 +2300,7 @@ class PublishTransactionTests(unittest.TestCase):
             ), self.assertRaisesRegex(
                 publish_local.PublishError,
                 "rollback was incomplete",
-            ):
+            ) as raised:
                 publish_local.publish_skills(
                     source_root=generated,
                     dest_root=destination,
@@ -2249,15 +2318,26 @@ class PublishTransactionTests(unittest.TestCase):
             self.assertTrue(
                 (moved_destination / publish_local.TRANSACTION_LOCK_NAME).is_file()
             )
+            transactions = list(
+                moved_destination.glob(
+                    f"{publish_local.TRANSACTION_PREFIX}*"
+                )
+            )
+            self.assertEqual(1, len(transactions))
+            diagnostic = str(raised.exception)
+            self.assertIn(transactions[0].name, diagnostic)
+            self.assertIn(
+                f"device={anchored_root.st_dev}, inode={anchored_root.st_ino}",
+                diagnostic,
+            )
+            self.assertIn("no verified current pathname", diagnostic)
+            self.assertNotIn(
+                str(destination / transactions[0].name),
+                diagnostic,
+            )
             self.assertEqual(
-                1,
-                len(
-                    list(
-                        moved_destination.glob(
-                            f"{publish_local.TRANSACTION_PREFIX}*"
-                        )
-                    )
-                ),
+                original_core,
+                snapshot(transactions[0] / "backups" / "stata-core"),
             )
 
     def test_edit_between_precheck_and_backup_is_restored_not_deleted(
@@ -3741,6 +3821,8 @@ class PublishTransactionTests(unittest.TestCase):
             write_skill_tree(destination, "old")
             write_skill_tree(unintended_target, "attacker")
             unintended_before = snapshot(unintended_target)
+            anchored_root = destination.stat()
+            original_core = snapshot(destination / "stata-core")
             self.create_receipt(generated, receipt)
             real_swap_all = publish_local._swap_all
 
@@ -3762,7 +3844,7 @@ class PublishTransactionTests(unittest.TestCase):
                 side_effect=swap_then_substitute_root,
             ), redirect_stderr(stderr), self.assertRaises(
                 publish_local.PublishError
-            ):
+            ) as raised:
                 publish_local.publish_skills(
                     source_root=generated,
                     dest_root=destination,
@@ -3777,6 +3859,27 @@ class PublishTransactionTests(unittest.TestCase):
                 (
                     moved_destination / "stata-core" / "SKILL.md"
                 ).read_text(encoding="utf-8"),
+            )
+            transactions = list(
+                moved_destination.glob(
+                    f"{publish_local.TRANSACTION_PREFIX}*"
+                )
+            )
+            self.assertEqual(1, len(transactions))
+            diagnostic = str(raised.exception)
+            self.assertIn(transactions[0].name, diagnostic)
+            self.assertIn(
+                f"device={anchored_root.st_dev}, inode={anchored_root.st_ino}",
+                diagnostic,
+            )
+            self.assertIn("no verified current pathname", diagnostic)
+            self.assertNotIn(
+                str(destination / transactions[0].name),
+                diagnostic,
+            )
+            self.assertEqual(
+                original_core,
+                snapshot(transactions[0] / "backups" / "stata-core"),
             )
 
     def test_post_commit_directory_close_error_is_a_warning_not_failure(

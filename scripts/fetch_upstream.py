@@ -262,7 +262,6 @@ def assert_safe_git_directory_tree(
     *,
     expected_device: int,
     display_path: str | None = None,
-    allow_hardlinked_files: bool = False,
 ) -> None:
     """Reject redirecting or special entries below a Git write namespace."""
 
@@ -329,10 +328,7 @@ def assert_safe_git_directory_tree(
             if stat.S_ISREG(entry_metadata.st_mode):
                 if (
                     entry_metadata.st_dev != expected_device
-                    or (
-                        not allow_hardlinked_files
-                        and entry_metadata.st_nlink != 1
-                    )
+                    or entry_metadata.st_nlink != 1
                 ):
                     raise RuntimeError(
                         f"Raw upstream Git {relative_name} must be a same-device, "
@@ -359,10 +355,12 @@ def assert_safe_git_directory_tree(
                     opened_entry.st_dev,
                     opened_entry.st_ino,
                     stat.S_IFMT(opened_entry.st_mode),
+                    opened_entry.st_nlink,
                 ) != (
                     entry_metadata.st_dev,
                     entry_metadata.st_ino,
                     stat.S_IFMT(entry_metadata.st_mode),
+                    entry_metadata.st_nlink,
                 ):
                     raise RuntimeError(
                         f"Raw upstream Git {relative_name} changed during "
@@ -383,10 +381,12 @@ def assert_safe_git_directory_tree(
                     final_entry.st_dev,
                     final_entry.st_ino,
                     stat.S_IFMT(final_entry.st_mode),
+                    final_entry.st_nlink,
                 ) != (
                     entry_metadata.st_dev,
                     entry_metadata.st_ino,
                     stat.S_IFMT(entry_metadata.st_mode),
+                    entry_metadata.st_nlink,
                 ):
                     raise RuntimeError(
                         f"Raw upstream Git {relative_name} changed during "
@@ -399,13 +399,6 @@ def assert_safe_git_directory_tree(
                     entry_name,
                     expected_device=expected_device,
                     display_path=relative_name,
-                    allow_hardlinked_files=(
-                        allow_hardlinked_files
-                        or (
-                            display_path == ".git"
-                            and entry_name == "objects"
-                        )
-                    ),
                 )
                 try:
                     final_entry = os.stat(
@@ -1731,9 +1724,95 @@ def remove_stale_report(target: ReportTarget) -> PreservedReport | None:
 def report_parent_is_current(target: ReportTarget) -> bool:
     try:
         assert_report_parent_identity(target)
-    except RuntimeError:
+    except (OSError, RuntimeError):
         return False
     return True
+
+
+def describe_report_entry_location(
+    target: ReportTarget,
+    entry_name: str,
+    *,
+    state: TemporaryFileState | None = None,
+    descriptor: int | None = None,
+    entry_identity: tuple[int, int, int] | None = None,
+) -> str:
+    """Name an entry exactly only while its parent and inode retain public names."""
+
+    device: int | None = None
+    inode: int | None = None
+    file_type: int | None = None
+    if state is not None:
+        device = state.device
+        inode = state.inode
+        file_type = stat.S_IFMT(state.mode)
+    elif entry_identity is not None:
+        device, inode, file_type = entry_identity
+    elif descriptor is not None:
+        try:
+            metadata = os.fstat(descriptor)
+        except OSError:
+            pass
+        else:
+            device = metadata.st_dev
+            inode = metadata.st_ino
+            file_type = stat.S_IFMT(metadata.st_mode)
+    parent_is_current = report_parent_is_current(target)
+    if (
+        parent_is_current
+        and device is not None
+        and inode is not None
+        and file_type is not None
+    ):
+        try:
+            named_metadata = os.stat(
+                entry_name,
+                dir_fd=target.parent_fd,
+                follow_symlinks=False,
+            )
+        except OSError:
+            pass
+        else:
+            if (
+                named_metadata.st_dev,
+                named_metadata.st_ino,
+                stat.S_IFMT(named_metadata.st_mode),
+            ) == (device, inode, file_type) and report_parent_is_current(target):
+                try:
+                    final_named = os.stat(
+                        entry_name,
+                        dir_fd=target.parent_fd,
+                        follow_symlinks=False,
+                    )
+                except OSError:
+                    pass
+                else:
+                    if (
+                        (
+                            final_named.st_dev,
+                            final_named.st_ino,
+                            stat.S_IFMT(final_named.st_mode),
+                        )
+                        == (device, inode, file_type)
+                        and report_parent_is_current(target)
+                    ):
+                        return f"at {target.path.parent / entry_name}"
+    if device is None or inode is None:
+        identity_text = "identity unavailable"
+    else:
+        identity_text = f"device={device}, inode={inode}"
+    if parent_is_current:
+        return (
+            f"under basename {entry_name!r} ({identity_text}) in the "
+            "descriptor-held report directory; the directory retains its public "
+            "identity, but this held entry has no verified current pathname "
+            "(current pathname unknown)"
+        )
+    return (
+        f"under basename {entry_name!r} ({identity_text}) in the descriptor-held "
+        "displaced report directory; it has no verified current pathname "
+        "(current pathname unknown)"
+    )
 
 
 def describe_held_report_entry(
@@ -1748,7 +1827,10 @@ def describe_held_report_entry(
             follow_symlinks=False,
         )
     except OSError:
-        return f"{label} has no verified surviving pathname"
+        return (
+            f"{label} has no verified surviving entry "
+            + describe_report_entry_location(target, entry_name)
+        )
     if stat.S_ISREG(metadata.st_mode):
         state = "an unverified regular-file state"
     elif stat.S_ISDIR(metadata.st_mode):
@@ -1757,14 +1839,18 @@ def describe_held_report_entry(
         state = "an unverified symlink state"
     else:
         state = "an unverified special-entry state"
-    if report_parent_is_current(target):
-        return (
-            f"{label} survives at {target.path.parent / entry_name} with {state}"
-        )
     return (
-        f"{label} survives under entry name {entry_name!r} in the descriptor-held "
-        f"displaced report directory with {state}; it has no verified current pathname "
-        f"(recorded former directory: {target.path.parent})"
+        f"{label} survives "
+        + describe_report_entry_location(
+            target,
+            entry_name,
+            entry_identity=(
+                metadata.st_dev,
+                metadata.st_ino,
+                stat.S_IFMT(metadata.st_mode),
+            ),
+        )
+        + f" with {state}"
     )
 
 
@@ -1776,10 +1862,11 @@ def describe_preserved_report(
 
     if preserved.path.parent != target.path.parent:
         return (
-            "the recorded comparison-report quarantine path is outside the "
-            f"dedicated report directory: {preserved.path}"
+            "the recorded comparison-report quarantine basename "
+            f"{preserved.path.name!r} is outside the dedicated report directory; "
+            f"current pathname unknown (device={preserved.state.device}, "
+            f"inode={preserved.state.inode})"
         )
-    parent_is_current = report_parent_is_current(target)
     try:
         descriptor = os.open(
             preserved.path.name,
@@ -1791,12 +1878,23 @@ def describe_preserved_report(
     except FileNotFoundError:
         return (
             "the previous comparison report no longer has its verified quarantine "
-            f"path {preserved.path}; a concurrent same-UID actor may have moved it"
+            + describe_report_entry_location(
+                target,
+                preserved.path.name,
+                state=preserved.state,
+            )
+            + "; a concurrent same-UID actor may have moved it"
         )
     except OSError:
         return (
-            f"the quarantine path {preserved.path} now has an unsupported state; "
-            "a concurrent same-UID actor may have replaced it"
+            "the comparison-report quarantine "
+            + describe_report_entry_location(
+                target,
+                preserved.path.name,
+                state=preserved.state,
+            )
+            + " now has an unsupported state; a concurrent same-UID actor may "
+            "have replaced it"
         )
     try:
         observed = temporary_file_state(
@@ -1805,26 +1903,35 @@ def describe_preserved_report(
         )
     except (OSError, RuntimeError):
         return (
-            f"the quarantine path {preserved.path} now has a different state; "
-            "a concurrent same-UID actor may have replaced it"
+            "the comparison-report quarantine "
+            + describe_report_entry_location(
+                target,
+                preserved.path.name,
+                state=preserved.state,
+            )
+            + " now has a different state; a concurrent same-UID actor may "
+            "have replaced it"
         )
     finally:
         os.close(descriptor)
     if observed == preserved.state:
-        if not parent_is_current:
-            return (
-                "the previous comparison report survives unchanged in the "
-                "descriptor-held report directory, but that directory no longer "
-                f"has the verified public path {preserved.path.parent}; a concurrent "
-                "same-UID actor may have displaced it"
-            )
         return (
-            "the previous comparison report survives unchanged at "
-            f"{preserved.path}"
+            "the previous comparison report survives unchanged "
+            + describe_report_entry_location(
+                target,
+                preserved.path.name,
+                state=preserved.state,
+            )
         )
     return (
-        f"the quarantine path {preserved.path} now has a different state; "
-        "a concurrent same-UID actor may have replaced it"
+        "the comparison-report quarantine "
+        + describe_report_entry_location(
+            target,
+            preserved.path.name,
+            state=preserved.state,
+        )
+        + " now has a different state; a concurrent same-UID actor may have "
+        "replaced it"
     )
 
 
@@ -1945,16 +2052,13 @@ def describe_expected_report_location(
             "the originally opened report has no verified surviving pathname "
             "after a concurrent same-UID mutation"
         )
-    if report_parent_is_current(target):
-        return (
-            "the originally opened report survives unchanged at "
-            f"{target.path.parent / entry_name}"
-        )
     return (
-        "the originally opened report survives unchanged under entry name "
-        f"{entry_name!r} in the descriptor-held displaced report directory; "
-        "it has no verified current pathname "
-        f"(recorded former directory: {target.path.parent})"
+        "the originally opened report survives unchanged "
+        + describe_report_entry_location(
+            target,
+            entry_name,
+            state=expected,
+        )
     )
 
 
@@ -1999,16 +2103,15 @@ def describe_candidate_survival(
     owner_descriptor: int,
     expected: TemporaryFileState | None,
 ) -> str:
-    candidate_path = target.path.parent / entry_name
-    try:
-        assert_report_parent_identity(target)
-        parent_is_current = True
-    except RuntimeError:
-        parent_is_current = False
     if expected is None:
         return (
-            f"candidate state could not be fully verified at {candidate_path}; "
-            "the entry was not removed"
+            "candidate state could not be fully verified "
+            + describe_report_entry_location(
+                target,
+                entry_name,
+                descriptor=owner_descriptor,
+            )
+            + "; the entry was not removed"
         )
     try:
         owner_state = temporary_file_state(
@@ -2018,7 +2121,12 @@ def describe_candidate_survival(
     except (OSError, RuntimeError):
         return (
             "the open generated candidate changed and has no verified surviving "
-            f"path; the recorded path was {candidate_path}"
+            "path "
+            + describe_report_entry_location(
+                target,
+                entry_name,
+                state=expected,
+            )
         )
     try:
         observed_descriptor = os.open(
@@ -2030,14 +2138,24 @@ def describe_candidate_survival(
         )
     except FileNotFoundError:
         return (
-            "the generated candidate has no verified surviving path; "
-            f"{candidate_path} disappeared after a concurrent same-UID mutation"
+            "the generated candidate has no verified surviving entry "
+            + describe_report_entry_location(
+                target,
+                entry_name,
+                state=expected,
+            )
+            + " after a concurrent same-UID mutation"
         )
     except OSError:
         return (
-            f"{candidate_path} now has an unsupported state; the generated "
-            "candidate has no verified surviving path after a concurrent "
-            "same-UID mutation"
+            "the generated candidate "
+            + describe_report_entry_location(
+                target,
+                entry_name,
+                state=expected,
+            )
+            + " now has an unsupported state and no verified surviving path "
+            "after a concurrent same-UID mutation"
         )
     try:
         observed_state = temporary_file_state(
@@ -2046,23 +2164,35 @@ def describe_candidate_survival(
         )
     except (OSError, RuntimeError):
         return (
-            f"{candidate_path} now has a different state; the generated candidate "
-            "has no verified surviving path after a concurrent same-UID mutation"
+            "the generated candidate "
+            + describe_report_entry_location(
+                target,
+                entry_name,
+                state=expected,
+            )
+            + " now has a different state and no verified surviving path after "
+            "a concurrent same-UID mutation"
         )
     finally:
         os.close(observed_descriptor)
     if owner_state == expected and observed_state == expected:
-        if not parent_is_current:
-            return (
-                "generated candidate survives unchanged in the descriptor-held "
-                "report directory, but that directory no longer has the verified "
-                f"public path {candidate_path.parent}; a concurrent same-UID actor "
-                "may have displaced it"
+        return (
+            "generated candidate survives unchanged "
+            + describe_report_entry_location(
+                target,
+                entry_name,
+                state=expected,
             )
-        return f"generated candidate survives unchanged at {candidate_path}"
+        )
     return (
-        f"{candidate_path} now has a different state; the generated candidate "
-        "has no verified surviving path after a concurrent same-UID mutation"
+        "the generated candidate "
+        + describe_report_entry_location(
+            target,
+            entry_name,
+            state=expected,
+        )
+        + " now has a different state and no verified surviving path after a "
+        "concurrent same-UID mutation"
     )
 
 

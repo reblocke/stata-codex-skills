@@ -397,6 +397,53 @@ def _assert_destination_root(identity: DestinationRootIdentity) -> None:
         )
 
 
+def _describe_transaction_recovery(
+    transaction_root: DirectoryHandle,
+    destination_root: DestinationRootIdentity,
+    transaction_lock: TransactionLock,
+) -> str:
+    """Describe recovery state without claiming an unverified pathname."""
+
+    anchored_identity = (
+        f"device={destination_root.device}, inode={destination_root.inode}"
+    )
+    unverified = (
+        f"transaction basename {transaction_root.name!r} under anchored "
+        f"destination root identity ({anchored_identity}); "
+        "no verified current pathname"
+    )
+    root_descriptor = transaction_lock.file_descriptor
+    if root_descriptor is None:
+        return unverified
+    try:
+        _assert_destination_root(destination_root)
+        held_root = os.fstat(root_descriptor)
+        observed_transaction = os.stat(
+            transaction_root.name,
+            dir_fd=root_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(held_root.st_mode)
+            or held_root.st_dev != destination_root.device
+            or held_root.st_ino != destination_root.inode
+            or not stat.S_ISDIR(observed_transaction.st_mode)
+            or observed_transaction.st_dev != transaction_root.device
+            or observed_transaction.st_ino != transaction_root.inode
+        ):
+            return unverified
+        # Reauthorize after the entry observation so the displayed pathname is
+        # backed by a no-follow root identity check at the reporting boundary.
+        _assert_destination_root(destination_root)
+    except (OSError, PublishError):
+        return unverified
+    return (
+        "verified current recovery pathname "
+        f"{destination_root.path / transaction_root.name} "
+        f"(anchored destination root {anchored_identity})"
+    )
+
+
 def _write_all(file_descriptor: int, payload: bytes) -> None:
     written = 0
     while written < len(payload):
@@ -3949,16 +3996,26 @@ def _swap_all(
                 if rollback_errors
                 else str(error)
             )
+            recovery_location = _describe_transaction_recovery(
+                transaction_root,
+                destination_root,
+                transaction_lock,
+            )
             raise PublishError(
                 "Publication failed and rollback was incomplete. Recovery files "
-                f"remain at {transaction_root.display_path}: {details}",
+                f"remain in {recovery_location}: {details}",
                 preserve_transaction=True,
             ) from error
         if preserve_conflict:
+            recovery_location = _describe_transaction_recovery(
+                transaction_root,
+                destination_root,
+                transaction_lock,
+            )
             raise PublishError(
                 "Publication failed and destinations were restored, but "
-                "unrecognized transaction state remains for review at "
-                f"{transaction_root.display_path}: {error}",
+                "unrecognized transaction state remains for review in "
+                f"{recovery_location}: {error}",
                 preserve_transaction=True,
             ) from error
         raise PublishError(
@@ -4095,6 +4152,14 @@ def publish_skills(
         except ValueError as error:
             raise PublishError(str(error)) from error
         require_fresh_receipt(staged_receipt, now=now)
+        if any(
+            staged_receipt.get(field) != receipt.get(field)
+            for field in ("source_sha256", "tree_sha256")
+        ):
+            raise PublishError(
+                "Validation receipt source/tree identity changed during "
+                "publication staging. Run make validate and publish again."
+            )
 
         expected_skill_digests = {
             folder: _skill_digest_from_tree_records(
@@ -4113,6 +4178,19 @@ def publish_skills(
             destination_identity,
         )
     except BaseException as error:
+        recovery_location = (
+            _describe_transaction_recovery(
+                transaction_root,
+                destination_identity,
+                transaction_lock,
+            )
+            if (
+                transaction_root is not None
+                and destination_identity is not None
+                and transaction_lock is not None
+            )
+            else None
+        )
         if transaction_lock is not None:
             try:
                 if destination_identity is None:
@@ -4124,26 +4202,29 @@ def publish_skills(
                     destination_identity,
                 )
             except (OSError, PublishError) as cleanup_error:
+                recovery_suffix = (
+                    f"; publication recovery state remains in {recovery_location}"
+                    if recovery_location is not None
+                    else ""
+                )
                 raise PublishError(
                     f"{error}; transaction-lock cleanup also "
-                    "failed; publication recovery state may remain beside "
-                    f"{transaction_lock.path}: "
-                    f"{cleanup_error}",
+                    f"failed{recovery_suffix}: {cleanup_error}",
                     preserve_transaction=True,
                 ) from error
         if isinstance(error, PublishError):
             if transaction_root is not None and not error.preserve_transaction:
                 raise PublishError(
                     f"{error} Transaction recovery state was preserved for "
-                    f"review at {transaction_root.display_path}.",
+                    f"review in {recovery_location}.",
                     preserve_transaction=True,
                 ) from error
             raise
         if isinstance(error, OSError):
             recovery_suffix = (
-                " Transaction recovery state was preserved for review at "
-                f"{transaction_root.display_path}."
-                if transaction_root is not None
+                " Transaction recovery state was preserved for review in "
+                f"{recovery_location}."
+                if recovery_location is not None
                 else ""
             )
             raise PublishError(
@@ -4175,14 +4256,24 @@ def publish_skills(
                     cleanup_plan,
                 )
             except DestinationAuthorizationError as cleanup_error:
+                recovery_location = _describe_transaction_recovery(
+                    transaction_root,
+                    destination_identity,
+                    transaction_lock,
+                )
                 raise PublishError(
                     "Publication committed to the anchored destination, but "
                     "the requested destination path changed before recovery "
-                    "cleanup. Recovery state was preserved: "
-                    f"{transaction_root.display_path}: {cleanup_error}",
+                    "cleanup. Recovery state was preserved in "
+                    f"{recovery_location}: {cleanup_error}",
                     preserve_transaction=True,
                 ) from cleanup_error
             except (OSError, PublishError) as cleanup_error:
+                recovery_location = _describe_transaction_recovery(
+                    transaction_root,
+                    destination_identity,
+                    transaction_lock,
+                )
                 if (
                     isinstance(cleanup_error, PublishError)
                     and cleanup_error.preserve_transaction
@@ -4190,14 +4281,14 @@ def publish_skills(
                     raise PublishError(
                         "Publication committed and verified, but transaction "
                         "cleanup found unrecognized state. Recovery files were "
-                        f"preserved at {transaction_root.display_path}: "
+                        f"preserved in {recovery_location}: "
                         f"{cleanup_error}",
                         preserve_transaction=True,
                     ) from cleanup_error
                 print(
                     "WARNING: publication committed and verified, but obsolete "
                     "transaction backup cleanup failed; recovery files remain at "
-                    f"{transaction_root.display_path}: {cleanup_error}",
+                    f"{recovery_location}: {cleanup_error}",
                     file=sys.stderr,
                 )
         if transaction_lock is not None:
