@@ -42,7 +42,12 @@ repository and must not overlap `build/generated/`.
 Publication holds a kernel advisory lock on that destination directory and
 keeps `.stata-codex-skills-publish.lock` as a protocol sentinel. Unresolved
 `.stata-codex-skills-publish-*` recovery directories block later publication
-until they are reviewed and removed.
+until they are reviewed and removed. A clean transaction failure restores the
+accepted prior skill directories. If rollback or cleanup cannot prove that a
+directory still contains only transaction-owned bytes, the command preserves
+the complete recovery directory and reports its path instead of deleting
+uncertain state. Verify the installed skills and retained backup or staged
+content before manually removing a reported recovery directory.
 
 ## Design principles
 
@@ -273,7 +278,13 @@ When you update the repo, the normal order is:
 
 `make build` stages and validates the complete three-skill tree beside
 `build/generated/`, then swaps it as one filesystem transaction. A render or
-staged-tree failure leaves the prior generated tree untouched. `make all`
+staged-tree failure leaves the prior generated tree untouched when rollback
+completes. If identity or content changes make automatic cleanup uncertain,
+the renderer preserves the hidden stage or prior-tree backup and reports its
+path for review. These render and publication transactions restore or preserve
+state after handled Python exceptions and catchable process interruptions;
+they do not promise durability across sudden power loss, forced termination, or
+storage-device failure. `make all`
 remains a compatibility alias for `make check`. Direct `--output-root` renders
 accept absent or empty external directories; an existing target must already
 have the dedicated three-skill generated-tree layout.
