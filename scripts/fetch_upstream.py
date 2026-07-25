@@ -9,6 +9,7 @@ import hashlib
 import os
 import re
 import secrets
+import signal
 import stat
 import subprocess
 import sys
@@ -37,6 +38,8 @@ NETWORK_GIT_TIMEOUT_SECONDS = 120
 UPSTREAM_CHECKOUT_RELATIVE = Path("upstream") / "stata-skill"
 CHECKOUT_OWNER_MARKER = "stata-codex-skills-owner"
 CHECKOUT_OWNER_CONTENT = "stata-codex-skills upstream checkout v1\n"
+REPORT_OWNER = "stata-codex-skills upstream comparison v1"
+MAX_REPORT_BYTES = 4 * 1024 * 1024
 DIRECTORY_OPEN_FLAGS = (
     os.O_RDONLY
     | getattr(os, "O_DIRECTORY", 0)
@@ -55,6 +58,16 @@ class ReportTarget:
 
     def close(self) -> None:
         os.close(self.parent_fd)
+
+
+@dataclass
+class GitMetadataContext:
+    checkout_fd: int
+    git_dir_fd: int
+
+    def close(self) -> None:
+        os.close(self.git_dir_fd)
+        os.close(self.checkout_fd)
 
 
 @dataclass(frozen=True)
@@ -160,17 +173,207 @@ def assert_checkout_identity(checkout_fd: int) -> None:
         os.close(observed_fd)
 
 
-def open_git_directory(checkout_fd: int) -> int:
+def open_git_metadata(checkout_fd: int) -> GitMetadataContext:
     try:
-        return os.open(".git", DIRECTORY_OPEN_FLAGS, dir_fd=checkout_fd)
+        git_dir_fd = os.open(".git", DIRECTORY_OPEN_FLAGS, dir_fd=checkout_fd)
     except OSError as error:
         raise RuntimeError(
-            "Raw upstream checkout must have a real, dedicated .git directory"
+            "Raw upstream refresh requires a real, dedicated .git directory; "
+            "linked worktrees are not supported"
         ) from error
+    return GitMetadataContext(checkout_fd=checkout_fd, git_dir_fd=git_dir_fd)
 
 
-def write_checkout_owner_marker(checkout_fd: int) -> None:
-    git_fd = open_git_directory(checkout_fd)
+def read_bounded_regular_file(
+    parent_fd: int,
+    name: str,
+    *,
+    maximum_size: int,
+    label: str,
+) -> bytes | None:
+    try:
+        file_descriptor = os.open(
+            name,
+            os.O_RDONLY
+            | getattr(os, "O_NOFOLLOW", 0)
+            | getattr(os, "O_NONBLOCK", 0),
+            dir_fd=parent_fd,
+        )
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise RuntimeError(f"{label} is not a safe regular file") from error
+    try:
+        metadata = os.fstat(file_descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_size > maximum_size
+        ):
+            raise RuntimeError(f"{label} is not a safe regular file")
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                file_descriptor,
+                min(1024 * 1024, maximum_size + 1 - total),
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > maximum_size:
+                raise RuntimeError(f"{label} is unexpectedly large")
+        payload = b"".join(chunks)
+        final_metadata = os.fstat(file_descriptor)
+        if (
+            metadata.st_dev,
+            metadata.st_ino,
+            metadata.st_mode,
+            metadata.st_nlink,
+            metadata.st_size,
+        ) != (
+            final_metadata.st_dev,
+            final_metadata.st_ino,
+            final_metadata.st_mode,
+            final_metadata.st_nlink,
+            final_metadata.st_size,
+        ):
+            raise RuntimeError(f"{label} changed while it was read")
+        if len(payload) != metadata.st_size:
+            raise RuntimeError(f"{label} changed while it was read")
+        return payload
+    finally:
+        os.close(file_descriptor)
+
+
+def assert_dedicated_git_layout(context: GitMetadataContext) -> None:
+    try:
+        os.stat(
+            "commondir",
+            dir_fd=context.git_dir_fd,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        pass
+    else:
+        raise RuntimeError(
+            "Raw upstream checkout must not redirect Git common metadata"
+        )
+
+    directory_fds: dict[str, int] = {}
+    try:
+        for name in ("objects", "refs"):
+            try:
+                directory_fds[name] = os.open(
+                    name,
+                    DIRECTORY_OPEN_FLAGS,
+                    dir_fd=context.git_dir_fd,
+                )
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                raise RuntimeError(
+                    f"Raw upstream Git {name} must be a real directory"
+                ) from error
+
+        objects_fd = directory_fds.get("objects")
+        if objects_fd is not None:
+            try:
+                info_fd = os.open(
+                    "info",
+                    DIRECTORY_OPEN_FLAGS,
+                    dir_fd=objects_fd,
+                )
+            except FileNotFoundError:
+                info_fd = None
+            except OSError as error:
+                raise RuntimeError(
+                    "Raw upstream Git objects/info must be a real directory"
+                ) from error
+            if info_fd is not None:
+                try:
+                    try:
+                        os.stat(
+                            "alternates",
+                            dir_fd=info_fd,
+                            follow_symlinks=False,
+                        )
+                    except FileNotFoundError:
+                        pass
+                    else:
+                        raise RuntimeError(
+                            "Raw upstream checkout must not use alternate object stores"
+                        )
+                finally:
+                    os.close(info_fd)
+    finally:
+        for directory_fd in directory_fds.values():
+            os.close(directory_fd)
+
+    config_payload = read_bounded_regular_file(
+        context.git_dir_fd,
+        "config",
+        maximum_size=1024 * 1024,
+        label="Raw upstream Git config",
+    )
+    if config_payload is None:
+        return
+    try:
+        config_text = config_payload.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise RuntimeError("Raw upstream Git config is not UTF-8") from error
+    if re.search(
+        r"^\s*\[\s*(?:alias|credential|filter|include(?:if)?|protocol|url)\b",
+        config_text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    ) or re.search(
+        r"^\s*(?:fsmonitor|hookspath|sshcommand|uploadpack|worktree)\s*=",
+        config_text,
+        flags=re.IGNORECASE | re.MULTILINE,
+    ):
+        raise RuntimeError("Raw upstream Git config contains unsafe redirection")
+
+
+def assert_git_metadata_identity(context: GitMetadataContext) -> None:
+    assert_checkout_identity(context.checkout_fd)
+    try:
+        observed_entry_fd = os.open(
+            ".git",
+            DIRECTORY_OPEN_FLAGS,
+            dir_fd=context.checkout_fd,
+        )
+    except OSError as error:
+        raise RuntimeError("Checkout .git metadata changed during refresh") from error
+    try:
+        held = os.fstat(context.git_dir_fd)
+        observed = os.fstat(observed_entry_fd)
+        if (held.st_dev, held.st_ino) != (observed.st_dev, observed.st_ino):
+            raise RuntimeError("Checkout .git metadata changed during refresh")
+    finally:
+        os.close(observed_entry_fd)
+
+    try:
+        parent_fd = os.open("..", DIRECTORY_OPEN_FLAGS, dir_fd=context.git_dir_fd)
+    except OSError as error:
+        raise RuntimeError("Git directory moved during refresh") from error
+    try:
+        held_checkout = os.fstat(context.checkout_fd)
+        observed_parent = os.fstat(parent_fd)
+        if (
+            held_checkout.st_dev,
+            held_checkout.st_ino,
+        ) != (
+            observed_parent.st_dev,
+            observed_parent.st_ino,
+        ):
+            raise RuntimeError("Git directory moved during refresh")
+    finally:
+        os.close(parent_fd)
+    assert_dedicated_git_layout(context)
+
+
+def write_checkout_owner_marker(context: GitMetadataContext) -> None:
     marker_fd: int | None = None
     try:
         marker_fd = os.open(
@@ -180,14 +383,14 @@ def write_checkout_owner_marker(checkout_fd: int) -> None:
             | os.O_EXCL
             | getattr(os, "O_NOFOLLOW", 0),
             0o600,
-            dir_fd=git_fd,
+            dir_fd=context.git_dir_fd,
         )
         with os.fdopen(marker_fd, "w", encoding="utf-8") as handle:
             marker_fd = None
             handle.write(CHECKOUT_OWNER_CONTENT)
             handle.flush()
             os.fsync(handle.fileno())
-        os.fsync(git_fd)
+        os.fsync(context.git_dir_fd)
     except OSError as error:
         raise RuntimeError(
             "Could not establish ownership of the raw upstream checkout"
@@ -195,15 +398,13 @@ def write_checkout_owner_marker(checkout_fd: int) -> None:
     finally:
         if marker_fd is not None:
             os.close(marker_fd)
-        os.close(git_fd)
 
 
 def verify_checkout_owner_marker(
-    checkout_fd: int,
+    context: GitMetadataContext,
     *,
     allow_missing: bool = False,
 ) -> bool:
-    git_fd = open_git_directory(checkout_fd)
     marker_fd: int | None = None
     try:
         marker_fd = os.open(
@@ -211,7 +412,7 @@ def verify_checkout_owner_marker(
             os.O_RDONLY
             | getattr(os, "O_NOFOLLOW", 0)
             | getattr(os, "O_NONBLOCK", 0),
-            dir_fd=git_fd,
+            dir_fd=context.git_dir_fd,
         )
         metadata = os.fstat(marker_fd)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
@@ -234,7 +435,6 @@ def verify_checkout_owner_marker(
     finally:
         if marker_fd is not None:
             os.close(marker_fd)
-        os.close(git_fd)
     return True
 
 
@@ -253,113 +453,236 @@ def exact_commit(value: str) -> str:
     return value.lower()
 
 
+def sanitized_git_environment() -> dict[str, str]:
+    environment = os.environ.copy()
+    for variable in tuple(environment):
+        if variable in {
+            "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+            "GIT_COMMON_DIR",
+            "GIT_CONFIG",
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_GLOBAL",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_DIR",
+            "GIT_INDEX_FILE",
+            "GIT_OBJECT_DIRECTORY",
+            "GIT_WORK_TREE",
+        } or variable.startswith(("GIT_CONFIG_KEY_", "GIT_CONFIG_VALUE_")):
+            environment.pop(variable, None)
+    environment.update(
+        {
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_TERMINAL_PROMPT": "0",
+        }
+    )
+    return environment
+
+
+def terminate_process_group(process: subprocess.Popen) -> None:
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+
+
 def run_anchored_git(
     arguments: list[str],
-    checkout_fd: int,
+    checkout: int | GitMetadataContext,
     *,
     timeout_seconds: int = LOCAL_GIT_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess[str]:
     """Run Git with its working directory fixed to a held directory descriptor."""
 
-    def enter_checkout() -> None:
-        os.fchdir(checkout_fd)
+    if isinstance(checkout, GitMetadataContext):
+        assert_git_metadata_identity(checkout)
+        checkout_fd = checkout.checkout_fd
+        working_directory_fd = checkout.git_dir_fd
+        command = [
+            arguments[0],
+            "-c",
+            f"core.hooksPath={os.devnull}",
+            "--git-dir=.",
+            "--work-tree=..",
+            *arguments[1:],
+        ]
+        inherited_fds = (checkout.checkout_fd, checkout.git_dir_fd)
+    else:
+        checkout_fd = checkout
+        working_directory_fd = checkout_fd
+        command = [
+            arguments[0],
+            "-c",
+            f"core.hooksPath={os.devnull}",
+            *arguments[1:],
+        ]
+        inherited_fds = (checkout_fd,)
 
-    environment = os.environ.copy()
-    for variable in (
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_COMMON_DIR",
-        "GIT_DIR",
-        "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_WORK_TREE",
-    ):
-        environment.pop(variable, None)
+    def enter_working_directory() -> None:
+        os.fchdir(working_directory_fd)
+        if isinstance(checkout, GitMetadataContext):
+            parent_metadata = os.stat("..", follow_symlinks=False)
+            checkout_metadata = os.fstat(checkout_fd)
+            if (
+                parent_metadata.st_dev,
+                parent_metadata.st_ino,
+            ) != (
+                checkout_metadata.st_dev,
+                checkout_metadata.st_ino,
+            ):
+                raise OSError("Git directory moved before command execution")
+
+    environment = sanitized_git_environment()
     try:
-        return subprocess.run(
-            arguments,
-            check=False,
-            capture_output=True,
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout_seconds,
-            pass_fds=(checkout_fd,),
-            preexec_fn=enter_checkout,
+            pass_fds=inherited_fds,
+            preexec_fn=enter_working_directory,
             env=environment,
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired as error:
-        stdout = (
-            error.stdout.decode("utf-8", "ignore")
-            if isinstance(error.stdout, bytes)
-            else (error.stdout or "")
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError(
+            f"Could not start descriptor-bound Git command: {error}"
+        ) from error
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        result = subprocess.CompletedProcess(
+            command,
+            process.returncode,
+            stdout,
+            stderr,
         )
-        stderr = (
-            error.stderr.decode("utf-8", "ignore")
-            if isinstance(error.stderr, bytes)
-            else (error.stderr or "")
-        )
+    except subprocess.TimeoutExpired:
+        terminate_process_group(process)
+        stdout, stderr = process.communicate()
         timeout_message = f"Command timed out after {timeout_seconds} seconds."
-        return subprocess.CompletedProcess(
-            arguments,
+        result = subprocess.CompletedProcess(
+            command,
             124,
             stdout,
             f"{stderr}\n{timeout_message}".strip(),
         )
+    except BaseException:
+        terminate_process_group(process)
+        try:
+            process.communicate()
+        except BaseException:
+            pass
+        raise
+    if isinstance(checkout, GitMetadataContext):
+        assert_git_metadata_identity(checkout)
+    return result
 
 
 def run_anchored_git_bytes(
     arguments: list[str],
-    checkout_fd: int,
+    checkout: int | GitMetadataContext,
     *,
     timeout_seconds: int = LOCAL_GIT_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess[bytes]:
     """Run anchored Git while preserving exact binary stdout."""
 
-    def enter_checkout() -> None:
-        os.fchdir(checkout_fd)
+    if isinstance(checkout, GitMetadataContext):
+        assert_git_metadata_identity(checkout)
+        checkout_fd = checkout.checkout_fd
+        working_directory_fd = checkout.git_dir_fd
+        command = [
+            arguments[0],
+            "-c",
+            f"core.hooksPath={os.devnull}",
+            "--git-dir=.",
+            "--work-tree=..",
+            *arguments[1:],
+        ]
+        inherited_fds = (checkout.checkout_fd, checkout.git_dir_fd)
+    else:
+        checkout_fd = checkout
+        working_directory_fd = checkout_fd
+        command = [
+            arguments[0],
+            "-c",
+            f"core.hooksPath={os.devnull}",
+            *arguments[1:],
+        ]
+        inherited_fds = (checkout_fd,)
 
-    environment = os.environ.copy()
-    for variable in (
-        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-        "GIT_COMMON_DIR",
-        "GIT_DIR",
-        "GIT_INDEX_FILE",
-        "GIT_OBJECT_DIRECTORY",
-        "GIT_WORK_TREE",
-    ):
-        environment.pop(variable, None)
+    def enter_working_directory() -> None:
+        os.fchdir(working_directory_fd)
+        if isinstance(checkout, GitMetadataContext):
+            parent_metadata = os.stat("..", follow_symlinks=False)
+            checkout_metadata = os.fstat(checkout_fd)
+            if (
+                parent_metadata.st_dev,
+                parent_metadata.st_ino,
+            ) != (
+                checkout_metadata.st_dev,
+                checkout_metadata.st_ino,
+            ):
+                raise OSError("Git directory moved before command execution")
+
+    environment = sanitized_git_environment()
     try:
-        return subprocess.run(
-            arguments,
-            check=False,
-            capture_output=True,
-            timeout=timeout_seconds,
-            pass_fds=(checkout_fd,),
-            preexec_fn=enter_checkout,
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            pass_fds=inherited_fds,
+            preexec_fn=enter_working_directory,
             env=environment,
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired as error:
-        stdout = error.stdout or b""
-        stderr = error.stderr or b""
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError(
+            f"Could not start descriptor-bound Git command: {error}"
+        ) from error
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+        result = subprocess.CompletedProcess(
+            command,
+            process.returncode,
+            stdout,
+            stderr,
+        )
+    except subprocess.TimeoutExpired:
+        terminate_process_group(process)
+        stdout, stderr = process.communicate()
         timeout_message = (
             f"Command timed out after {timeout_seconds} seconds.".encode("utf-8")
         )
-        return subprocess.CompletedProcess(
-            arguments,
+        result = subprocess.CompletedProcess(
+            command,
             124,
             stdout,
             b"\n".join(part for part in (stderr, timeout_message) if part),
         )
+    except BaseException:
+        terminate_process_group(process)
+        try:
+            process.communicate()
+        except BaseException:
+            pass
+        raise
+    if isinstance(checkout, GitMetadataContext):
+        assert_git_metadata_identity(checkout)
+    return result
 
 
 def checked_checkout_git(
     arguments: list[str],
-    checkout_fd: int,
+    checkout: int | GitMetadataContext,
     *,
     timeout_seconds: int = LOCAL_GIT_TIMEOUT_SECONDS,
     action: str,
 ) -> str:
     result = run_anchored_git(
         arguments,
-        checkout_fd,
+        checkout,
         timeout_seconds=timeout_seconds,
     )
     if result.returncode != 0:
@@ -372,14 +695,14 @@ def checked_checkout_git(
 
 def checked_checkout_git_bytes(
     arguments: list[str],
-    checkout_fd: int,
+    checkout: int | GitMetadataContext,
     *,
     timeout_seconds: int = LOCAL_GIT_TIMEOUT_SECONDS,
     action: str,
 ) -> bytes:
     result = run_anchored_git_bytes(
         arguments,
-        checkout_fd,
+        checkout,
         timeout_seconds=timeout_seconds,
     )
     if result.returncode != 0:
@@ -393,7 +716,7 @@ def checked_checkout_git_bytes(
     return result.stdout
 
 
-def initialize_upstream_repo(*, allow_create: bool) -> int:
+def initialize_upstream_repo(*, allow_create: bool) -> GitMetadataContext:
     """Open only this repository's owned, dedicated upstream checkout."""
 
     repository_root, _ = validate_repository_layout()
@@ -417,6 +740,7 @@ def initialize_upstream_repo(*, allow_create: bool) -> int:
         )
         created = True
 
+    context: GitMetadataContext | None = None
     try:
         assert_checkout_identity(checkout_fd)
         if created:
@@ -424,56 +748,38 @@ def initialize_upstream_repo(*, allow_create: bool) -> int:
                 raise RuntimeError(
                     "New raw upstream checkout directory is unexpectedly nonempty"
                 )
+            try:
+                os.mkdir(".git", mode=0o700, dir_fd=checkout_fd)
+            except OSError as error:
+                raise RuntimeError(
+                    "Could not create dedicated Git metadata directory"
+                ) from error
+            context = open_git_metadata(checkout_fd)
             checked_checkout_git(
-                ["git", "init", "."],
-                checkout_fd,
+                ["git", "init"],
+                context,
                 action="Could not initialize raw upstream checkout",
             )
-            assert_checkout_identity(checkout_fd)
-            marker_present = False
+            assert_git_metadata_identity(context)
         else:
-            marker_present = verify_checkout_owner_marker(
-                checkout_fd,
-                allow_missing=True,
-            )
-
-        top_level = Path(
-            checked_checkout_git(
-                [
-                    "git",
-                    "rev-parse",
-                    "--show-toplevel",
-                ],
-                checkout_fd,
-                action="Raw upstream checkout is not a Git repository",
-            )
+            context = open_git_metadata(checkout_fd)
+        marker_present = verify_checkout_owner_marker(
+            context,
+            allow_missing=True,
         )
-        try:
-            top_level_fd = os.open(top_level, DIRECTORY_OPEN_FLAGS)
-        except OSError as error:
-            raise RuntimeError(
-                "Raw upstream checkout top level is not a real directory"
-            ) from error
-        try:
-            checkout_metadata = os.fstat(checkout_fd)
-            top_level_metadata = os.fstat(top_level_fd)
-            if (
-                checkout_metadata.st_dev,
-                checkout_metadata.st_ino,
-            ) != (
-                top_level_metadata.st_dev,
-                top_level_metadata.st_ino,
-            ):
-                raise RuntimeError(
-                    "Raw upstream checkout is not the top level of its Git repository"
-                )
-        finally:
-            os.close(top_level_fd)
-        assert_checkout_identity(checkout_fd)
+
+        inside_work_tree = checked_checkout_git(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            context,
+            action="Raw upstream checkout is not a Git repository",
+        )
+        if inside_work_tree != "true":
+            raise RuntimeError("Raw upstream checkout is not a Git work tree")
+        assert_git_metadata_identity(context)
 
         remote = run_anchored_git(
             ["git", "remote", "get-url", "origin"],
-            checkout_fd,
+            context,
             timeout_seconds=LOCAL_GIT_TIMEOUT_SECONDS,
         )
         if remote.returncode != 0:
@@ -490,7 +796,7 @@ def initialize_upstream_repo(*, allow_create: bool) -> int:
                     "origin",
                     UPSTREAM_REPO_URL,
                 ],
-                checkout_fd,
+                context,
                 action="Could not configure the upstream remote",
             )
         elif remote.stdout.strip() != UPSTREAM_REPO_URL:
@@ -499,16 +805,19 @@ def initialize_upstream_repo(*, allow_create: bool) -> int:
             )
 
         if not marker_present:
-            require_clean_upstream_repo(checkout_fd)
-            assert_checkout_identity(checkout_fd)
-            write_checkout_owner_marker(checkout_fd)
+            require_clean_upstream_repo(context)
+            assert_git_metadata_identity(context)
+            write_checkout_owner_marker(context)
     except BaseException:
-        os.close(checkout_fd)
+        if context is not None:
+            context.close()
+        else:
+            os.close(checkout_fd)
         raise
-    return checkout_fd
+    return context
 
 
-def require_clean_upstream_repo(checkout_fd: int) -> None:
+def require_clean_upstream_repo(context: GitMetadataContext) -> None:
     status = checked_checkout_git(
         [
             "git",
@@ -517,7 +826,7 @@ def require_clean_upstream_repo(checkout_fd: int) -> None:
             "--untracked-files=all",
             "--ignored=matching",
         ],
-        checkout_fd,
+        context,
         action="Could not inspect raw upstream checkout state",
     )
     if status:
@@ -535,10 +844,10 @@ def refresh_upstream_repo(upstream_ref: str, *, offline: bool = False) -> None:
     pulls a moving default branch.
     """
 
-    checkout_fd = initialize_upstream_repo(allow_create=not offline)
+    context = initialize_upstream_repo(allow_create=not offline)
     try:
-        require_clean_upstream_repo(checkout_fd)
-        assert_checkout_identity(checkout_fd)
+        require_clean_upstream_repo(context)
+        assert_git_metadata_identity(context)
         if not offline:
             checked_checkout_git(
                 [
@@ -549,12 +858,12 @@ def refresh_upstream_repo(upstream_ref: str, *, offline: bool = False) -> None:
                     "origin",
                     upstream_ref,
                 ],
-                checkout_fd,
+                context,
                 timeout_seconds=NETWORK_GIT_TIMEOUT_SECONDS,
                 action=f"Could not fetch requested upstream commit {upstream_ref}",
             )
 
-        assert_checkout_identity(checkout_fd)
+        assert_git_metadata_identity(context)
         resolved = checked_checkout_git(
             [
                 "git",
@@ -562,7 +871,7 @@ def refresh_upstream_repo(upstream_ref: str, *, offline: bool = False) -> None:
                 "--verify",
                 f"{upstream_ref}^{{commit}}",
             ],
-            checkout_fd,
+            context,
             action=f"Requested upstream commit is unavailable: {upstream_ref}",
         ).lower()
         if resolved != upstream_ref:
@@ -570,8 +879,8 @@ def refresh_upstream_repo(upstream_ref: str, *, offline: bool = False) -> None:
                 f"Requested upstream commit resolved unexpectedly: {resolved}"
             )
 
-        require_clean_upstream_repo(checkout_fd)
-        assert_checkout_identity(checkout_fd)
+        require_clean_upstream_repo(context)
+        assert_git_metadata_identity(context)
         checked_checkout_git(
             [
                 "git",
@@ -579,18 +888,18 @@ def refresh_upstream_repo(upstream_ref: str, *, offline: bool = False) -> None:
                 "--detach",
                 upstream_ref,
             ],
-            checkout_fd,
+            context,
             action=f"Could not check out requested upstream commit {upstream_ref}",
         )
-        assert_checkout_identity(checkout_fd)
-        if upstream_commit(checkout_fd) != upstream_ref:
+        assert_git_metadata_identity(context)
+        if upstream_commit(context) != upstream_ref:
             raise RuntimeError(
                 "Raw upstream checkout did not land on the requested commit"
             )
 
         symbolic_head = run_anchored_git(
             ["git", "symbolic-ref", "-q", "HEAD"],
-            checkout_fd,
+            context,
             timeout_seconds=LOCAL_GIT_TIMEOUT_SECONDS,
         )
         if symbolic_head.returncode == 0:
@@ -601,32 +910,33 @@ def refresh_upstream_repo(upstream_ref: str, *, offline: bool = False) -> None:
                 or "Could not verify detached upstream checkout"
             )
     finally:
-        os.close(checkout_fd)
+        context.close()
 
 
-def upstream_commit(checkout_fd: int) -> str:
+def upstream_commit(context: GitMetadataContext) -> str:
     return checked_checkout_git(
         ["git", "rev-parse", "HEAD"],
-        checkout_fd,
+        context,
         action="Could not read upstream commit",
     ).lower()
 
 
 def tracked_markdown_inventory(
     relative_root: Path,
-    checkout_fd: int,
+    context: GitMetadataContext,
 ) -> list[dict[str, str]]:
     output = checked_checkout_git_bytes(
         [
             "git",
             "ls-tree",
+            "--full-tree",
             "-r",
             "-z",
             "HEAD",
             "--",
             relative_root.as_posix(),
         ],
-        checkout_fd,
+        context,
         action=f"Could not inventory upstream path {relative_root}",
     )
     entries: list[dict[str, str]] = []
@@ -650,7 +960,7 @@ def tracked_markdown_inventory(
                 )
             blob = checked_checkout_git_bytes(
                 ["git", "cat-file", "blob", object_id.decode("ascii")],
-                checkout_fd,
+                context,
                 action=f"Could not read tracked upstream blob {relative_path}",
             )
             entries.append(
@@ -663,23 +973,23 @@ def tracked_markdown_inventory(
 
 
 def build_inventory() -> dict:
-    checkout_fd = initialize_upstream_repo(allow_create=False)
+    context = initialize_upstream_repo(allow_create=False)
     try:
         inventory: dict[str, list[dict]] = {}
         for skill_key, relative_root in UPSTREAM_ROOTS.items():
             inventory[skill_key] = tracked_markdown_inventory(
                 relative_root,
-                checkout_fd,
+                context,
             )
         result = {
             "repository": UPSTREAM_REPO_URL,
-            "commit": upstream_commit(checkout_fd),
+            "commit": upstream_commit(context),
             "inventory": inventory,
         }
-        assert_checkout_identity(checkout_fd)
+        assert_git_metadata_identity(context)
         return result
     finally:
-        os.close(checkout_fd)
+        context.close()
 
 
 def inventory_by_path(inventory: dict) -> dict[str, str]:
@@ -717,6 +1027,7 @@ def build_comparison_report(inventory: dict, upstream_ref: str) -> dict:
     return {
         "schema_version": 1,
         "report_type": "upstream-comparison",
+        "report_owner": REPORT_OWNER,
         "repository": {
             "url": UPSTREAM_REPO_URL,
             "requested_commit": upstream_ref,
@@ -761,14 +1072,12 @@ def build_comparison_report(inventory: dict, upstream_ref: str) -> dict:
 def validate_report_path(report: Path) -> Path:
     _, raw_root = validate_repository_layout()
     report_path = absolute_without_resolving(report)
-    try:
-        relative_report = report_path.relative_to(raw_root)
-    except ValueError as error:
+    expected = raw_root / "candidates" / "upstream-comparison.yaml"
+    if report_path != expected:
         raise RuntimeError(
-            "Comparison report must stay under the ignored raw/ directory"
-        ) from error
-    if not relative_report.parts or report_path == raw_root:
-        raise RuntimeError("Comparison report must name a file under raw/")
+            "Comparison report must use the dedicated "
+            "raw/candidates/upstream-comparison.yaml location"
+        )
     return report_path
 
 
@@ -853,36 +1162,159 @@ def atomic_rename_at_no_replace(
 
 
 def remove_stale_report(target: ReportTarget) -> None:
-    """Ensure a failed refresh cannot leave a prior report at the target path."""
+    """Remove only a report whose ownership survives an atomic quarantine move."""
 
+    report_descriptor: int | None = None
+    quarantine_name: str | None = None
     try:
         assert_report_parent_identity(target)
         try:
-            os.unlink(target.name, dir_fd=target.parent_fd)
-            os.fsync(target.parent_fd)
+            report_descriptor = os.open(
+                target.name,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=target.parent_fd,
+            )
         except FileNotFoundError:
-            pass
+            return
+        expected = temporary_file_state(
+            report_descriptor,
+            maximum_size=MAX_REPORT_BYTES,
+        )
+        os.lseek(report_descriptor, 0, os.SEEK_SET)
+        payload = os.read(report_descriptor, MAX_REPORT_BYTES + 1)
+        if len(payload) > MAX_REPORT_BYTES:
+            raise RuntimeError("Existing comparison report is too large to be owned")
+        try:
+            parsed = yaml.safe_load(payload.decode("utf-8"))
+        except (UnicodeDecodeError, yaml.YAMLError) as error:
+            raise RuntimeError(
+                "Existing comparison report is foreign; preserving it"
+            ) from error
+        if (
+            isinstance(parsed, dict)
+            and parsed.get("report_type") == "upstream-comparison"
+            and "report_owner" not in parsed
+        ):
+            raise RuntimeError(
+                "Legacy comparison report lacks report_owner; review it, then "
+                "move or delete raw/candidates/upstream-comparison.yaml explicitly"
+            )
+        if (
+            not isinstance(parsed, dict)
+            or parsed.get("schema_version") != 1
+            or parsed.get("report_type") != "upstream-comparison"
+            or parsed.get("report_owner") != REPORT_OWNER
+        ):
+            raise RuntimeError(
+                "Existing comparison report is foreign; preserving it"
+            )
+
+        for _ in range(128):
+            candidate = f".{target.name}.{secrets.token_hex(12)}.stale"
+            try:
+                atomic_rename_at_no_replace(
+                    target.parent_fd,
+                    target.name,
+                    target.parent_fd,
+                    candidate,
+                )
+                quarantine_name = candidate
+                break
+            except FileExistsError:
+                continue
+        if quarantine_name is None:
+            raise RuntimeError("Could not allocate stale-report quarantine")
+
+        try:
+            verify_owned_temporary_entry(
+                target,
+                quarantine_name,
+                report_descriptor,
+                expected,
+            )
+        except RuntimeError as verification_error:
+            try:
+                atomic_rename_at_no_replace(
+                    target.parent_fd,
+                    quarantine_name,
+                    target.parent_fd,
+                    target.name,
+                )
+            except FileNotFoundError:
+                pass
+            except FileExistsError as restore_error:
+                raise RuntimeError(
+                    "Quarantined foreign comparison report could not be restored; "
+                    f"preserving it as {quarantine_name}"
+                ) from restore_error
+            raise RuntimeError(
+                "Existing comparison report changed during quarantine; preserving it"
+            ) from verification_error
+
+        # There is no portable descriptor-relative unlink-by-inode operation.
+        # Keep the verified, uniquely named owned quarantine rather than
+        # reintroducing a check-then-unlink substitution window.
+        os.fsync(target.parent_fd)
     except OSError as error:
         raise RuntimeError(
             f"Could not remove stale comparison report {target.path}: {error}"
         ) from error
+    finally:
+        if report_descriptor is not None:
+            os.close(report_descriptor)
 
 
-def temporary_file_state(file_descriptor: int) -> TemporaryFileState:
+def temporary_file_state(
+    file_descriptor: int,
+    *,
+    maximum_size: int | None = None,
+) -> TemporaryFileState:
     metadata = os.fstat(file_descriptor)
     if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
         raise RuntimeError("Temporary comparison report is not an owned regular file")
+    if maximum_size is not None and metadata.st_size > maximum_size:
+        raise RuntimeError("Temporary comparison report exceeds its allowed size")
     position = os.lseek(file_descriptor, 0, os.SEEK_CUR)
     digest = hashlib.sha256()
+    bytes_read = 0
     try:
         os.lseek(file_descriptor, 0, os.SEEK_SET)
         while True:
-            chunk = os.read(file_descriptor, 1024 * 1024)
+            read_size = 1024 * 1024
+            if maximum_size is not None:
+                read_size = min(read_size, maximum_size + 1 - bytes_read)
+                if read_size <= 0:
+                    raise RuntimeError(
+                        "Temporary comparison report exceeds its allowed size"
+                    )
+            chunk = os.read(file_descriptor, read_size)
             if not chunk:
                 break
+            bytes_read += len(chunk)
+            if maximum_size is not None and bytes_read > maximum_size:
+                raise RuntimeError(
+                    "Temporary comparison report exceeds its allowed size"
+                )
             digest.update(chunk)
     finally:
         os.lseek(file_descriptor, position, os.SEEK_SET)
+    final_metadata = os.fstat(file_descriptor)
+    if (
+        final_metadata.st_dev,
+        final_metadata.st_ino,
+        final_metadata.st_mode,
+        final_metadata.st_nlink,
+        final_metadata.st_size,
+    ) != (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_size,
+    ):
+        raise RuntimeError("Temporary comparison report changed while it was read")
     return TemporaryFileState(
         device=metadata.st_dev,
         inode=metadata.st_ino,
@@ -899,7 +1331,10 @@ def verify_owned_temporary_entry(
     owner_descriptor: int,
     expected: TemporaryFileState,
 ) -> None:
-    owner_state = temporary_file_state(owner_descriptor)
+    owner_state = temporary_file_state(
+        owner_descriptor,
+        maximum_size=expected.size,
+    )
     try:
         observed_descriptor = os.open(
             entry_name,
@@ -913,7 +1348,10 @@ def verify_owned_temporary_entry(
             f"Temporary comparison report changed; preserving {entry_name}"
         ) from error
     try:
-        observed_state = temporary_file_state(observed_descriptor)
+        observed_state = temporary_file_state(
+            observed_descriptor,
+            maximum_size=expected.size,
+        )
     finally:
         os.close(observed_descriptor)
     if owner_state != expected or observed_state != expected:
@@ -983,35 +1421,17 @@ def write_report_atomically(target: ReportTarget, report: dict) -> None:
         temporary_name = None
         os.fsync(target.parent_fd)
     except Exception as error:
+        preserved = (
+            f"; preserved failed candidate as {temporary_name}"
+            if temporary_name is not None
+            else ""
+        )
         raise RuntimeError(
-            f"Could not write comparison report {target.path}: {error}"
+            f"Could not write comparison report {target.path}: {error}{preserved}"
         ) from error
     finally:
         if file_descriptor is not None:
-            try:
-                if temporary_name is not None and expected_state is not None:
-                    try:
-                        verify_owned_temporary_entry(
-                            target,
-                            temporary_name,
-                            file_descriptor,
-                            expected_state,
-                        )
-                    except RuntimeError:
-                        try:
-                            os.stat(
-                                temporary_name,
-                                dir_fd=target.parent_fd,
-                                follow_symlinks=False,
-                            )
-                        except FileNotFoundError:
-                            pass
-                        else:
-                            raise
-                    else:
-                        os.unlink(temporary_name, dir_fd=target.parent_fd)
-            finally:
-                os.close(file_descriptor)
+            os.close(file_descriptor)
 
 
 def main(argv: list[str] | None = None) -> int:

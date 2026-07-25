@@ -719,6 +719,154 @@ class PublishTransactionTests(unittest.TestCase):
 
             self.assertFalse(destination.exists())
 
+    def test_staged_empty_directory_is_rejected_before_publication(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            before = {
+                folder: snapshot(destination / folder)
+                for folder in release_state.SKILL_FOLDERS
+            }
+            real_stage_all = publish_local._stage_all
+
+            def add_empty_directory_after_staging(
+                source_root: Path,
+                transaction_root: publish_local.DirectoryHandle,
+            ) -> publish_local.DirectoryHandle:
+                stage_root = real_stage_all(source_root, transaction_root)
+                (
+                    stage_root.display_path
+                    / "stata-core"
+                    / "references"
+                    / "unvalidated-empty"
+                ).mkdir()
+                return stage_root
+
+            with patch.object(
+                publish_local,
+                "_stage_all",
+                side_effect=add_empty_directory_after_staging,
+            ), self.assertRaisesRegex(
+                publish_local.PublishError,
+                "Staged skill tree differs",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(before[folder], snapshot(destination / folder))
+            self.assertFalse(
+                (
+                    destination
+                    / "stata-core"
+                    / "references"
+                    / "unvalidated-empty"
+                ).exists()
+            )
+
+    def test_release_and_descriptor_tree_digests_match(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            write_skill_tree(generated, "digest")
+            (
+                generated
+                / "stata-core"
+                / "references"
+                / "intentional-empty"
+            ).mkdir()
+            parent_descriptor = os.open(
+                root,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            handle = publish_local._open_directory_handle_at(
+                parent_descriptor,
+                generated.name,
+                generated,
+            )
+            try:
+                descriptor_digest = publish_local._skill_tree_digest_handle(
+                    handle
+                )
+            finally:
+                close_errors = publish_local._close_directory_handle(handle)
+                os.close(parent_descriptor)
+
+            self.assertEqual([], close_errors)
+            self.assertEqual(
+                release_state.tree_digest(generated),
+                descriptor_digest,
+            )
+
+    def test_post_install_empty_directory_rolls_back_every_skill(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            before = {
+                folder: snapshot(destination / folder)
+                for folder in release_state.SKILL_FOLDERS
+            }
+            real_capture = publish_local._capture_skill_verification_at
+            injected = False
+
+            def inject_empty_directory(
+                parent_descriptor: int,
+                name: str,
+                display_path: Path,
+            ) -> publish_local.SkillVerification:
+                nonlocal injected
+                if name == "stata-core" and not injected:
+                    (
+                        display_path
+                        / "references"
+                        / "post-install-empty"
+                    ).mkdir()
+                    injected = True
+                return real_capture(parent_descriptor, name, display_path)
+
+            with patch.object(
+                publish_local,
+                "_capture_skill_verification_at",
+                side_effect=inject_empty_directory,
+            ), self.assertRaisesRegex(
+                publish_local.PublishError,
+                "destinations were restored",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertTrue(injected)
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(before[folder], snapshot(destination / folder))
+            transaction = next(
+                destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")
+            )
+            self.assertTrue(
+                (
+                    transaction
+                    / "quarantine"
+                    / "stata-core"
+                    / "references"
+                    / "post-install-empty"
+                ).is_dir()
+            )
+
     def test_default_destination_honors_codex_home(self) -> None:
         with TemporaryDirectory(prefix="publish-test-") as temporary:
             root = Path(temporary)

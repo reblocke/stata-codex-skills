@@ -300,9 +300,13 @@ make refresh UPSTREAM_REF=33a7efc85e92cd30edc7b907f1deb9d7038397bc
 ```
 
 The refresh checks out that full commit in detached-head state and atomically
-writes an ignored comparison under `raw/`; it never changes curated content or
-locks. A failed refresh removes the prior target report rather than leaving
-stale evidence at the canonical path.
+writes only `raw/candidates/upstream-comparison.yaml`; it never changes curated
+content or locks. A verified prior report is moved to a uniquely named ignored
+`.stale` quarantine before refresh, so failed runs cannot leave stale evidence
+at the canonical path. Reports created before ownership metadata was added must
+be reviewed and then moved or deleted explicitly before the next refresh.
+Failed atomic publications retain their uniquely named ignored `.tmp` candidate
+for inspection rather than risk deleting a concurrent replacement.
 
 ## What each script does
 

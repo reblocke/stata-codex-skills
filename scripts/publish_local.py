@@ -9,7 +9,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import errno
 import fcntl
-import hashlib
 import os
 from pathlib import Path
 import secrets
@@ -20,6 +19,7 @@ from libskillpack import BUILD_ROOT, REPO_ROOT
 from release_state import (
     SKILL_FOLDERS,
     VALIDATION_RECEIPT_PATH,
+    tree_digest_records,
     validate_complete_skill_tree,
     verify_validation_receipt,
 )
@@ -1014,11 +1014,6 @@ def preflight_skill_tree(root: Path) -> None:
         raise PublishError("Generated skill preflight failed: " + "; ".join(errors))
 
 
-def _update_digest_field(digest: object, payload: bytes) -> None:
-    digest.update(len(payload).to_bytes(8, "big"))
-    digest.update(payload)
-
-
 def _read_all(file_descriptor: int) -> bytes:
     chunks: list[bytes] = []
     while True:
@@ -1188,12 +1183,7 @@ def _destination_tree_digest_records(
     records: tuple[tuple[str, bytes, bytes], ...]
     | list[tuple[str, bytes, bytes]],
 ) -> str:
-    digest = hashlib.sha256()
-    for relative, kind, payload in records:
-        _update_digest_field(digest, relative.encode("utf-8"))
-        _update_digest_field(digest, kind)
-        _update_digest_field(digest, payload)
-    return digest.hexdigest()
+    return tree_digest_records(records)
 
 
 def _destination_tree_digest_handle(handle: DirectoryHandle) -> str:
@@ -1204,13 +1194,7 @@ def _skill_tree_digest_records(
     records: tuple[tuple[str, bytes, bytes], ...]
     | list[tuple[str, bytes, bytes]],
 ) -> str:
-    digest = hashlib.sha256()
-    for relative, kind, payload in records:
-        if kind != b"file":
-            continue
-        _update_digest_field(digest, relative.encode("utf-8"))
-        _update_digest_field(digest, payload)
-    return digest.hexdigest()
+    return _destination_tree_digest_records(records)
 
 
 def _skill_tree_digest_handle(handle: DirectoryHandle) -> str:
@@ -1226,7 +1210,7 @@ def _skill_digest_from_tree_records(
     folder_records = [
         (relative.removeprefix(prefix), kind, payload)
         for relative, kind, payload in records
-        if kind == b"file" and relative.startswith(prefix)
+        if relative.startswith(prefix)
     ]
     return _skill_tree_digest_records(folder_records)
 

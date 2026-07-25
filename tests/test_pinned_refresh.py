@@ -4,10 +4,11 @@ from hashlib import sha256
 from pathlib import Path
 from subprocess import CompletedProcess
 from tempfile import TemporaryDirectory
+import os
 import subprocess
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import yaml
 
@@ -131,14 +132,132 @@ class PinnedRefreshTests(unittest.TestCase):
 
         self.assertEqual("a" * 40, fetch_upstream.exact_commit("A" * 40))
 
+    def test_git_environment_ignores_global_and_system_configuration(self) -> None:
+        injected = {
+            "GIT_CONFIG_COUNT": "1",
+            "GIT_CONFIG_GLOBAL": "/tmp/foreign-global-config",
+            "GIT_CONFIG_KEY_0": "include.path",
+            "GIT_CONFIG_PARAMETERS": "'core.hooksPath=/tmp/foreign-hooks'",
+            "GIT_CONFIG_SYSTEM": "/tmp/foreign-system-config",
+            "GIT_CONFIG_VALUE_0": "/tmp/foreign-include",
+        }
+        with patch.dict(fetch_upstream.os.environ, injected, clear=False):
+            environment = fetch_upstream.sanitized_git_environment()
+
+        self.assertEqual(fetch_upstream.os.devnull, environment["GIT_CONFIG_GLOBAL"])
+        self.assertEqual("1", environment["GIT_CONFIG_NOSYSTEM"])
+        self.assertEqual("0", environment["GIT_TERMINAL_PROMPT"])
+        for variable in (
+            "GIT_CONFIG_COUNT",
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_PARAMETERS",
+            "GIT_CONFIG_SYSTEM",
+            "GIT_CONFIG_VALUE_0",
+        ):
+            self.assertNotIn(variable, environment)
+
+    def test_timeout_terminates_the_entire_git_process_group(self) -> None:
+        with TemporaryDirectory(prefix="pinned-process-group-") as temp_root:
+            root = Path(temp_root)
+            checkout_fd = os.open(root, fetch_upstream.DIRECTORY_OPEN_FLAGS)
+            process = Mock(pid=12345, returncode=-9)
+            process.communicate.side_effect = [
+                subprocess.TimeoutExpired(["git"], 1),
+                ("partial stdout", "partial stderr"),
+            ]
+            try:
+                with patch.object(
+                    fetch_upstream.subprocess,
+                    "Popen",
+                    return_value=process,
+                ) as mocked_popen, patch.object(
+                    fetch_upstream,
+                    "terminate_process_group",
+                ) as terminate:
+                    result = fetch_upstream.run_anchored_git(
+                        ["git", "status"],
+                        checkout_fd,
+                        timeout_seconds=1,
+                    )
+            finally:
+                os.close(checkout_fd)
+
+        self.assertEqual(124, result.returncode)
+        self.assertIn("timed out", result.stderr.lower())
+        terminate.assert_called_once_with(process)
+        self.assertTrue(mocked_popen.call_args.kwargs["start_new_session"])
+
+    def test_interrupt_terminates_and_reaps_text_git_process_group(self) -> None:
+        with TemporaryDirectory(prefix="pinned-process-interrupt-") as temp_root:
+            root = Path(temp_root)
+            checkout_fd = os.open(root, fetch_upstream.DIRECTORY_OPEN_FLAGS)
+            process = Mock(pid=12345, returncode=-9)
+            process.communicate.side_effect = [
+                KeyboardInterrupt(),
+                ("", ""),
+            ]
+            try:
+                with patch.object(
+                    fetch_upstream.subprocess,
+                    "Popen",
+                    return_value=process,
+                ), patch.object(
+                    fetch_upstream,
+                    "terminate_process_group",
+                ) as terminate, self.assertRaises(KeyboardInterrupt):
+                    fetch_upstream.run_anchored_git(
+                        ["git", "status"],
+                        checkout_fd,
+                    )
+            finally:
+                os.close(checkout_fd)
+
+        terminate.assert_called_once_with(process)
+        self.assertEqual(2, process.communicate.call_count)
+
+    def test_interrupt_terminates_and_reaps_binary_git_process_group(self) -> None:
+        with TemporaryDirectory(prefix="pinned-process-interrupt-") as temp_root:
+            root = Path(temp_root)
+            checkout_fd = os.open(root, fetch_upstream.DIRECTORY_OPEN_FLAGS)
+            process = Mock(pid=12345, returncode=-9)
+            process.communicate.side_effect = [
+                KeyboardInterrupt(),
+                (b"", b""),
+            ]
+            try:
+                with patch.object(
+                    fetch_upstream.subprocess,
+                    "Popen",
+                    return_value=process,
+                ), patch.object(
+                    fetch_upstream,
+                    "terminate_process_group",
+                ) as terminate, self.assertRaises(KeyboardInterrupt):
+                    fetch_upstream.run_anchored_git_bytes(
+                        ["git", "status"],
+                        checkout_fd,
+                    )
+            finally:
+                os.close(checkout_fd)
+
+        terminate.assert_called_once_with(process)
+        self.assertEqual(2, process.communicate.call_count)
+
     def test_symlinked_raw_root_cannot_replace_an_external_report(self) -> None:
         with TemporaryDirectory(prefix="pinned-report-symlink-") as temp_root:
             root = Path(temp_root)
             repository_root = root / "repository"
             external_root = root / "external"
             repository_root.mkdir()
-            report_path = repository_root / "raw" / "candidates" / "report.yaml"
-            external_report = external_root / "candidates" / "report.yaml"
+            report_path = (
+                repository_root
+                / "raw"
+                / "candidates"
+                / "upstream-comparison.yaml"
+            )
+            external_report = (
+                external_root / "candidates" / "upstream-comparison.yaml"
+            )
             external_report.parent.mkdir(parents=True)
             external_report.write_text("external: preserve\n", encoding="utf-8")
             (repository_root / "raw").symlink_to(
@@ -178,7 +297,7 @@ class PinnedRefreshTests(unittest.TestCase):
             raw_root = repository_root / "raw"
             checkout = raw_root / "upstream" / "stata-skill"
             external_checkout = root / "external-checkout"
-            report_path = raw_root / "candidates" / "report.yaml"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
             lock_path = repository_root / "locks" / "upstream.yaml"
             repository_root.mkdir()
             run_git(root, "clone", str(fixture.repository), str(external_checkout))
@@ -238,7 +357,7 @@ class PinnedRefreshTests(unittest.TestCase):
                 external_upstream,
                 target_is_directory=True,
             )
-            report_path = raw_root / "candidates" / "report.yaml"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
 
             with patch.multiple(
                 fetch_upstream,
@@ -270,7 +389,7 @@ class PinnedRefreshTests(unittest.TestCase):
             repository_root = root / "repository"
             raw_root = repository_root / "raw"
             checkout = raw_root / "upstream" / "stata-skill"
-            report_path = raw_root / "candidates" / "report.yaml"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
             lock_path = repository_root / "locks" / "upstream.yaml"
             checkout.parent.mkdir(parents=True)
             run_git(root, "clone", str(fixture.repository), str(checkout))
@@ -316,7 +435,7 @@ class PinnedRefreshTests(unittest.TestCase):
             repository_root = root / "repository"
             raw_root = repository_root / "raw"
             checkout = raw_root / "upstream" / "stata-skill"
-            report_path = raw_root / "candidates" / "report.yaml"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
             lock_path = repository_root / "locks" / "upstream.yaml"
             checkout.parent.mkdir(parents=True)
             run_git(root, "clone", str(fixture.repository), str(checkout))
@@ -364,7 +483,7 @@ class PinnedRefreshTests(unittest.TestCase):
             repository_root = root / "repository"
             raw_root = repository_root / "raw"
             checkout = raw_root / "upstream" / "stata-skill"
-            report_path = raw_root / "candidates" / "report.yaml"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
             lock_path = repository_root / "locks" / "upstream.yaml"
             checkout.parent.mkdir(parents=True)
             run_git(root, "clone", str(fixture.repository), str(checkout))
@@ -399,13 +518,216 @@ class PinnedRefreshTests(unittest.TestCase):
             )
             self.assertFalse(report_path.exists())
 
+    def test_linked_worktree_checkout_is_rejected_without_mutation(self) -> None:
+        with TemporaryDirectory(prefix="pinned-linked-worktree-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            primary = root / "primary"
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+            run_git(root, "clone", str(fixture.repository), str(primary))
+            checkout.parent.mkdir(parents=True)
+            run_git(
+                primary,
+                "worktree",
+                "add",
+                "--detach",
+                str(checkout),
+                fixture.first_commit,
+            )
+            gitfile = checkout / ".git"
+            gitfile_before = gitfile.read_bytes()
+            head_before = run_git(checkout, "rev-parse", "HEAD").stdout.strip()
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ):
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            self.assertEqual(gitfile_before, gitfile.read_bytes())
+            self.assertEqual(
+                head_before,
+                run_git(checkout, "rev-parse", "HEAD").stdout.strip(),
+            )
+            self.assertFalse(report_path.exists())
+
+    def test_external_git_commondir_is_rejected_without_access(self) -> None:
+        with TemporaryDirectory(prefix="pinned-commondir-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            external = root / "external-checkout"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+            checkout.parent.mkdir(parents=True)
+            run_git(root, "clone", str(fixture.repository), str(checkout))
+            run_git(root, "clone", str(fixture.repository), str(external))
+            external_config = (external / ".git" / "config").read_bytes()
+            external_head = run_git(external, "rev-parse", "HEAD").stdout.strip()
+            (checkout / ".git" / "commondir").write_text(
+                str(external / ".git"),
+                encoding="utf-8",
+            )
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ):
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            self.assertEqual(
+                external_config,
+                (external / ".git" / "config").read_bytes(),
+            )
+            self.assertEqual(
+                external_head,
+                run_git(external, "rev-parse", "HEAD").stdout.strip(),
+            )
+            self.assertFalse(report_path.exists())
+
+    def test_external_git_object_alternates_are_rejected_without_access(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-alternates-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            external = root / "external-checkout"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+            checkout.parent.mkdir(parents=True)
+            run_git(root, "clone", str(fixture.repository), str(checkout))
+            run_git(root, "clone", str(fixture.repository), str(external))
+            external_config = (external / ".git" / "config").read_bytes()
+            external_head = run_git(external, "rev-parse", "HEAD").stdout.strip()
+            info_dir = checkout / ".git" / "objects" / "info"
+            info_dir.mkdir(exist_ok=True)
+            (info_dir / "alternates").write_text(
+                f"{external / '.git' / 'objects'}\n",
+                encoding="utf-8",
+            )
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ):
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            self.assertEqual(
+                external_config,
+                (external / ".git" / "config").read_bytes(),
+            )
+            self.assertEqual(
+                external_head,
+                run_git(external, "rev-parse", "HEAD").stdout.strip(),
+            )
+            self.assertFalse(report_path.exists())
+
+    def test_external_git_objects_symlink_is_rejected_without_access(self) -> None:
+        with TemporaryDirectory(prefix="pinned-objects-symlink-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            external = root / "external-checkout"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+            checkout.parent.mkdir(parents=True)
+            run_git(root, "clone", str(fixture.repository), str(checkout))
+            run_git(root, "clone", str(fixture.repository), str(external))
+            external_config = (external / ".git" / "config").read_bytes()
+            external_head = run_git(external, "rev-parse", "HEAD").stdout.strip()
+            objects_path = checkout / ".git" / "objects"
+            objects_path.rename(checkout / ".git" / "objects-owned")
+            objects_path.symlink_to(
+                external / ".git" / "objects",
+                target_is_directory=True,
+            )
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ):
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            self.assertEqual(
+                external_config,
+                (external / ".git" / "config").read_bytes(),
+            )
+            self.assertEqual(
+                external_head,
+                run_git(external, "rev-parse", "HEAD").stdout.strip(),
+            )
+            self.assertFalse(report_path.exists())
+
     def test_dirty_owned_checkout_is_not_replaced(self) -> None:
         with TemporaryDirectory(prefix="pinned-dirty-checkout-") as temp_root:
             root = Path(temp_root)
             fixture = UpstreamFixture(root)
             raw_root = root / "raw"
             checkout = raw_root / "upstream" / "stata-skill"
-            report_path = raw_root / "candidates" / "report.yaml"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
             lock_path = root / "locks" / "upstream.yaml"
             fixture.write_first_lock(lock_path)
 
@@ -454,7 +776,7 @@ class PinnedRefreshTests(unittest.TestCase):
             fixture = UpstreamFixture(root)
             raw_root = root / "raw"
             checkout = raw_root / "upstream" / "stata-skill"
-            report_path = raw_root / "candidates" / "report.yaml"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
             lock_path = root / "locks" / "upstream.yaml"
             fixture.write_first_lock(lock_path)
 
@@ -503,7 +825,7 @@ class PinnedRefreshTests(unittest.TestCase):
             fixture = UpstreamFixture(root)
             raw_root = root / "raw"
             checkout = raw_root / "upstream" / "stata-skill"
-            report_path = raw_root / "candidates" / "report.yaml"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
             lock_path = root / "locks" / "upstream.yaml"
             fixture.write_first_lock(lock_path)
 
@@ -556,7 +878,7 @@ class PinnedRefreshTests(unittest.TestCase):
             checkout = raw_root / "upstream" / "stata-skill"
             displaced = raw_root / "upstream" / "owned-displaced"
             external = root / "external-checkout"
-            report_path = raw_root / "candidates" / "report.yaml"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
             lock_path = root / "locks" / "upstream.yaml"
             fixture.write_first_lock(lock_path)
 
@@ -631,9 +953,191 @@ class PinnedRefreshTests(unittest.TestCase):
                 run_git(external, "rev-parse", "HEAD").stdout.strip(),
             )
             self.assertEqual(
-                fixture.second_commit,
+                fixture.first_commit,
                 run_git(displaced, "rev-parse", "HEAD").stdout.strip(),
             )
+            self.assertFalse(report_path.exists())
+
+    def test_git_directory_substitution_cannot_reach_external_repository(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-gitdir-race-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            external = root / "external-checkout"
+            displaced_git = checkout / ".git-owned"
+            fixture.write_first_lock(lock_path)
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ):
+                first_exit = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            run_git(root, "clone", str(fixture.repository), str(external))
+            run_git(external, "checkout", "--detach", fixture.first_commit)
+            external_head = run_git(external, "rev-parse", "HEAD").stdout.strip()
+            external_config = (external / ".git" / "config").read_bytes()
+            external_worktree = (external / CORE_PATH).read_bytes()
+            real_run_anchored_git = fetch_upstream.run_anchored_git
+            substituted = False
+
+            def substitute_git_directory_before_checkout(
+                arguments: list[str],
+                context: int | fetch_upstream.GitMetadataContext,
+                timeout_seconds: int = 120,
+            ) -> CompletedProcess[str]:
+                nonlocal substituted
+                if (
+                    not substituted
+                    and arguments[:3] == ["git", "checkout", "--detach"]
+                ):
+                    (checkout / ".git").rename(displaced_git)
+                    (checkout / ".git").symlink_to(
+                        external / ".git",
+                        target_is_directory=True,
+                    )
+                    substituted = True
+                return real_run_anchored_git(
+                    arguments,
+                    context,
+                    timeout_seconds=timeout_seconds,
+                )
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ), patch.object(
+                fetch_upstream,
+                "run_anchored_git",
+                side_effect=substitute_git_directory_before_checkout,
+            ):
+                second_exit = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.second_commit,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            owned_head = subprocess.run(
+                [
+                    "git",
+                    f"--git-dir={displaced_git}",
+                    f"--work-tree={checkout}",
+                    "rev-parse",
+                    "HEAD",
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            ).stdout.strip()
+            self.assertEqual(0, first_exit)
+            self.assertEqual(1, second_exit)
+            self.assertTrue(substituted)
+            self.assertEqual(fixture.first_commit, owned_head)
+            self.assertEqual(
+                external_head,
+                run_git(external, "rev-parse", "HEAD").stdout.strip(),
+            )
+            self.assertEqual(external_config, (external / ".git" / "config").read_bytes())
+            self.assertEqual(external_worktree, (external / CORE_PATH).read_bytes())
+            self.assertFalse(report_path.exists())
+
+    def test_git_directory_substitution_during_initialization_fails_closed(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-gitdir-init-race-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            external = root / "external-checkout"
+            displaced_git = checkout / ".git-owned"
+            run_git(root, "clone", str(fixture.repository), str(external))
+            external_head = run_git(external, "rev-parse", "HEAD").stdout.strip()
+            external_config = (external / ".git" / "config").read_bytes()
+            external_worktree = (external / CORE_PATH).read_bytes()
+            real_run_anchored_git = fetch_upstream.run_anchored_git
+            substituted = False
+
+            def substitute_git_directory_before_init(
+                arguments: list[str],
+                context: int | fetch_upstream.GitMetadataContext,
+                timeout_seconds: int = 120,
+            ) -> CompletedProcess[str]:
+                nonlocal substituted
+                if not substituted and arguments == ["git", "init"]:
+                    self.assertIsInstance(
+                        context,
+                        fetch_upstream.GitMetadataContext,
+                    )
+                    (checkout / ".git").rename(displaced_git)
+                    (checkout / ".git").symlink_to(
+                        external / ".git",
+                        target_is_directory=True,
+                    )
+                    substituted = True
+                return real_run_anchored_git(
+                    arguments,
+                    context,
+                    timeout_seconds=timeout_seconds,
+                )
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+            ), patch.object(
+                fetch_upstream,
+                "run_anchored_git",
+                side_effect=substitute_git_directory_before_init,
+            ):
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            self.assertTrue(substituted)
+            self.assertTrue(displaced_git.is_dir())
+            self.assertEqual(
+                external_head,
+                run_git(external, "rev-parse", "HEAD").stdout.strip(),
+            )
+            self.assertEqual(
+                external_config,
+                (external / ".git" / "config").read_bytes(),
+            )
+            self.assertEqual(external_worktree, (external / CORE_PATH).read_bytes())
             self.assertFalse(report_path.exists())
 
     def test_inventory_path_substitution_cannot_supply_external_bytes(self) -> None:
@@ -644,7 +1148,7 @@ class PinnedRefreshTests(unittest.TestCase):
             checkout = raw_root / "upstream" / "stata-skill"
             displaced = raw_root / "upstream" / "owned-displaced"
             external = root / "external-checkout"
-            report_path = raw_root / "candidates" / "report.yaml"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
             lock_path = root / "locks" / "upstream.yaml"
             fixture.write_first_lock(lock_path)
 
@@ -677,7 +1181,7 @@ class PinnedRefreshTests(unittest.TestCase):
                 timeout_seconds: int = 120,
             ) -> CompletedProcess[bytes]:
                 nonlocal substituted
-                if not substituted and arguments[:3] == ["git", "ls-tree", "-r"]:
+                if not substituted and "ls-tree" in arguments:
                     checkout.rename(displaced)
                     checkout.symlink_to(external, target_is_directory=True)
                     substituted = True
@@ -729,6 +1233,7 @@ class PinnedRefreshTests(unittest.TestCase):
             fixture.write_first_lock(lock_path)
             real_run_anchored_git = fetch_upstream.run_anchored_git
             calls: list[tuple[list[str], int]] = []
+            descriptor_first_initializations: list[bool] = []
 
             def recording_run_anchored_git(
                 arguments: list[str],
@@ -736,6 +1241,14 @@ class PinnedRefreshTests(unittest.TestCase):
                 timeout_seconds: int = 120,
             ) -> CompletedProcess[str]:
                 calls.append((arguments, timeout_seconds))
+                if arguments == ["git", "init"]:
+                    descriptor_first_initializations.append(
+                        isinstance(
+                            checkout_fd,
+                            fetch_upstream.GitMetadataContext,
+                        )
+                        and (checkout / ".git").is_dir()
+                    )
                 return real_run_anchored_git(
                     arguments,
                     checkout_fd,
@@ -803,8 +1316,10 @@ class PinnedRefreshTests(unittest.TestCase):
                 fetch_calls[0][1],
             )
             self.assertTrue(all(timeout > 0 for _, timeout in calls))
+            self.assertEqual([True], descriptor_first_initializations)
 
             report = yaml.safe_load(report_path.read_text(encoding="utf-8"))
+            self.assertEqual(fetch_upstream.REPORT_OWNER, report["report_owner"])
             self.assertEqual(fixture.first_commit, report["repository"]["resolved_commit"])
             self.assertEqual(
                 {"added": 0, "removed": 0, "changed": 0, "unchanged": 4},
@@ -901,6 +1416,224 @@ class PinnedRefreshTests(unittest.TestCase):
             )
             self.assertFalse(raw_root.exists())
 
+    def test_report_cannot_target_checkout_metadata(self) -> None:
+        with TemporaryDirectory(prefix="pinned-report-metadata-") as temp_root:
+            root = Path(temp_root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            config_path = checkout / ".git" / "config"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_bytes(b"foreign git metadata\n")
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+            ):
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        "a" * 40,
+                        "--offline",
+                        "--report",
+                        str(config_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            self.assertEqual(b"foreign git metadata\n", config_path.read_bytes())
+            self.assertFalse((raw_root / "candidates").exists())
+
+    def test_foreign_canonical_report_is_preserved_before_checkout_creation(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-report-foreign-") as temp_root:
+            root = Path(temp_root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            report_path.parent.mkdir(parents=True)
+            report_path.write_bytes(b"foreign: preserve exactly\n")
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+            ):
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        "a" * 40,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            self.assertEqual(
+                b"foreign: preserve exactly\n",
+                report_path.read_bytes(),
+            )
+            self.assertFalse(checkout.exists())
+
+    def test_oversized_canonical_report_is_rejected_before_hashing(self) -> None:
+        with TemporaryDirectory(prefix="pinned-report-oversized-") as temp_root:
+            root = Path(temp_root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            report_path.parent.mkdir(parents=True)
+            with report_path.open("wb") as handle:
+                handle.truncate(fetch_upstream.MAX_REPORT_BYTES + 1)
+            report_before = report_path.stat()
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+            ), patch.object(
+                fetch_upstream.hashlib,
+                "sha256",
+                side_effect=AssertionError("oversized report must not be hashed"),
+            ):
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        "a" * 40,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            report_after = report_path.stat()
+            self.assertEqual(1, exit_code)
+            self.assertEqual(report_before.st_ino, report_after.st_ino)
+            self.assertEqual(report_before.st_size, report_after.st_size)
+            self.assertFalse(checkout.exists())
+
+    def test_legacy_canonical_report_requires_explicit_recovery(self) -> None:
+        with TemporaryDirectory(prefix="pinned-report-legacy-") as temp_root:
+            root = Path(temp_root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            report_path.parent.mkdir(parents=True)
+            legacy = "report_type: upstream-comparison\nschema_version: 1\n"
+            report_path.write_text(legacy, encoding="utf-8")
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+            ), patch("builtins.print") as mocked_print:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        "a" * 40,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            output = "\n".join(
+                str(call.args[0]) for call in mocked_print.call_args_list
+            )
+            self.assertEqual(1, exit_code)
+            self.assertIn("Legacy comparison report lacks report_owner", output)
+            self.assertIn("move or delete", output)
+            self.assertEqual(legacy, report_path.read_text(encoding="utf-8"))
+            self.assertFalse(checkout.exists())
+
+    def test_foreign_report_substituted_during_quarantine_is_restored(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-report-quarantine-race-") as temp_root:
+            root = Path(temp_root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            displaced_owned = report_path.parent / ".owned-report-displaced"
+            report_path.parent.mkdir(parents=True)
+            report_path.write_text(
+                "schema_version: 1\n"
+                "report_type: upstream-comparison\n"
+                f"report_owner: {fetch_upstream.REPORT_OWNER}\n",
+                encoding="utf-8",
+            )
+            real_rename = fetch_upstream.atomic_rename_at_no_replace
+            substituted = False
+
+            def substitute_before_quarantine_move(
+                source_descriptor: int,
+                source_name: str,
+                destination_descriptor: int,
+                destination_name: str,
+            ) -> None:
+                nonlocal substituted
+                if (
+                    not substituted
+                    and source_name == report_path.name
+                    and destination_name.endswith(".stale")
+                ):
+                    fetch_upstream.os.rename(
+                        source_name,
+                        displaced_owned.name,
+                        src_dir_fd=source_descriptor,
+                        dst_dir_fd=source_descriptor,
+                    )
+                    foreign_fd = fetch_upstream.os.open(
+                        source_name,
+                        fetch_upstream.os.O_WRONLY
+                        | fetch_upstream.os.O_CREAT
+                        | fetch_upstream.os.O_EXCL,
+                        0o600,
+                        dir_fd=source_descriptor,
+                    )
+                    with fetch_upstream.os.fdopen(
+                        foreign_fd,
+                        "wb",
+                    ) as handle:
+                        handle.write(b"foreign replacement: preserve\n")
+                    substituted = True
+                real_rename(
+                    source_descriptor,
+                    source_name,
+                    destination_descriptor,
+                    destination_name,
+                )
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+            ), patch.object(
+                fetch_upstream,
+                "atomic_rename_at_no_replace",
+                side_effect=substitute_before_quarantine_move,
+            ):
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        "a" * 40,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            self.assertTrue(substituted)
+            self.assertEqual(
+                b"foreign replacement: preserve\n",
+                report_path.read_bytes(),
+            )
+            self.assertTrue(displaced_owned.is_file())
+            self.assertFalse(checkout.exists())
+
     def test_fetch_timeout_fails_without_writing_a_report(self) -> None:
         with TemporaryDirectory(prefix="pinned-timeout-") as temp_root:
             root = Path(temp_root)
@@ -911,7 +1644,12 @@ class PinnedRefreshTests(unittest.TestCase):
             lock_path.parent.mkdir()
             lock_path.write_text("repository: {}\nfiles: {}\n", encoding="utf-8")
             report_path.parent.mkdir(parents=True)
-            report_path.write_text("stale: true\n", encoding="utf-8")
+            report_path.write_text(
+                "schema_version: 1\n"
+                "report_type: upstream-comparison\n"
+                f"report_owner: {fetch_upstream.REPORT_OWNER}\n",
+                encoding="utf-8",
+            )
             calls: list[tuple[list[str], int]] = []
 
             def timed_out(
@@ -951,13 +1689,23 @@ class PinnedRefreshTests(unittest.TestCase):
 
             self.assertEqual(1, exit_code)
             self.assertFalse(report_path.exists())
+            quarantines = list(
+                report_path.parent.glob(f".{report_path.name}.*.stale")
+            )
+            self.assertEqual(1, len(quarantines))
+            self.assertIn(
+                fetch_upstream.REPORT_OWNER,
+                quarantines[0].read_text(encoding="utf-8"),
+            )
             self.assertEqual(1, len(calls))
             self.assertEqual(
                 fetch_upstream.LOCAL_GIT_TIMEOUT_SECONDS,
                 calls[0][1],
             )
 
-    def test_report_swap_failure_leaves_no_stale_or_partial_report(self) -> None:
+    def test_report_swap_failure_preserves_owned_candidate_without_unlink(
+        self,
+    ) -> None:
         with TemporaryDirectory(prefix="pinned-report-swap-") as temp_root:
             root = Path(temp_root)
             fixture = UpstreamFixture(root)
@@ -967,7 +1715,28 @@ class PinnedRefreshTests(unittest.TestCase):
             report_path = raw_root / "candidates" / "upstream-comparison.yaml"
             fixture.write_first_lock(lock_path)
             report_path.parent.mkdir(parents=True)
-            report_path.write_text("stale: true\n", encoding="utf-8")
+            report_path.write_text(
+                "schema_version: 1\n"
+                "report_type: upstream-comparison\n"
+                f"report_owner: {fetch_upstream.REPORT_OWNER}\n",
+                encoding="utf-8",
+            )
+            real_rename = fetch_upstream.atomic_rename_at_no_replace
+
+            def fail_report_publication(
+                source_descriptor: int,
+                source_name: str,
+                destination_descriptor: int,
+                destination_name: str,
+            ) -> None:
+                if source_name.endswith(".tmp"):
+                    raise OSError("forced report swap failure")
+                real_rename(
+                    source_descriptor,
+                    source_name,
+                    destination_descriptor,
+                    destination_name,
+                )
 
             with patch.multiple(
                 fetch_upstream,
@@ -979,8 +1748,12 @@ class PinnedRefreshTests(unittest.TestCase):
             ), patch.object(
                 fetch_upstream,
                 "atomic_rename_at_no_replace",
-                side_effect=OSError("forced report swap failure"),
-            ):
+                side_effect=fail_report_publication,
+            ), patch.object(
+                fetch_upstream.os,
+                "unlink",
+                wraps=os.unlink,
+            ) as unlink:
                 exit_code = fetch_upstream.main(
                     [
                         "--upstream-ref",
@@ -992,9 +1765,14 @@ class PinnedRefreshTests(unittest.TestCase):
 
             self.assertEqual(1, exit_code)
             self.assertFalse(report_path.exists())
-            self.assertEqual(
-                [],
-                list(report_path.parent.glob(f".{report_path.name}.*.tmp")),
+            unlink.assert_not_called()
+            candidates = list(
+                report_path.parent.glob(f".{report_path.name}.*.tmp")
+            )
+            self.assertEqual(1, len(candidates))
+            self.assertIn(
+                fetch_upstream.REPORT_OWNER,
+                candidates[0].read_text(encoding="utf-8"),
             )
 
     def test_concurrent_report_is_preserved_by_no_replace_publication(self) -> None:
@@ -1066,9 +1844,13 @@ class PinnedRefreshTests(unittest.TestCase):
                 "concurrent: preserve\n",
                 report_path.read_text(encoding="utf-8"),
             )
-            self.assertEqual(
-                [],
-                list(report_path.parent.glob(f".{report_path.name}.*.tmp")),
+            candidates = list(
+                report_path.parent.glob(f".{report_path.name}.*.tmp")
+            )
+            self.assertEqual(1, len(candidates))
+            self.assertIn(
+                fetch_upstream.REPORT_OWNER,
+                candidates[0].read_text(encoding="utf-8"),
             )
 
     def test_substituted_temporary_report_is_preserved_and_not_published(
@@ -1147,7 +1929,7 @@ class PinnedRefreshTests(unittest.TestCase):
             )
             self.assertEqual(1, exit_code)
             self.assertTrue(substituted)
-            self.assertGreaterEqual(verification_calls, 2)
+            self.assertEqual(1, verification_calls)
             self.assertFalse(report_path.exists())
             self.assertEqual(1, len(temporary_files))
             self.assertEqual(
