@@ -1703,7 +1703,7 @@ class PublishTransactionTests(unittest.TestCase):
                 ),
             )
 
-    def test_installed_child_change_before_rollback_is_never_removed(
+    def test_installed_child_change_is_quarantined_and_original_restored(
         self,
     ) -> None:
         with TemporaryDirectory(prefix="publish-test-") as temporary:
@@ -1738,7 +1738,7 @@ class PublishTransactionTests(unittest.TestCase):
                 side_effect=mutate_first_installed_child_after_all_installs,
             ), self.assertRaisesRegex(
                 publish_local.PublishError,
-                "rollback was incomplete",
+                "destinations were restored",
             ):
                 publish_local.publish_skills(
                     source_root=generated,
@@ -1746,12 +1746,8 @@ class PublishTransactionTests(unittest.TestCase):
                     receipt_path=receipt,
                 )
 
-            self.assertEqual(10, replace_calls)
-            self.assertEqual(
-                "# Concurrent installed bytes\n",
-                concurrent_file.read_text(encoding="utf-8"),
-            )
-            for folder in ("stata-packages", "stata-c-plugins"):
+            self.assertEqual(12, replace_calls)
+            for folder in release_state.SKILL_FOLDERS:
                 self.assertIn(
                     "old",
                     (destination / folder / "SKILL.md").read_text(
@@ -1765,14 +1761,251 @@ class PublishTransactionTests(unittest.TestCase):
                 destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")
             )
             self.assertEqual(1, len(transactions))
-            self.assertIn(
-                "old",
+            quarantined = (
+                transactions[0]
+                / "quarantine"
+                / "stata-core"
+                / "SKILL.md"
+            )
+            self.assertEqual(
+                "# Concurrent installed bytes\n",
+                quarantined.read_text(encoding="utf-8"),
+            )
+
+    def test_stage_digest_rejects_membership_change_after_enumeration(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            before = {
+                folder: snapshot(destination / folder)
+                for folder in release_state.SKILL_FOLDERS
+            }
+            real_listdir = publish_local.os.listdir
+            injected_marker: Path | None = None
+
+            def listdir_then_change_membership(
+                path: int | str | bytes | os.PathLike[str],
+            ) -> list[str]:
+                nonlocal injected_marker
+                names = real_listdir(path)
+                if injected_marker is not None or not isinstance(path, int):
+                    return names
+                opened = os.fstat(path)
+                for transaction in destination.glob(
+                    f"{publish_local.TRANSACTION_PREFIX}*"
+                ):
+                    candidate = transaction / "stage" / "stata-core"
+                    if not (candidate / "SKILL.md").is_file():
+                        continue
+                    candidate_state = candidate.stat()
+                    if (
+                        candidate_state.st_dev == opened.st_dev
+                        and candidate_state.st_ino == opened.st_ino
+                    ):
+                        injected_marker = candidate / "unvalidated.txt"
+                        injected_marker.write_text(
+                            "must not be published\n",
+                            encoding="utf-8",
+                        )
+                        break
+                return names
+
+            with patch.object(
+                publish_local.os,
+                "listdir",
+                side_effect=listdir_then_change_membership,
+            ), self.assertRaisesRegex(
+                publish_local.PublishError,
+                "changed while its contents were being validated",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertIsNotNone(injected_marker)
+            assert injected_marker is not None
+            self.assertTrue(injected_marker.is_file())
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(before[folder], snapshot(destination / folder))
+            self.assertEqual(
+                1,
+                len(
+                    list(
+                        destination.glob(
+                            f"{publish_local.TRANSACTION_PREFIX}*"
+                        )
+                    )
+                ),
+            )
+
+    def test_cross_skill_final_change_is_detected_and_quarantined(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            before = {
+                folder: snapshot(destination / folder)
+                for folder in release_state.SKILL_FOLDERS
+            }
+            real_verification = publish_local._capture_skill_verification_at
+            core_calls = 0
+
+            def verify_core_then_change_it(
+                parent_descriptor: int,
+                name: str,
+                display_path: Path,
+            ) -> publish_local.SkillVerification:
+                nonlocal core_calls
+                verification = real_verification(
+                    parent_descriptor,
+                    name,
+                    display_path,
+                )
+                if name == "stata-core":
+                    core_calls += 1
+                    if core_calls == 1:
+                        (destination / name / "SKILL.md").write_text(
+                            "# Changed between final skill checks\n",
+                            encoding="utf-8",
+                        )
+                return verification
+
+            with patch.object(
+                publish_local,
+                "_capture_skill_verification_at",
+                side_effect=verify_core_then_change_it,
+            ), self.assertRaisesRegex(
+                publish_local.PublishError,
+                "destinations were restored",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertEqual(2, core_calls)
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(before[folder], snapshot(destination / folder))
+            transactions = list(
+                destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")
+            )
+            self.assertEqual(1, len(transactions))
+            self.assertEqual(
+                "# Changed between final skill checks\n",
                 (
                     transactions[0]
-                    / "backups"
+                    / "quarantine"
                     / "stata-core"
                     / "SKILL.md"
                 ).read_text(encoding="utf-8"),
+            )
+
+    def test_stage_entry_substitution_is_quarantined_before_restore(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            before = {
+                folder: snapshot(destination / folder)
+                for folder in release_state.SKILL_FOLDERS
+            }
+            real_replace = publish_local._atomic_rename_no_replace
+            replace_calls = 0
+
+            def substitute_first_stage_entry(
+                source: str | bytes,
+                target: str | bytes,
+                *,
+                src_dir_fd: int,
+                dst_dir_fd: int,
+            ) -> None:
+                nonlocal replace_calls
+                replace_calls += 1
+                if replace_calls == 2:
+                    transaction = next(
+                        destination.glob(
+                            f"{publish_local.TRANSACTION_PREFIX}*"
+                        )
+                    )
+                    stage = transaction / "stage"
+                    (stage / "stata-core").rename(
+                        stage / "validated-stata-core"
+                    )
+                    shutil.copytree(
+                        generated / "stata-core",
+                        stage / "stata-core",
+                    )
+                    (stage / "stata-core" / "SKILL.md").write_text(
+                        "# Substituted staged bytes\n",
+                        encoding="utf-8",
+                    )
+                real_replace(
+                    source,
+                    target,
+                    src_dir_fd=src_dir_fd,
+                    dst_dir_fd=dst_dir_fd,
+                )
+
+            with patch.object(
+                publish_local,
+                "_atomic_rename_no_replace",
+                side_effect=substitute_first_stage_entry,
+            ), self.assertRaisesRegex(
+                publish_local.PublishError,
+                "destinations were restored",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertEqual(4, replace_calls)
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(before[folder], snapshot(destination / folder))
+            transactions = list(
+                destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")
+            )
+            self.assertEqual(1, len(transactions))
+            transaction = transactions[0]
+            self.assertEqual(
+                "# Substituted staged bytes\n",
+                (
+                    transaction
+                    / "quarantine"
+                    / "stata-core"
+                    / "SKILL.md"
+                ).read_text(encoding="utf-8"),
+            )
+            self.assertTrue(
+                (
+                    transaction
+                    / "stage"
+                    / "validated-stata-core"
+                    / "SKILL.md"
+                ).is_file()
             )
 
     def test_post_install_digest_failure_rolls_back_every_skill(self) -> None:
@@ -1788,32 +2021,36 @@ class PublishTransactionTests(unittest.TestCase):
                 folder: snapshot(destination / folder)
                 for folder in release_state.SKILL_FOLDERS
             }
-            real_skill_digest = publish_local._skill_digest_at
-            package_digest_calls = 0
+            real_verification = publish_local._capture_skill_verification_at
+            package_verification_calls = 0
 
-            def corrupt_installed_digest(
+            def corrupt_installed_verification(
                 parent_descriptor: int,
                 name: str,
                 display_path: Path,
-            ) -> str:
-                nonlocal package_digest_calls
-                if name == "stata-packages":
-                    package_digest_calls += 1
-                    if package_digest_calls == 2:
-                        return "0" * 64
-                return real_skill_digest(
+            ) -> publish_local.SkillVerification:
+                nonlocal package_verification_calls
+                verification = real_verification(
                     parent_descriptor,
                     name,
                     display_path,
                 )
+                if name == "stata-packages":
+                    package_verification_calls += 1
+                    if package_verification_calls == 2:
+                        return publish_local.SkillVerification(
+                            destination_state=verification.destination_state,
+                            skill_sha256="0" * 64,
+                        )
+                return verification
 
             with patch.object(
                 publish_local,
-                "_skill_digest_at",
-                side_effect=corrupt_installed_digest,
+                "_capture_skill_verification_at",
+                side_effect=corrupt_installed_verification,
             ), self.assertRaisesRegex(
                 publish_local.PublishError,
-                "all destinations were rolled back",
+                "destinations were restored",
             ):
                 publish_local.publish_skills(
                     source_root=generated,

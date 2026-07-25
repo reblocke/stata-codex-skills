@@ -15,7 +15,13 @@ concurrency:
 
 jobs:
   offline-static:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     steps:
       - name: Check out source

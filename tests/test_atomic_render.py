@@ -1405,6 +1405,58 @@ class AtomicRenderTests(unittest.TestCase):
             self.assertEqual("keep me\n", unrelated.read_text(encoding="utf-8"))
             self.assertEqual([], self.transaction_artifacts(parent, target.name))
 
+    def test_symlinked_top_level_skill_root_is_rejected_without_mutation(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            external_skill = parent / "external-stata-core"
+            skill_root = target / "stata-core"
+            skill_root.rename(external_skill)
+            skill_root.symlink_to(external_skill, target_is_directory=True)
+            external_before = self.snapshot(external_skill)
+            packages_before = self.snapshot(target / "stata-packages")
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "top-level skill root must be an ordinary directory",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(skill_root.is_symlink())
+            self.assertEqual(external_before, self.snapshot(external_skill))
+            self.assertEqual(
+                packages_before,
+                self.snapshot(target / "stata-packages"),
+            )
+            self.assertEqual([], self.transaction_artifacts(parent, target.name))
+
+    def test_non_directory_top_level_skill_root_is_rejected_without_mutation(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            displaced_skill = parent / "prior-stata-core"
+            skill_root = target / "stata-core"
+            skill_root.rename(displaced_skill)
+            skill_root.write_text("not a skill directory\n", encoding="utf-8")
+            displaced_before = self.snapshot(displaced_skill)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "top-level skill root must be an ordinary directory",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertEqual(
+                "not a skill directory\n",
+                skill_root.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(displaced_before, self.snapshot(displaced_skill))
+            self.assertEqual([], self.transaction_artifacts(parent, target.name))
+
     def test_target_replacement_during_staging_is_rejected_and_preserved(
         self,
     ) -> None:
@@ -1513,6 +1565,49 @@ class AtomicRenderTests(unittest.TestCase):
                 render_skills.render_all(output_root=target)
 
             self.assertFalse(target.exists())
+
+    def test_symlinked_build_ancestor_cannot_redirect_canonical_render(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            external_build = parent / "external-build"
+            external_generated = external_build / "generated"
+            render_skills.render_all(output_root=external_generated)
+            external_marker = external_generated / "stata-core" / "SKILL.md"
+            external_marker.write_text(
+                "# External generated tree\n",
+                encoding="utf-8",
+            )
+            external_before = self.snapshot(external_generated)
+
+            repository = parent / "repo"
+            repository.mkdir()
+            (repository / "build").symlink_to(
+                external_build,
+                target_is_directory=True,
+            )
+            build_root = repository / "build" / "generated"
+
+            with patch.object(
+                render_skills,
+                "REPO_ROOT",
+                repository,
+            ), patch.object(
+                render_skills,
+                "BUILD_ROOT",
+                build_root,
+            ), self.assertRaisesRegex(
+                ValueError,
+                "symbolic-link or non-directory component",
+            ):
+                render_skills.render_all(output_root=build_root)
+
+            self.assertEqual(external_before, self.snapshot(external_generated))
+            self.assertEqual(
+                [],
+                self.transaction_artifacts(external_build, "generated"),
+            )
 
     def test_case_insensitive_repository_alias_cannot_bypass_output_guard(
         self,

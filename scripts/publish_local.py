@@ -71,6 +71,25 @@ class DestinationState:
     tree_sha256: str | None = None
 
 
+@dataclass(frozen=True)
+class SkillVerification:
+    destination_state: DestinationState
+    skill_sha256: str
+
+
+def _same_directory_identity(
+    left: DestinationState,
+    right: DestinationState | None,
+) -> bool:
+    return (
+        right is not None
+        and left.kind == "directory"
+        and right.kind == "directory"
+        and left.device == right.device
+        and left.inode == right.inode
+    )
+
+
 @dataclass
 class TransactionLock:
     path: Path
@@ -1070,6 +1089,7 @@ def _walk_directory_handle(
     file_descriptor = _require_directory_descriptor(handle)
     records: list[tuple[str, bytes, bytes]] = []
     try:
+        before = os.fstat(file_descriptor)
         names = sorted(os.listdir(file_descriptor))
     except OSError as error:
         raise PublishError(
@@ -1130,6 +1150,37 @@ def _walk_directory_handle(
                 ),
             )
         )
+    try:
+        after_names = sorted(os.listdir(file_descriptor))
+        after = os.fstat(file_descriptor)
+    except OSError as error:
+        raise PublishError(
+            "Could not revalidate anchored directory "
+            f"{handle.display_path}: {error}"
+        ) from error
+    before_identity = (
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+        before.st_nlink,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    after_identity = (
+        after.st_dev,
+        after.st_ino,
+        after.st_mode,
+        after.st_nlink,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if names != after_names or before_identity != after_identity:
+        raise PublishError(
+            "Anchored directory changed while its contents were being "
+            f"validated: {handle.display_path}"
+        )
     return records
 
 
@@ -1149,14 +1200,35 @@ def _destination_tree_digest_handle(handle: DirectoryHandle) -> str:
     return _destination_tree_digest_records(_walk_directory_handle(handle))
 
 
-def _skill_tree_digest_handle(handle: DirectoryHandle) -> str:
+def _skill_tree_digest_records(
+    records: tuple[tuple[str, bytes, bytes], ...]
+    | list[tuple[str, bytes, bytes]],
+) -> str:
     digest = hashlib.sha256()
-    for relative, kind, payload in _walk_directory_handle(handle):
+    for relative, kind, payload in records:
         if kind != b"file":
             continue
         _update_digest_field(digest, relative.encode("utf-8"))
         _update_digest_field(digest, payload)
     return digest.hexdigest()
+
+
+def _skill_tree_digest_handle(handle: DirectoryHandle) -> str:
+    return _skill_tree_digest_records(_walk_directory_handle(handle))
+
+
+def _skill_digest_from_tree_records(
+    records: tuple[tuple[str, bytes, bytes], ...]
+    | list[tuple[str, bytes, bytes]],
+    folder: str,
+) -> str:
+    prefix = f"{folder}/"
+    folder_records = [
+        (relative.removeprefix(prefix), kind, payload)
+        for relative, kind, payload in records
+        if kind == b"file" and relative.startswith(prefix)
+    ]
+    return _skill_tree_digest_records(folder_records)
 
 
 def _capture_destination_state_at(
@@ -1437,6 +1509,90 @@ def _skill_digest_at(
             raise PublishError(
                 f"Could not close {display_path}: {'; '.join(close_errors)}"
             )
+
+
+def _capture_skill_verification_at(
+    parent_descriptor: int,
+    name: str,
+    display_path: Path,
+) -> SkillVerification:
+    handle = _open_directory_handle_at(
+        parent_descriptor,
+        name,
+        display_path,
+    )
+    try:
+        records = _walk_directory_handle(handle)
+        return SkillVerification(
+            destination_state=DestinationState(
+                kind="directory",
+                device=handle.device,
+                inode=handle.inode,
+                tree_sha256=_destination_tree_digest_records(records),
+            ),
+            skill_sha256=_skill_tree_digest_records(records),
+        )
+    finally:
+        close_errors = _close_directory_handle(handle)
+        if close_errors and sys.exc_info()[0] is None:
+            raise PublishError(
+                f"Could not close {display_path}: {'; '.join(close_errors)}"
+            )
+
+
+def _capture_installed_skill_set(
+    root_descriptor: int,
+    destination_root: Path,
+    folders: tuple[str, ...],
+) -> dict[str, SkillVerification]:
+    return {
+        folder: _capture_skill_verification_at(
+            root_descriptor,
+            folder,
+            destination_root / folder,
+        )
+        for folder in folders
+    }
+
+
+def _verify_installed_skill_set(
+    root_descriptor: int,
+    destination_root: Path,
+    states: list[ReplacementState],
+    expected_skill_digests: dict[str, str],
+) -> None:
+    """Require two complete, consistent observations before commit."""
+
+    first = _capture_installed_skill_set(
+        root_descriptor,
+        destination_root,
+        tuple(SKILL_FOLDERS),
+    )
+    second = _capture_installed_skill_set(
+        root_descriptor,
+        destination_root,
+        tuple(reversed(SKILL_FOLDERS)),
+    )
+    if first != second:
+        raise PublishError(
+            "Installed skill tree changed across final verification passes.",
+            preserve_transaction=True,
+        )
+    mismatched: list[str] = []
+    for folder, state in zip(SKILL_FOLDERS, states, strict=True):
+        observed = second[folder]
+        if (
+            state.installed_state is None
+            or observed.destination_state != state.installed_state
+            or observed.skill_sha256 != expected_skill_digests[folder]
+        ):
+            mismatched.append(folder)
+    if mismatched:
+        raise PublishError(
+            "Installed skill verification failed for: "
+            + ", ".join(mismatched),
+            preserve_transaction=True,
+        )
 
 
 def _remove_verified_file_via_quarantine(
@@ -2812,9 +2968,17 @@ def _rollback(
                     f"{quarantine_root.display_path / folder}"
                 )
 
+            expected_installed = (
+                state.installed_state
+                if state.installed_state is not None
+                else state.staged_state
+            )
             if (
-                state.staged_state is not None
-                and observed_destination == state.staged_state
+                expected_installed is not None
+                and _same_directory_identity(
+                    observed_destination,
+                    expected_installed,
+                )
             ):
                 if conflicts:
                     raise PublishError(
@@ -2843,10 +3007,12 @@ def _rollback(
                     folder,
                     quarantine_root.display_path / folder,
                 )
-                if quarantined_state != state.installed_state:
-                    expected_installed = state.staged_state
-                    if quarantined_state == expected_installed:
-                        state.installed_state = expected_installed
+                if quarantined_state != expected_installed:
+                    if _same_directory_identity(
+                        quarantined_state,
+                        expected_installed,
+                    ):
+                        state.installed_state = quarantined_state
                     else:
                         destination_state = _capture_destination_state_at(
                             root_descriptor,
@@ -2871,8 +3037,8 @@ def _rollback(
                                 preserve_transaction=True,
                             )
                         raise PublishError(
-                            "Installed skill changed during rollback quarantine; "
-                            "restored it without deleting bytes: "
+                            "Installed skill identity changed during rollback "
+                            "quarantine; restored it without deleting bytes: "
                             f"{state.destination}",
                             preserve_transaction=True,
                         )
@@ -3134,6 +3300,13 @@ def _swap_all(
                 src_dir_fd=stage_descriptor,
                 dst_dir_fd=root_descriptor,
             )
+            state.installed = True
+            observed_installed = _capture_destination_state_at(
+                root_descriptor,
+                folder,
+                destination,
+            )
+            state.installed_state = observed_installed
             _fsync_directory_descriptor(
                 root_descriptor,
                 destination_root.path,
@@ -3144,51 +3317,35 @@ def _swap_all(
                 stage_root.display_path,
                 preserve_transaction=True,
             )
-            state.installed = True
-            state.installed_state = state.staged_state
-            observed_installed = _capture_destination_state_at(
-                root_descriptor,
-                folder,
-                destination,
-            )
-            if observed_installed != state.installed_state:
+            if observed_installed != state.staged_state:
                 raise PublishError(
                     "Installed skill changed during atomic placement: "
                     f"{destination}",
                     preserve_transaction=True,
                 )
-        mismatched = [
+        _verify_installed_skill_set(
+            root_descriptor,
+            dest_root,
+            states,
+            expected_skill_digests,
+        )
+        mismatched_backups = [
             (folder, state)
             for folder, state in zip(SKILL_FOLDERS, states, strict=True)
             if (
-                state.installed_state is None
-                or _capture_destination_state_at(
-                    root_descriptor,
+                state.backup_created
+                and _capture_destination_state_at(
+                    backup_descriptor,
                     folder,
-                    dest_root / folder,
+                    state.backup,
                 )
-                != state.installed_state
-                or _skill_digest_at(
-                    root_descriptor,
-                    folder,
-                    dest_root / folder,
-                )
-                != expected_skill_digests[folder]
-                or (
-                    state.backup_created
-                    and _capture_destination_state_at(
-                        backup_descriptor,
-                        folder,
-                        state.backup,
-                    )
-                    != state.original_state
-                )
+                != state.original_state
             )
         ]
-        if mismatched:
+        if mismatched_backups:
             raise OSError(
-                "installed skills differ from their staged bytes: "
-                + ", ".join(folder for folder, _ in mismatched)
+                "skill backups changed before commit: "
+                + ", ".join(folder for folder, _ in mismatched_backups)
             )
         cleanup_plan = TransactionCleanupPlan(
             stage_device=stage_root.device,
@@ -3350,7 +3507,10 @@ def publish_skills(
 
         # Bind publication to the copied tree, not merely to the source tree
         # that existed before staging.
-        if _skill_tree_digest_handle(stage_root) != receipt.get("tree_sha256"):
+        staged_records = _walk_directory_handle(stage_root)
+        if _skill_tree_digest_records(
+            staged_records
+        ) != receipt.get("tree_sha256"):
             raise PublishError(
                 "Staged skill tree differs from the validated generated tree."
             )
@@ -3363,12 +3523,10 @@ def publish_skills(
             raise PublishError(str(error)) from error
         require_fresh_receipt(staged_receipt, now=now)
 
-        stage_descriptor = _require_directory_descriptor(stage_root)
         expected_skill_digests = {
-            folder: _skill_digest_at(
-                stage_descriptor,
+            folder: _skill_digest_from_tree_records(
+                staged_records,
                 folder,
-                stage_root.display_path / folder,
             )
             for folder in SKILL_FOLDERS
         }

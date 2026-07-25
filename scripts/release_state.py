@@ -8,6 +8,8 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
+import subprocess
 import tempfile
 
 from libskillpack import BUILD_ROOT, REPO_ROOT
@@ -15,8 +17,12 @@ from libskillpack import BUILD_ROOT, REPO_ROOT
 
 VALIDATION_RECEIPT_PATH = BUILD_ROOT.parent / "validation-receipt.json"
 SKILL_FOLDERS = ("stata-core", "stata-packages", "stata-c-plugins")
-EXCLUDED_PARTS = {"__pycache__", ".pytest_cache"}
-EXCLUDED_ROOT_DIRECTORIES = {".cache", ".git", ".venv", "build", "raw"}
+GIT_INVENTORY_TIMEOUT_SECONDS = 30
+DIRECTORY_OPEN_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_DIRECTORY", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+)
 
 
 def _hash_records(records: list[tuple[str, bytes]]) -> str:
@@ -50,38 +56,128 @@ def tree_digest(root: Path) -> str:
     return _hash_records(_file_records(root, paths))
 
 
+def _tracked_file_record(root_fd: int, relative: Path) -> tuple[str, bytes]:
+    """Read one tracked file through no-follow descriptor-relative components."""
+
+    if relative.is_absolute() or any(
+        part in {"", ".", ".."} for part in relative.parts
+    ):
+        raise ValueError(f"Unsafe tracked source path: {relative}")
+    current_fd = os.dup(root_fd)
+    file_fd: int | None = None
+    try:
+        for part in relative.parts[:-1]:
+            try:
+                next_fd = os.open(
+                    part,
+                    DIRECTORY_OPEN_FLAGS,
+                    dir_fd=current_fd,
+                )
+            except OSError as error:
+                raise ValueError(
+                    f"Tracked source path has an unsafe ancestor: {relative}"
+                ) from error
+            os.close(current_fd)
+            current_fd = next_fd
+        try:
+            file_fd = os.open(
+                relative.name,
+                os.O_RDONLY
+                | getattr(os, "O_NOFOLLOW", 0)
+                | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=current_fd,
+            )
+        except OSError as error:
+            raise ValueError(
+                f"Tracked source file is missing or unsafe: {relative}"
+            ) from error
+        metadata = os.fstat(file_fd)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise ValueError(f"Tracked source file is non-regular: {relative}")
+        with os.fdopen(file_fd, "rb") as handle:
+            file_fd = None
+            payload = handle.read()
+        return relative.as_posix(), payload
+    finally:
+        if file_fd is not None:
+            os.close(file_fd)
+        os.close(current_fd)
+
+
+def _assert_repository_identity(repo_root: Path, repository_fd: int) -> None:
+    try:
+        observed_fd = os.open(repo_root, DIRECTORY_OPEN_FLAGS)
+    except OSError as error:
+        raise ValueError("Repository root changed during source hashing") from error
+    try:
+        held = os.fstat(repository_fd)
+        observed = os.fstat(observed_fd)
+        if (held.st_dev, held.st_ino) != (observed.st_dev, observed.st_ino):
+            raise ValueError("Repository root changed during source hashing")
+    finally:
+        os.close(observed_fd)
+
+
+def _tracked_inventory(repository_fd: int) -> bytes:
+    def enter_repository() -> None:
+        os.fchdir(repository_fd)
+
+    environment = os.environ.copy()
+    for variable in (
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_DIR",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_WORK_TREE",
+    ):
+        environment.pop(variable, None)
+    try:
+        inventory = subprocess.run(
+            ["git", "ls-files", "--cached", "-z"],
+            check=False,
+            capture_output=True,
+            timeout=GIT_INVENTORY_TIMEOUT_SECONDS,
+            pass_fds=(repository_fd,),
+            preexec_fn=enter_repository,
+            env=environment,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise ValueError(f"Could not inventory tracked source files: {error}") from error
+    if inventory.returncode != 0:
+        detail = inventory.stderr.decode("utf-8", errors="replace").strip()
+        raise ValueError(
+            f"Could not inventory tracked source files: {detail or 'git ls-files failed'}"
+        )
+    return inventory.stdout
+
+
 def source_digest(repo_root: Path = REPO_ROOT) -> str:
-    """Hash all review, build, test, and publication inputs.
+    """Hash every Git-tracked working-tree file and no untracked runtime files."""
 
-    Ignored runtime material such as ``build/``, ``raw/``, virtual
-    environments, caches, and ``tests/tmp/`` is intentionally outside this
-    inventory.
-    """
-
-    paths: list[Path] = []
-    for child in repo_root.iterdir():
-        if child.is_symlink():
-            raise ValueError(f"Refusing to hash source symlink: {child}")
-        if child.is_file():
-            if child.name != ".DS_Store":
-                paths.append(child)
-            continue
-        if not child.is_dir() or child.name in EXCLUDED_ROOT_DIRECTORIES:
-            continue
-        for path in child.rglob("*"):
-            relative_path = path.relative_to(repo_root)
-            if path.is_symlink():
-                raise ValueError(f"Refusing to hash source symlink: {path}")
-            if not path.is_file():
+    try:
+        repository_fd = os.open(repo_root, DIRECTORY_OPEN_FLAGS)
+    except OSError as error:
+        raise ValueError(
+            f"Repository root must be a real, non-symlink directory: {error}"
+        ) from error
+    try:
+        _assert_repository_identity(repo_root, repository_fd)
+        inventory = _tracked_inventory(repository_fd)
+        _assert_repository_identity(repo_root, repository_fd)
+        records: list[tuple[str, bytes]] = []
+        for encoded_relative in inventory.split(b"\0"):
+            if not encoded_relative:
                 continue
-            if any(part in EXCLUDED_PARTS for part in relative_path.parts):
-                continue
-            if relative_path.parts[:2] == ("tests", "tmp"):
-                continue
-            if path.suffix == ".pyc" or path.name == ".DS_Store":
-                continue
-            paths.append(path)
-    return _hash_records(_file_records(repo_root, paths))
+            try:
+                relative = Path(encoded_relative.decode("utf-8"))
+            except UnicodeDecodeError as error:
+                raise ValueError("Tracked source path is not valid UTF-8") from error
+            records.append(_tracked_file_record(repository_fd, relative))
+        _assert_repository_identity(repo_root, repository_fd)
+        return _hash_records(sorted(records))
+    finally:
+        os.close(repository_fd)
 
 
 def expected_skill_folders(root: Path) -> tuple[str, ...]:

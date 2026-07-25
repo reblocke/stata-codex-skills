@@ -163,6 +163,94 @@ def _existing_ancestor_identities(path: Path) -> tuple[tuple[int, int], ...]:
         current = parent
 
 
+def _validated_canonical_build_root(requested: Path) -> Path:
+    """Anchor the build/generated exception beneath the real repository root."""
+
+    repository_root = Path(os.path.abspath(REPO_ROOT.expanduser()))
+    expected_build_root = repository_root / "build" / "generated"
+    resolved_build_root = expected_build_root.resolve(strict=False)
+    configured_build_root = Path(os.path.abspath(BUILD_ROOT.expanduser()))
+    requested_root = Path(os.path.abspath(requested))
+    if configured_build_root != expected_build_root:
+        raise ValueError(
+            "canonical render output must be configured as "
+            "REPO_ROOT/build/generated"
+        )
+    if requested_root != expected_build_root:
+        raise ValueError(
+            "canonical build output must use the repository-anchored "
+            f"path {expected_build_root}"
+        )
+
+    directory_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    descriptors: list[int] = []
+    try:
+        repository_metadata = repository_root.lstat()
+        if not stat.S_ISDIR(repository_metadata.st_mode):
+            raise ValueError(
+                "repository root is not an ordinary directory: "
+                f"{repository_root}"
+            )
+        repository_descriptor = os.open(repository_root, directory_flags)
+        descriptors.append(repository_descriptor)
+        opened_repository = os.fstat(repository_descriptor)
+        if (
+            opened_repository.st_dev != repository_metadata.st_dev
+            or opened_repository.st_ino != repository_metadata.st_ino
+        ):
+            raise ValueError(
+                "repository root changed while validating canonical build output"
+            )
+
+        parent_descriptor = repository_descriptor
+        current_path = repository_root
+        for component in ("build", "generated"):
+            current_path = current_path / component
+            try:
+                component_metadata = os.stat(
+                    component,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                break
+            if not stat.S_ISDIR(component_metadata.st_mode):
+                raise ValueError(
+                    "refusing canonical build output with a symbolic-link or "
+                    f"non-directory component: {current_path}"
+                )
+            component_descriptor = os.open(
+                component,
+                directory_flags,
+                dir_fd=parent_descriptor,
+            )
+            descriptors.append(component_descriptor)
+            opened_component = os.fstat(component_descriptor)
+            if (
+                opened_component.st_dev != component_metadata.st_dev
+                or opened_component.st_ino != component_metadata.st_ino
+            ):
+                raise ValueError(
+                    "canonical build output changed while validating "
+                    f"{current_path}"
+                )
+            parent_descriptor = component_descriptor
+    except OSError as error:
+        raise ValueError(
+            "could not validate canonical build output without following "
+            f"symbolic links: {expected_build_root}"
+        ) from error
+    finally:
+        for descriptor in reversed(descriptors):
+            os.close(descriptor)
+    return resolved_build_root
+
+
 def _resolved_output_root(output_root: Path) -> Path:
     """Canonicalize a render target while rejecting ambiguous destinations."""
 
@@ -175,7 +263,7 @@ def _resolved_output_root(output_root: Path) -> Path:
     repository_root = REPO_ROOT.resolve(strict=True)
     canonical_build_root = BUILD_ROOT.resolve(strict=False)
     if resolved == canonical_build_root:
-        return resolved
+        return _validated_canonical_build_root(requested)
     repository_metadata = repository_root.stat()
     repository_identity = (
         repository_metadata.st_dev,
@@ -194,16 +282,34 @@ def preflight_existing_output_root(output_root: Path) -> None:
 
     if not output_root.exists():
         return
-    if not output_root.is_dir():
+    output_metadata = output_root.lstat()
+    if not stat.S_ISDIR(output_metadata.st_mode):
         raise ValueError(f"render output root is not a directory: {output_root}")
     if not any(output_root.iterdir()):
         return
 
+    errors: list[str] = []
+    for folder in SKILL_FOLDERS:
+        skill_root = output_root / folder
+        try:
+            skill_metadata = skill_root.lstat()
+        except FileNotFoundError:
+            errors.append(f"{folder}: missing top-level skill root")
+            continue
+        if not stat.S_ISDIR(skill_metadata.st_mode):
+            errors.append(
+                f"{folder}: top-level skill root must be an ordinary directory"
+            )
+            continue
+    if errors:
+        raise ValueError(
+            "refusing to replace a non-dedicated render output root: "
+            + "; ".join(errors)
+        )
+
     errors = validate_complete_skill_tree(output_root)
     for folder in SKILL_FOLDERS:
         skill_root = output_root / folder
-        if not skill_root.is_dir() or skill_root.is_symlink():
-            continue
         direct_files = {
             path.name
             for path in skill_root.iterdir()
