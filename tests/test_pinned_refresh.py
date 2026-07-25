@@ -721,6 +721,135 @@ class PinnedRefreshTests(unittest.TestCase):
             )
             self.assertFalse(report_path.exists())
 
+    def test_extensions_worktree_config_is_rejected_before_git_launch(self) -> None:
+        with TemporaryDirectory(prefix="pinned-worktree-config-ext-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            checkout.parent.mkdir(parents=True)
+            run_git(root, "clone", str(fixture.repository), str(checkout))
+            run_git(
+                checkout,
+                "config",
+                "extensions.worktreeConfig",
+                "true",
+            )
+            head_before = (checkout / ".git" / "HEAD").read_bytes()
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+            ), patch.object(
+                fetch_upstream.subprocess,
+                "Popen",
+            ) as mocked_popen:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            mocked_popen.assert_not_called()
+            self.assertEqual(head_before, (checkout / ".git" / "HEAD").read_bytes())
+            self.assertFalse(report_path.exists())
+
+    def test_config_worktree_file_is_rejected_before_git_launch(self) -> None:
+        with TemporaryDirectory(prefix="pinned-worktree-config-file-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            checkout.parent.mkdir(parents=True)
+            run_git(root, "clone", str(fixture.repository), str(checkout))
+            config_worktree = checkout / ".git" / "config.worktree"
+            config_worktree.write_text("[core]\n\tbare = false\n", encoding="utf-8")
+            head_before = (checkout / ".git" / "HEAD").read_bytes()
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+            ), patch.object(
+                fetch_upstream.subprocess,
+                "Popen",
+            ) as mocked_popen:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            mocked_popen.assert_not_called()
+            self.assertEqual(head_before, (checkout / ".git" / "HEAD").read_bytes())
+            self.assertEqual(
+                "[core]\n\tbare = false\n",
+                config_worktree.read_text(encoding="utf-8"),
+            )
+            self.assertFalse(report_path.exists())
+
+    def test_core_fsmonitor_cannot_execute_before_rejection(self) -> None:
+        with TemporaryDirectory(prefix="pinned-fsmonitor-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            marker = root / "fsmonitor-executed"
+            hook = root / "malicious-fsmonitor"
+            hook.write_text(
+                "#!/bin/sh\n"
+                f"/usr/bin/touch {marker}\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            hook.chmod(0o755)
+            checkout.parent.mkdir(parents=True)
+            run_git(root, "clone", str(fixture.repository), str(checkout))
+            run_git(checkout, "config", "core.fsmonitor", str(hook))
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+            ), patch.object(
+                fetch_upstream.subprocess,
+                "Popen",
+            ) as mocked_popen:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--offline",
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(1, exit_code)
+            mocked_popen.assert_not_called()
+            self.assertFalse(marker.exists())
+            self.assertFalse(report_path.exists())
+
     def test_dirty_owned_checkout_is_not_replaced(self) -> None:
         with TemporaryDirectory(prefix="pinned-dirty-checkout-") as temp_root:
             root = Path(temp_root)
@@ -865,6 +994,91 @@ class PinnedRefreshTests(unittest.TestCase):
             self.assertEqual(
                 "ignored local work\n",
                 ignored.read_text(encoding="utf-8"),
+            )
+            self.assertFalse(report_path.exists())
+
+    def test_late_ignored_file_injection_is_preserved_and_aborts_checkout(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-late-ignored-") as temp_root:
+            root = Path(temp_root)
+            fixture = UpstreamFixture(root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            lock_path = root / "locks" / "upstream.yaml"
+            fixture.write_first_lock(lock_path)
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ):
+                first_exit = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.first_commit,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            ignored = checkout / IGNORED_COLLISION_PATH
+            real_run_anchored_git = fetch_upstream.run_anchored_git
+            injected = False
+            protected_checkout_seen = False
+
+            def inject_after_final_clean_check(
+                arguments: list[str],
+                context: int | fetch_upstream.GitMetadataContext,
+                timeout_seconds: int = 120,
+            ) -> CompletedProcess[str]:
+                nonlocal injected, protected_checkout_seen
+                if (
+                    not injected
+                    and arguments[:3] == ["git", "checkout", "--detach"]
+                ):
+                    protected_checkout_seen = "--no-overwrite-ignore" in arguments
+                    ignored.write_bytes(b"late foreign ignored bytes\n")
+                    injected = True
+                return real_run_anchored_git(
+                    arguments,
+                    context,
+                    timeout_seconds=timeout_seconds,
+                )
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+                UPSTREAM_REPO_URL=str(fixture.repository),
+                UPSTREAM_LOCK_PATH=lock_path,
+            ), patch.object(
+                fetch_upstream,
+                "run_anchored_git",
+                side_effect=inject_after_final_clean_check,
+            ):
+                second_exit = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        fixture.second_commit,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            self.assertEqual(0, first_exit)
+            self.assertEqual(1, second_exit)
+            self.assertTrue(injected)
+            self.assertTrue(protected_checkout_seen)
+            self.assertEqual(b"late foreign ignored bytes\n", ignored.read_bytes())
+            self.assertEqual(
+                fixture.first_commit,
+                run_git(checkout, "rev-parse", "HEAD").stdout.strip(),
             )
             self.assertFalse(report_path.exists())
 

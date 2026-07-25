@@ -248,18 +248,25 @@ def read_bounded_regular_file(
 
 
 def assert_dedicated_git_layout(context: GitMetadataContext) -> None:
-    try:
-        os.stat(
+    for prohibited_name, error_message in (
+        (
             "commondir",
-            dir_fd=context.git_dir_fd,
-            follow_symlinks=False,
-        )
-    except FileNotFoundError:
-        pass
-    else:
-        raise RuntimeError(
-            "Raw upstream checkout must not redirect Git common metadata"
-        )
+            "Raw upstream checkout must not redirect Git common metadata",
+        ),
+        (
+            "config.worktree",
+            "Raw upstream checkout must not use worktree-specific Git config",
+        ),
+    ):
+        try:
+            os.stat(
+                prohibited_name,
+                dir_fd=context.git_dir_fd,
+                follow_symlinks=False,
+            )
+        except FileNotFoundError:
+            continue
+        raise RuntimeError(error_message)
 
     directory_fds: dict[str, int] = {}
     try:
@@ -328,7 +335,7 @@ def assert_dedicated_git_layout(context: GitMetadataContext) -> None:
         config_text,
         flags=re.IGNORECASE | re.MULTILINE,
     ) or re.search(
-        r"^\s*(?:fsmonitor|hookspath|sshcommand|uploadpack|worktree)\s*=",
+        r"^\s*(?:fsmonitor|hookspath|sshcommand|uploadpack|worktree(?:config)?)\s*=",
         config_text,
         flags=re.IGNORECASE | re.MULTILINE,
     ):
@@ -886,6 +893,7 @@ def refresh_upstream_repo(upstream_ref: str, *, offline: bool = False) -> None:
                 "git",
                 "checkout",
                 "--detach",
+                "--no-overwrite-ignore",
                 upstream_ref,
             ],
             context,

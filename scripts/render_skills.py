@@ -31,6 +31,8 @@ from libskillpack import (
     write_text,
 )
 from release_state import (
+    CANONICAL_DIRECTORY_MODE,
+    CANONICAL_FILE_MODE,
     SKILL_FOLDERS,
     tree_digest,
     validate_complete_skill_tree,
@@ -63,6 +65,7 @@ class RenderOutputState:
 
 REQUIRED_SKILL_KEYS = ("core", "packages", "plugins")
 REQUIRED_SKILLS = dict(zip(REQUIRED_SKILL_KEYS, SKILL_FOLDERS, strict=True))
+PRIVATE_CLEANUP_PREFIX = ".render-cleanup-"
 
 
 def validate_required_skills(config: dict) -> None:
@@ -778,6 +781,71 @@ def _expected_rendered_files(
     return unique
 
 
+def _normalize_rendered_entry_mode(path: Path, expected_mode: int) -> None:
+    """Set one private staged entry's mode without following a substituted link."""
+
+    before = path.lstat()
+    if stat.S_ISDIR(before.st_mode):
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    elif stat.S_ISREG(before.st_mode):
+        if before.st_nlink != 1:
+            raise ValueError(
+                f"hard-linked rendered tree file is not publishable: {path}"
+            )
+        flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    else:
+        raise ValueError(f"unsupported rendered tree entry: {path}")
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor: int | None = None
+    try:
+        descriptor = os.open(path, flags)
+        opened = os.fstat(descriptor)
+        if (
+            opened.st_dev != before.st_dev
+            or opened.st_ino != before.st_ino
+            or stat.S_IFMT(opened.st_mode) != stat.S_IFMT(before.st_mode)
+            or (stat.S_ISREG(opened.st_mode) and opened.st_nlink != 1)
+        ):
+            raise ValueError(
+                f"rendered tree entry changed during mode normalization: {path}"
+            )
+        os.fchmod(descriptor, expected_mode)
+        after = os.fstat(descriptor)
+        named_after = path.lstat()
+        if (
+            after.st_dev != opened.st_dev
+            or after.st_ino != opened.st_ino
+            or named_after.st_dev != opened.st_dev
+            or named_after.st_ino != opened.st_ino
+            or stat.S_IMODE(after.st_mode) != expected_mode
+            or stat.S_IMODE(named_after.st_mode) != expected_mode
+        ):
+            raise ValueError(
+                f"rendered tree entry changed during mode normalization: {path}"
+            )
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+
+
+def normalize_rendered_tree_modes(output_root: Path) -> None:
+    """Give every generated directory/file a deterministic publishable mode."""
+
+    root_metadata = output_root.lstat()
+    if not stat.S_ISDIR(root_metadata.st_mode):
+        raise ValueError(f"rendered tree root is not a directory: {output_root}")
+    entries = [output_root, *sorted(output_root.rglob("*"))]
+    for path in entries:
+        metadata = path.lstat()
+        if stat.S_ISDIR(metadata.st_mode):
+            expected_mode = CANONICAL_DIRECTORY_MODE
+        elif stat.S_ISREG(metadata.st_mode):
+            expected_mode = CANONICAL_FILE_MODE
+        else:
+            raise ValueError(f"unsupported rendered tree entry: {path}")
+        _normalize_rendered_entry_mode(path, expected_mode)
+
+
 def validate_rendered_tree(
     output_root: Path,
     config: dict,
@@ -793,6 +861,28 @@ def validate_rendered_tree(
         if path.is_file()
     }
     errors: list[str] = []
+    mode_paths = [output_root, *sorted(output_root.rglob("*"))]
+    for path in mode_paths:
+        metadata = path.lstat()
+        relative = (
+            "."
+            if path == output_root
+            else path.relative_to(output_root).as_posix()
+        )
+        if stat.S_ISDIR(metadata.st_mode):
+            expected_mode = CANONICAL_DIRECTORY_MODE
+            kind = "directory"
+        elif stat.S_ISREG(metadata.st_mode):
+            expected_mode = CANONICAL_FILE_MODE
+            kind = "file"
+        else:
+            continue
+        observed_mode = stat.S_IMODE(metadata.st_mode)
+        if observed_mode != expected_mode:
+            errors.append(
+                f"{relative}: {kind} permissions {observed_mode:04o}; "
+                f"expected {expected_mode:04o}"
+            )
     missing = sorted(str(path) for path in expected - actual)
     extra = sorted(str(path) for path in actual - expected)
     if missing:
@@ -1030,6 +1120,144 @@ def _entry_matches(
     )
 
 
+def _verify_directory_descriptor_tree(
+    descriptor: int,
+    display_path: Path,
+    expected_entries: dict[str, RenderTreeEntry],
+    relative_parts: tuple[str, ...] = (),
+) -> None:
+    """Verify a complete anchored tree without deleting any of its entries."""
+
+    before = os.fstat(descriptor)
+    observed_names = sorted(os.listdir(descriptor))
+    expected_names = sorted(
+        Path(relative_path).name
+        for relative_path in expected_entries
+        if Path(relative_path).parts[:-1] == relative_parts
+    )
+    if observed_names != expected_names:
+        raise RenderTransactionError(
+            "render backup changed during private pre-delete verification at "
+            f"{display_path}"
+        )
+
+    for name in observed_names:
+        child_path = display_path / name
+        child_parts = (*relative_parts, name)
+        relative_path = Path(*child_parts).as_posix()
+        expected_entry = expected_entries.get(relative_path)
+        if expected_entry is None:
+            raise RenderTransactionError(
+                "render cleanup manifest is missing an entry for "
+                f"{child_path}"
+            )
+        metadata = os.stat(
+            name,
+            dir_fd=descriptor,
+            follow_symlinks=False,
+        )
+        if not _entry_matches(metadata, expected_entry):
+            raise RenderTransactionError(
+                "render backup entry changed during private pre-delete "
+                f"verification: {child_path}"
+            )
+        if stat.S_ISDIR(metadata.st_mode):
+            child_descriptor, opened = _open_directory_at(
+                descriptor,
+                name,
+                child_path,
+            )
+            try:
+                if not _entry_matches(opened, expected_entry):
+                    raise RenderTransactionError(
+                        "render backup directory changed during private "
+                        f"pre-delete verification: {child_path}"
+                    )
+                _verify_directory_descriptor_tree(
+                    child_descriptor,
+                    child_path,
+                    expected_entries,
+                    child_parts,
+                )
+            finally:
+                os.close(child_descriptor)
+        elif stat.S_ISREG(metadata.st_mode):
+            digest = _sha256_regular_file_no_follow(
+                name,
+                dir_fd=descriptor,
+                expected_metadata=metadata,
+            )
+            final_metadata = os.stat(
+                name,
+                dir_fd=descriptor,
+                follow_symlinks=False,
+            )
+            before_version = (
+                metadata.st_dev,
+                metadata.st_ino,
+                metadata.st_size,
+                metadata.st_mtime_ns,
+                metadata.st_ctime_ns,
+            )
+            final_version = (
+                final_metadata.st_dev,
+                final_metadata.st_ino,
+                final_metadata.st_size,
+                final_metadata.st_mtime_ns,
+                final_metadata.st_ctime_ns,
+            )
+            if (
+                expected_entry.content_sha256 is None
+                or digest != expected_entry.content_sha256
+                or before_version != final_version
+            ):
+                raise RenderTransactionError(
+                    "render backup file changed during private pre-delete "
+                    f"verification: {child_path}"
+                )
+        else:
+            raise RenderTransactionError(
+                f"refusing unexpected render backup entry: {child_path}"
+            )
+
+        final_metadata = os.stat(
+            name,
+            dir_fd=descriptor,
+            follow_symlinks=False,
+        )
+        if not _entry_matches(final_metadata, expected_entry):
+            raise RenderTransactionError(
+                "render backup entry changed after private pre-delete "
+                f"verification: {child_path}"
+            )
+
+    after_names = sorted(os.listdir(descriptor))
+    after = os.fstat(descriptor)
+    before_version = (
+        before.st_dev,
+        before.st_ino,
+        before.st_mode,
+        before.st_nlink,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    after_version = (
+        after.st_dev,
+        after.st_ino,
+        after.st_mode,
+        after.st_nlink,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if observed_names != after_names or before_version != after_version:
+        raise RenderTransactionError(
+            "render backup changed across private pre-delete verification at "
+            f"{display_path}"
+        )
+
+
 def _entry_metadata_at(
     descriptor: int,
     name: str,
@@ -1076,6 +1304,33 @@ def _restore_quarantined_entry(
         ) from restore_error
 
 
+def _remove_fresh_private_cleanup_directory(
+    parent_descriptor: int,
+    cleanup_name: str,
+    cleanup_path: Path,
+    expected_metadata: os.stat_result,
+) -> None:
+    """Remove one freshly created private cleanup directory after verification."""
+
+    observed_cleanup = os.stat(
+        cleanup_name,
+        dir_fd=parent_descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISDIR(observed_cleanup.st_mode)
+        or observed_cleanup.st_dev != expected_metadata.st_dev
+        or observed_cleanup.st_ino != expected_metadata.st_ino
+    ):
+        raise RenderTransactionError(
+            f"private render cleanup quarantine changed for {cleanup_path}"
+        )
+    # POSIX has no inode-conditional rmdir. Replacing this random entry after
+    # the final check requires a same-user process racing the private quarantine.
+    os.rmdir(cleanup_name, dir_fd=parent_descriptor)
+    os.fsync(parent_descriptor)
+
+
 def _remove_verified_empty_directory_via_quarantine(
     parent_descriptor: int,
     name: str,
@@ -1091,7 +1346,7 @@ def _remove_verified_empty_directory_via_quarantine(
             and metadata.st_ino == expected_metadata.st_ino
         )
 
-    cleanup_name = f".render-cleanup-{uuid.uuid4().hex}"
+    cleanup_name = f"{PRIVATE_CLEANUP_PREFIX}{uuid.uuid4().hex}"
     cleanup_path = display_path.parent / cleanup_name
     os.mkdir(cleanup_name, mode=0o700, dir_fd=parent_descriptor)
     cleanup_descriptor: int | None = None
@@ -1240,21 +1495,12 @@ def _remove_verified_empty_directory_via_quarantine(
         raise RenderTransactionError(
             f"render cleanup quarantine was not opened for {display_path}"
         )
-    observed_cleanup = os.stat(
+    _remove_fresh_private_cleanup_directory(
+        parent_descriptor,
         cleanup_name,
-        dir_fd=parent_descriptor,
-        follow_symlinks=False,
+        cleanup_path,
+        cleanup_opened,
     )
-    if (
-        not stat.S_ISDIR(observed_cleanup.st_mode)
-        or observed_cleanup.st_dev != cleanup_opened.st_dev
-        or observed_cleanup.st_ino != cleanup_opened.st_ino
-    ):
-        raise RenderTransactionError(
-            f"private render cleanup quarantine changed for {display_path}"
-        )
-    os.rmdir(cleanup_name, dir_fd=parent_descriptor)
-    os.fsync(parent_descriptor)
 
 
 def _clear_directory_descriptor(
@@ -1287,7 +1533,7 @@ def _clear_directory_descriptor(
             f"{display_path}: {'; '.join(details)}"
         )
 
-    quarantine_name = f".render-cleanup-{uuid.uuid4().hex}"
+    quarantine_name = f"{PRIVATE_CLEANUP_PREFIX}{uuid.uuid4().hex}"
     os.mkdir(quarantine_name, mode=0o700, dir_fd=descriptor)
     quarantine_descriptor: int | None = None
     quarantine_opened: os.stat_result | None = None
@@ -1555,7 +1801,7 @@ def _remove_owned_directory(
     expected_inode: int,
     expected_entries: tuple[RenderTreeEntry, ...],
 ) -> None:
-    """Remove only the directory with the exact captured identity."""
+    """Move the exact captured tree into quarantine before deleting it."""
 
     parent_descriptor = os.open(
         directory.parent,
@@ -1565,6 +1811,12 @@ def _remove_owned_directory(
         | getattr(os, "O_NOFOLLOW", 0),
     )
     backup_descriptor: int | None = None
+    cleanup_descriptor: int | None = None
+    cleanup_name: str | None = None
+    cleanup_path: Path | None = None
+    cleanup_opened: os.stat_result | None = None
+    moved_root_path: Path | None = None
+    preserve_private_root = False
     try:
         backup_descriptor, opened = _open_directory_at(
             parent_descriptor,
@@ -1583,18 +1835,139 @@ def _remove_owned_directory(
             entry.relative_path: entry
             for entry in expected_entries
         }
+        cleanup_name = f"{PRIVATE_CLEANUP_PREFIX}{uuid.uuid4().hex}"
+        cleanup_path = directory.parent / cleanup_name
+        moved_root_path = cleanup_path / directory.name
+        os.mkdir(cleanup_name, mode=0o700, dir_fd=parent_descriptor)
+        cleanup_descriptor, cleanup_opened = _open_directory_at(
+            parent_descriptor,
+            cleanup_name,
+            cleanup_path,
+        )
+        os.fchmod(cleanup_descriptor, 0o700)
+        move_error: BaseException | None = None
+        try:
+            _atomic_rename_at_no_replace(
+                parent_descriptor,
+                directory.name,
+                cleanup_descriptor,
+                directory.name,
+            )
+        except BaseException as error:
+            move_error = error
+
+        moved = _entry_metadata_at(cleanup_descriptor, directory.name)
+        public = _entry_metadata_at(parent_descriptor, directory.name)
+        moved_matches = (
+            moved is not None
+            and stat.S_ISDIR(moved.st_mode)
+            and moved.st_dev == expected_device
+            and moved.st_ino == expected_inode
+        )
+        if not moved_matches:
+            if moved is not None and public is None:
+                _restore_quarantined_entry(
+                    cleanup_descriptor,
+                    parent_descriptor,
+                    directory.name,
+                    moved,
+                    directory,
+                )
+            raise RenderTransactionError(
+                "render backup root changed while moving into private cleanup "
+                f"quarantine and was preserved: {directory}"
+            ) from move_error
+        if public is not None:
+            preserve_private_root = True
+            raise RenderTransactionError(
+                "render backup public name reappeared during private cleanup; "
+                f"both entries were preserved at {directory} and "
+                f"{moved_root_path}"
+            ) from move_error
+        if move_error is not None:
+            # The no-replace syscall reported an error after the observable move
+            # completed. Continue only because both descriptor-bound identities
+            # prove that the accepted root is privately quarantined.
+            move_error = None
+
+        held = os.fstat(backup_descriptor)
+        if (
+            not stat.S_ISDIR(held.st_mode)
+            or held.st_dev != expected_device
+            or held.st_ino != expected_inode
+        ):
+            raise RenderTransactionError(
+                "render backup root identity changed after private quarantine; "
+                f"preserving {moved_root_path}"
+            )
+        _verify_directory_descriptor_tree(
+            backup_descriptor,
+            moved_root_path,
+            entries_by_path,
+        )
+        moved_after_verification = _entry_metadata_at(
+            cleanup_descriptor,
+            directory.name,
+        )
+        public_cleanup_after_verification = _entry_metadata_at(
+            parent_descriptor,
+            cleanup_name,
+        )
+        public_names_after_verification = set(os.listdir(parent_descriptor))
+        unexpected_cleanup_names = sorted(
+            name
+            for name in public_names_after_verification
+            if name.startswith(PRIVATE_CLEANUP_PREFIX)
+            and name != cleanup_name
+        )
+        if (
+            moved_after_verification is None
+            or not stat.S_ISDIR(moved_after_verification.st_mode)
+            or moved_after_verification.st_dev != expected_device
+            or moved_after_verification.st_ino != expected_inode
+        ):
+            raise RenderTransactionError(
+                "render backup root changed after private pre-delete "
+                f"verification; preserving {moved_root_path}"
+            )
+        if (
+            public_cleanup_after_verification is None
+            or not stat.S_ISDIR(public_cleanup_after_verification.st_mode)
+            or cleanup_opened is None
+            or public_cleanup_after_verification.st_dev != cleanup_opened.st_dev
+            or public_cleanup_after_verification.st_ino != cleanup_opened.st_ino
+        ):
+            raise RenderTransactionError(
+                "private render cleanup root changed before recursive cleanup; "
+                "aborting before accepted-tree deletion"
+            )
+        if directory.name in public_names_after_verification:
+            preserve_private_root = True
+            raise RenderTransactionError(
+                "render backup public name reappeared before private recursive "
+                f"cleanup; preserving both entries at {directory} and "
+                f"{moved_root_path}"
+            )
+        if unexpected_cleanup_names:
+            preserve_private_root = True
+            raise RenderTransactionError(
+                "unexpected private render cleanup sibling appeared before "
+                "recursive cleanup; preserving the accepted tree at "
+                f"{moved_root_path}: {', '.join(unexpected_cleanup_names)}"
+            )
+
         _clear_directory_descriptor(
             backup_descriptor,
-            directory,
+            moved_root_path,
             entries_by_path,
         )
         descriptor_to_close = backup_descriptor
         backup_descriptor = None
         os.close(descriptor_to_close)
         _remove_verified_empty_directory_via_quarantine(
-            parent_descriptor,
+            cleanup_descriptor,
             directory.name,
-            directory,
+            moved_root_path,
             opened,
         )
         if _entry_metadata_at(parent_descriptor, directory.name) is not None:
@@ -1602,12 +1975,86 @@ def _remove_owned_directory(
                 "render backup public name reappeared during private cleanup; "
                 f"preserving concurrent state at {directory}"
             )
+        cleanup_descriptor_to_close = cleanup_descriptor
+        cleanup_descriptor = None
+        os.close(cleanup_descriptor_to_close)
+        if cleanup_name is None or cleanup_path is None or cleanup_opened is None:
+            raise RenderTransactionError(
+                f"render cleanup quarantine was not anchored for {directory}"
+            )
+        _remove_fresh_private_cleanup_directory(
+            parent_descriptor,
+            cleanup_name,
+            cleanup_path,
+            cleanup_opened,
+        )
+    except BaseException as cleanup_error:
+        recovery_errors: list[str] = []
+        if cleanup_descriptor is not None and cleanup_name is not None:
+            moved = _entry_metadata_at(cleanup_descriptor, directory.name)
+            public = _entry_metadata_at(parent_descriptor, directory.name)
+            if (
+                moved is not None
+                and public is None
+                and not preserve_private_root
+            ):
+                try:
+                    _restore_quarantined_entry(
+                        cleanup_descriptor,
+                        parent_descriptor,
+                        directory.name,
+                        moved,
+                        directory,
+                    )
+                except BaseException as restore_error:
+                    recovery_errors.append(str(restore_error))
+            try:
+                cleanup_is_empty = not os.listdir(cleanup_descriptor)
+            except OSError as inspect_error:
+                recovery_errors.append(
+                    f"private cleanup inspection failed: {inspect_error}"
+                )
+                cleanup_is_empty = False
+            descriptor_to_close = cleanup_descriptor
+            cleanup_descriptor = None
+            try:
+                os.close(descriptor_to_close)
+            except OSError as close_error:
+                recovery_errors.append(
+                    f"private cleanup descriptor closure failed: {close_error}"
+                )
+            if (
+                cleanup_is_empty
+                and cleanup_path is not None
+                and cleanup_opened is not None
+            ):
+                try:
+                    _remove_fresh_private_cleanup_directory(
+                        parent_descriptor,
+                        cleanup_name,
+                        cleanup_path,
+                        cleanup_opened,
+                    )
+                except BaseException as removal_error:
+                    recovery_errors.append(
+                        f"empty private cleanup removal failed: {removal_error}"
+                    )
+        if recovery_errors:
+            raise RenderTransactionError(
+                f"{cleanup_error}; render cleanup recovery also reported: "
+                + "; ".join(recovery_errors)
+            ) from cleanup_error
+        raise
     finally:
         try:
             if backup_descriptor is not None:
                 os.close(backup_descriptor)
         finally:
-            os.close(parent_descriptor)
+            try:
+                if cleanup_descriptor is not None:
+                    os.close(cleanup_descriptor)
+            finally:
+                os.close(parent_descriptor)
 
 
 def _cleanup_staged_root(
@@ -1863,6 +2310,7 @@ def render_all(
     expected_staged_state: RenderOutputState | None = None
     try:
         _render_tree(staged_root, config, grouped, aliases_by_skill)
+        normalize_rendered_tree_modes(staged_root)
         validate_rendered_tree(
             staged_root,
             config,

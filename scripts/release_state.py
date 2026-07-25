@@ -18,8 +18,10 @@ from libskillpack import BUILD_ROOT, REPO_ROOT
 
 
 VALIDATION_RECEIPT_PATH = BUILD_ROOT.parent / "validation-receipt.json"
-VALIDATION_RECEIPT_SCHEMA_VERSION = 2
-TREE_DIGEST_DOMAIN = b"stata-codex-skill-tree-v2\0"
+VALIDATION_RECEIPT_SCHEMA_VERSION = 3
+TREE_DIGEST_DOMAIN = b"stata-codex-skill-tree-v3\0"
+CANONICAL_DIRECTORY_MODE = 0o755
+CANONICAL_FILE_MODE = 0o644
 SKILL_FOLDERS = ("stata-core", "stata-packages", "stata-c-plugins")
 GIT_INVENTORY_TIMEOUT_SECONDS = 30
 DIRECTORY_OPEN_FLAGS = (
@@ -62,7 +64,7 @@ def _hash_records(records: list[tuple[str, bytes]]) -> str:
 def tree_digest_records(
     records: Iterable[tuple[str, bytes, bytes]],
 ) -> str:
-    """Hash ordered, explicitly typed entries under the v2 tree domain."""
+    """Hash canonical-mode, ordered, explicitly typed tree entries."""
 
     digest = hashlib.sha256()
     digest.update(TREE_DIGEST_DOMAIN)
@@ -150,6 +152,13 @@ def _walk_tree_directory(
         if stat.S_ISLNK(metadata.st_mode):
             raise ValueError(f"Refusing to hash symlink: {child_path}")
         if stat.S_ISDIR(metadata.st_mode):
+            observed_mode = stat.S_IMODE(metadata.st_mode)
+            if observed_mode != CANONICAL_DIRECTORY_MODE:
+                raise ValueError(
+                    "Tree directory has noncanonical permissions "
+                    f"{observed_mode:04o}; expected "
+                    f"{CANONICAL_DIRECTORY_MODE:04o}: {child_path}"
+                )
             child_fd: int | None = None
             try:
                 child_fd = os.open(
@@ -192,6 +201,13 @@ def _walk_tree_directory(
             raise ValueError(
                 f"Refusing to hash unsupported tree entry: {child_path}"
             )
+        observed_mode = stat.S_IMODE(metadata.st_mode)
+        if observed_mode != CANONICAL_FILE_MODE:
+            raise ValueError(
+                "Tree file has noncanonical permissions "
+                f"{observed_mode:04o}; expected "
+                f"{CANONICAL_FILE_MODE:04o}: {child_path}"
+            )
         records.append(
             (
                 relative,
@@ -222,7 +238,7 @@ def _walk_tree_directory(
 
 
 def tree_digest(root: Path) -> str:
-    """Hash every entry path, type, and file byte in a skill tree."""
+    """Hash canonical-mode entry paths, types, and file bytes in a skill tree."""
 
     try:
         root_metadata = root.lstat()
@@ -1012,7 +1028,13 @@ def read_validation_receipt(
         if schema_version == 1:
             raise ValueError(
                 "Validation receipt schema 1 does not bind directory membership. "
-                "Run make validate to create schema 2."
+                "Run make validate to create schema 3."
+            )
+        if schema_version == 2:
+            raise ValueError(
+                "Validation receipt schema 2 does not enforce canonical file "
+                "and directory permissions. Run make validate to create "
+                "schema 3."
             )
         raise ValueError(
             f"Validation receipt has an unsupported schema: {receipt_path}"

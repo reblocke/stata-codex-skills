@@ -17,6 +17,8 @@ import sys
 
 from libskillpack import BUILD_ROOT, REPO_ROOT
 from release_state import (
+    CANONICAL_DIRECTORY_MODE,
+    CANONICAL_FILE_MODE,
     SKILL_FOLDERS,
     VALIDATION_RECEIPT_PATH,
     tree_digest_records,
@@ -206,7 +208,6 @@ def _ensure_transaction_sentinel(
     )
     created = False
     sentinel_descriptor: int | None = None
-    sentinel_stat: os.stat_result | None = None
     try:
         try:
             sentinel_descriptor = os.open(
@@ -255,27 +256,11 @@ def _ensure_transaction_sentinel(
                     f"replace it: {lock_path}"
                 )
     except BaseException as error:
-        if created and sentinel_stat is not None:
-            try:
-                observed = os.stat(
-                    TRANSACTION_LOCK_NAME,
-                    dir_fd=root_descriptor,
-                    follow_symlinks=False,
-                )
-                if (
-                    observed.st_dev == sentinel_stat.st_dev
-                    and observed.st_ino == sentinel_stat.st_ino
-                ):
-                    os.unlink(
-                        TRANSACTION_LOCK_NAME,
-                        dir_fd=root_descriptor,
-                    )
-                    _fsync_directory_descriptor(
-                        root_descriptor,
-                        lock_path.parent,
-                    )
-            except (NameError, OSError):
-                pass
+        # The sentinel is a permanent protocol marker on successful runs.
+        # Preserve it on initialization failure too: unlinking its predictable
+        # public name after a separate identity check could delete a concurrent
+        # replacement. An incomplete marker fails closed on the next preflight
+        # and remains available for explicit review.
         close_errors = (
             _close_file_descriptor(sentinel_descriptor)
             if sentinel_descriptor is not None
@@ -1080,11 +1065,23 @@ def _walk_directory_handle(
     handle: DirectoryHandle,
     *,
     prefix: str = "",
+    require_canonical_modes: bool = False,
+    require_canonical_root: bool = True,
 ) -> list[tuple[str, bytes, bytes]]:
     file_descriptor = _require_directory_descriptor(handle)
     records: list[tuple[str, bytes, bytes]] = []
     try:
         before = os.fstat(file_descriptor)
+        if (
+            require_canonical_modes
+            and require_canonical_root
+            and stat.S_IMODE(before.st_mode) != CANONICAL_DIRECTORY_MODE
+        ):
+            raise PublishError(
+                "Skill directory has noncanonical permissions "
+                f"{stat.S_IMODE(before.st_mode):04o}; expected "
+                f"{CANONICAL_DIRECTORY_MODE:04o}: {handle.display_path}"
+            )
         names = sorted(os.listdir(file_descriptor))
     except OSError as error:
         raise PublishError(
@@ -1108,6 +1105,15 @@ def _walk_directory_handle(
                 f"Refusing anchored tree containing a symlink: {display_path}"
             )
         if stat.S_ISDIR(metadata.st_mode):
+            if (
+                require_canonical_modes
+                and stat.S_IMODE(metadata.st_mode) != CANONICAL_DIRECTORY_MODE
+            ):
+                raise PublishError(
+                    "Skill directory has noncanonical permissions "
+                    f"{stat.S_IMODE(metadata.st_mode):04o}; expected "
+                    f"{CANONICAL_DIRECTORY_MODE:04o}: {display_path}"
+                )
             child = _open_directory_handle_at(
                 file_descriptor,
                 name,
@@ -1119,6 +1125,7 @@ def _walk_directory_handle(
                     _walk_directory_handle(
                         child,
                         prefix=relative,
+                        require_canonical_modes=require_canonical_modes,
                     )
                 )
             finally:
@@ -1132,6 +1139,15 @@ def _walk_directory_handle(
         if not stat.S_ISREG(metadata.st_mode):
             raise PublishError(
                 f"Refusing unsupported anchored entry: {display_path}"
+            )
+        if (
+            require_canonical_modes
+            and stat.S_IMODE(metadata.st_mode) != CANONICAL_FILE_MODE
+        ):
+            raise PublishError(
+                "Skill file has noncanonical permissions "
+                f"{stat.S_IMODE(metadata.st_mode):04o}; expected "
+                f"{CANONICAL_FILE_MODE:04o}: {display_path}"
             )
         records.append(
             (
@@ -1187,7 +1203,9 @@ def _destination_tree_digest_records(
 
 
 def _destination_tree_digest_handle(handle: DirectoryHandle) -> str:
-    return _destination_tree_digest_records(_walk_directory_handle(handle))
+    return _destination_tree_digest_records(
+        _walk_directory_handle(handle, require_canonical_modes=True)
+    )
 
 
 def _skill_tree_digest_records(
@@ -1198,7 +1216,9 @@ def _skill_tree_digest_records(
 
 
 def _skill_tree_digest_handle(handle: DirectoryHandle) -> str:
-    return _skill_tree_digest_records(_walk_directory_handle(handle))
+    return _skill_tree_digest_records(
+        _walk_directory_handle(handle, require_canonical_modes=True)
+    )
 
 
 def _skill_digest_from_tree_records(
@@ -1277,24 +1297,50 @@ def preflight_destinations(
 def _assert_no_recovery_transactions(
     destination_root: DestinationRootIdentity,
     transaction_lock: TransactionLock,
+    *,
+    allowed_directories: tuple[tuple[str, int, int], ...] = (),
 ) -> None:
     _assert_mutation_authorized(destination_root, transaction_lock)
     root_descriptor = transaction_lock.file_descriptor
     if root_descriptor is None:
         raise PublishError("Publication destination lock descriptor is missing")
     try:
-        recovery_names = sorted(
-            name
-            for name in os.listdir(root_descriptor)
-            if (
+        names = set(os.listdir(root_descriptor))
+        allowed_by_name = {
+            name: (device, inode)
+            for name, device, inode in allowed_directories
+        }
+        recovery_names: list[str] = []
+        for name in sorted(names):
+            if not (
                 name.startswith(TRANSACTION_PREFIX)
                 or name.startswith(CLEANUP_QUARANTINE_PREFIX)
+            ):
+                continue
+            expected_identity = allowed_by_name.get(name)
+            if expected_identity is None:
+                recovery_names.append(name)
+                continue
+            observed = os.stat(
+                name,
+                dir_fd=root_descriptor,
+                follow_symlinks=False,
             )
+            if (
+                not stat.S_ISDIR(observed.st_mode)
+                or (observed.st_dev, observed.st_ino) != expected_identity
+            ):
+                recovery_names.append(name)
+        recovery_names.extend(
+            name
+            for name in sorted(allowed_by_name)
+            if name not in names
         )
     except OSError as error:
         raise PublishError(
             "Could not inspect publication destination for recovery "
-            f"transactions: {destination_root.path}"
+            f"transactions: {destination_root.path}",
+            preserve_transaction=True,
         ) from error
     _assert_mutation_authorized(destination_root, transaction_lock)
     if recovery_names:
@@ -1320,6 +1366,13 @@ def _copy_source_directory(
         raise PublishError(f"Could not inspect source {source}: {error}") from error
     if source.is_symlink() or not stat.S_ISDIR(source_metadata.st_mode):
         raise PublishError(f"Source directory changed during staging: {source}")
+    source_mode = stat.S_IMODE(source_metadata.st_mode)
+    if source_mode != CANONICAL_DIRECTORY_MODE:
+        raise PublishError(
+            "Source skill directory has noncanonical permissions "
+            f"{source_mode:04o}; expected {CANONICAL_DIRECTORY_MODE:04o}: "
+            f"{source}"
+        )
     destination = _create_directory_handle_at(
         parent_descriptor,
         name,
@@ -1346,6 +1399,13 @@ def _copy_source_directory(
                 raise PublishError(
                     f"Unsupported source entry during staging: {child}"
                 )
+            child_mode = stat.S_IMODE(child_metadata.st_mode)
+            if child_mode != CANONICAL_FILE_MODE:
+                raise PublishError(
+                    "Source skill file has noncanonical permissions "
+                    f"{child_mode:04o}; expected {CANONICAL_FILE_MODE:04o}: "
+                    f"{child}"
+                )
             source_descriptor = os.open(
                 child,
                 os.O_RDONLY
@@ -1360,6 +1420,7 @@ def _copy_source_directory(
                     not stat.S_ISREG(opened_source.st_mode)
                     or opened_source.st_dev != child_metadata.st_dev
                     or opened_source.st_ino != child_metadata.st_ino
+                    or opened_source.st_mode != child_metadata.st_mode
                 ):
                     raise PublishError(
                         f"Source file changed during staging: {child}"
@@ -1377,7 +1438,7 @@ def _copy_source_directory(
                 _write_all(target_descriptor, _read_all(source_descriptor))
                 os.fchmod(
                     target_descriptor,
-                    stat.S_IMODE(child_metadata.st_mode),
+                    CANONICAL_FILE_MODE,
                 )
                 os.fsync(target_descriptor)
             finally:
@@ -1397,7 +1458,7 @@ def _copy_source_directory(
                     )
         os.fchmod(
             destination_descriptor,
-            stat.S_IMODE(source_metadata.st_mode),
+            CANONICAL_DIRECTORY_MODE,
         )
         _fsync_directory_descriptor(
             destination_descriptor,
@@ -1506,7 +1567,10 @@ def _capture_skill_verification_at(
         display_path,
     )
     try:
-        records = _walk_directory_handle(handle)
+        records = _walk_directory_handle(
+            handle,
+            require_canonical_modes=True,
+        )
         return SkillVerification(
             destination_state=DestinationState(
                 kind="directory",
@@ -2136,9 +2200,7 @@ def _remove_transaction_workspace(
         raise PublishError("Publication destination lock descriptor is missing")
     if cleanup_plan is not None:
         _verify_success_cleanup_state(transaction_root, cleanup_plan)
-        _clear_verified_success_workspace(transaction_root, cleanup_plan)
-    else:
-        _clear_directory_handle(transaction_root)
+    expected_records = tuple(_walk_directory_handle(transaction_root))
     _assert_mutation_authorized(destination_root, transaction_lock)
     cleanup_name = (
         f"{CLEANUP_QUARANTINE_PREFIX}{secrets.token_hex(16)}"
@@ -2151,26 +2213,56 @@ def _remove_transaction_workspace(
     )
     cleanup_device = root_cleanup.device
     cleanup_inode = root_cleanup.inode
-    close_errors = _close_directory_handle(transaction_root)
-    if close_errors:
-        root_cleanup_close_errors = _close_directory_handle(root_cleanup)
-        close_suffix = (
-            "; root cleanup quarantine closure also reported: "
-            + "; ".join(root_cleanup_close_errors)
-            if root_cleanup_close_errors
-            else ""
-        )
-        raise PublishError(
-            "Could not close transaction workspace before removal: "
-            + "; ".join(close_errors)
-            + close_suffix,
-            preserve_transaction=True,
-        )
+    quarantined_name: str | None = None
     operation_error: BaseException | None = None
     try:
+        quarantined_name, _quarantined_path = (
+            _quarantine_open_verified_directory(
+                root_descriptor,
+                transaction_root.name,
+                transaction_root.display_path,
+                transaction_root,
+                expected_records,
+                root_cleanup,
+            )
+        )
+        # A same-prefix public entry appearing after the root move is
+        # unrecognized state. Detect it before deleting any accepted recovery
+        # child. Deliberate mutation after this check would require access to
+        # the fresh random 0700 quarantine and remains the documented same-UID
+        # POSIX boundary.
+        _assert_no_recovery_transactions(
+            destination_root,
+            transaction_lock,
+            allowed_directories=(
+                (cleanup_name, root_cleanup.device, root_cleanup.inode),
+            ),
+        )
+        if cleanup_plan is not None:
+            _clear_verified_success_workspace(transaction_root, cleanup_plan)
+        else:
+            _clear_directory_handle(
+                transaction_root,
+                expected_records=expected_records,
+                cleanup_quarantine=root_cleanup,
+            )
+        transaction_close_errors = _close_directory_handle(transaction_root)
+        if transaction_close_errors:
+            raise PublishError(
+                "Could not close privately quarantined transaction workspace "
+                "before removal: "
+                + "; ".join(transaction_close_errors),
+                preserve_transaction=True,
+            )
+        if quarantined_name is None:
+            raise PublishError(
+                "Transaction workspace was not moved into private cleanup "
+                "quarantine",
+                preserve_transaction=True,
+            )
         _remove_verified_empty_directory_at(
-            root_descriptor,
-            transaction_root.name,
+            _require_directory_descriptor(root_cleanup),
+            quarantined_name,
             transaction_root.display_path,
             transaction_root.device,
             transaction_root.inode,
@@ -2178,6 +2270,20 @@ def _remove_transaction_workspace(
         )
     except BaseException as error:
         operation_error = error
+    transaction_close_errors = _close_directory_handle(transaction_root)
+    if transaction_close_errors:
+        if operation_error is None:
+            operation_error = PublishError(
+                "Could not close transaction workspace during cleanup: "
+                + "; ".join(transaction_close_errors),
+                preserve_transaction=True,
+            )
+        else:
+            operation_error = PublishError(
+                f"{operation_error}; transaction workspace closure also "
+                f"reported: {'; '.join(transaction_close_errors)}",
+                preserve_transaction=True,
+            )
     root_cleanup_close_errors = _close_directory_handle(root_cleanup)
     if operation_error is not None:
         if root_cleanup_close_errors:
@@ -3491,7 +3597,11 @@ def publish_skills(
 
         # Bind publication to the copied tree, not merely to the source tree
         # that existed before staging.
-        staged_records = _walk_directory_handle(stage_root)
+        staged_records = _walk_directory_handle(
+            stage_root,
+            require_canonical_modes=True,
+            require_canonical_root=False,
+        )
         if _skill_tree_digest_records(
             staged_records
         ) != receipt.get("tree_sha256"):

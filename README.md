@@ -122,6 +122,12 @@ make publish
 `make validate` writes a digest-bound receipt only after the complete default
 gate succeeds. `make publish` requires that receipt to be less than one hour
 old and to match both the current source state and the exact staged tree.
+Schema 3 receipts also require the deterministic publication modes used by the
+renderer and publisher: `0755` for generated skill directories and `0644` for
+generated skill files. A permission change requires a fresh render and
+validation before publication. Existing installed skill trees with other modes
+must be corrected to this policy, or moved aside after review, before a later
+publication can replace them.
 
 Useful targeted validation commands:
 
@@ -284,7 +290,11 @@ the renderer preserves the hidden stage or prior-tree backup and reports its
 path for review. These render and publication transactions restore or preserve
 state after handled Python exceptions and catchable process interruptions;
 they do not promise durability across sudden power loss, forced termination, or
-storage-device failure. `make all`
+storage-device failure. Complete-tree preservation extends through the final
+public-name and private-quarantine checks. POSIX lacks inode-conditional
+`unlink` and `rmdir`, so a same-UID process deliberately racing the verified
+private tree or its parent/public transaction names after that boundary is
+outside the automatic cleanup guarantee. `make all`
 remains a compatibility alias for `make check`. Direct `--output-root` renders
 accept absent or empty external directories; an existing target must already
 have the dedicated three-skill generated-tree layout.

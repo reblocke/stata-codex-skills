@@ -58,6 +58,30 @@ def snapshot(root: Path) -> dict[str, bytes]:
     }
 
 
+def mode_snapshot(root: Path) -> dict[str, int]:
+    if not root.exists():
+        return {}
+    return {
+        path.relative_to(root).as_posix(): stat.S_IMODE(path.lstat().st_mode)
+        for path in [root, *sorted(root.rglob("*"))]
+    }
+
+
+def recovery_roots(root: Path) -> list[Path]:
+    if not root.is_dir():
+        return []
+    return sorted(
+        path
+        for path in root.iterdir()
+        if (
+            path.name.startswith(publish_local.TRANSACTION_PREFIX)
+            or path.name.startswith(
+                publish_local.CLEANUP_QUARANTINE_PREFIX
+            )
+        )
+    )
+
+
 class PublishTransactionTests(unittest.TestCase):
     def create_receipt(
         self,
@@ -102,6 +126,37 @@ class PublishTransactionTests(unittest.TestCase):
                 [],
                 list(destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")),
             )
+
+    def test_permission_drift_is_rejected_before_destination_mutation(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            (generated / "stata-core" / "SKILL.md").chmod(0o666)
+            before_bytes = snapshot(destination)
+            before_modes = mode_snapshot(destination)
+
+            with self.assertRaisesRegex(
+                publish_local.PublishError,
+                "noncanonical permissions 0666",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertEqual(before_bytes, snapshot(destination))
+            self.assertEqual(before_modes, mode_snapshot(destination))
+            self.assertFalse(
+                (destination / publish_local.TRANSACTION_LOCK_NAME).exists()
+            )
+            self.assertEqual([], recovery_roots(destination))
+
     def test_destination_inside_source_is_rejected_without_side_effects(self) -> None:
         with TemporaryDirectory(prefix="publish-test-") as temporary:
             root = Path(temporary)
@@ -719,6 +774,60 @@ class PublishTransactionTests(unittest.TestCase):
 
             self.assertFalse(destination.exists())
 
+    def test_destination_chmod_after_preflight_is_preserved_before_backup(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            changed_file = destination / "stata-core" / "SKILL.md"
+            before_bytes = {
+                folder: snapshot(destination / folder)
+                for folder in release_state.SKILL_FOLDERS
+            }
+            before_inode = changed_file.stat().st_ino
+            real_stage_all = publish_local._stage_all
+
+            def chmod_destination_after_preflight(
+                source_root: Path,
+                transaction_root: publish_local.DirectoryHandle,
+            ) -> publish_local.DirectoryHandle:
+                staged = real_stage_all(source_root, transaction_root)
+                changed_file.chmod(0o666)
+                return staged
+
+            with patch.object(
+                publish_local,
+                "_stage_all",
+                side_effect=chmod_destination_after_preflight,
+            ), patch.object(
+                publish_local,
+                "_atomic_rename_no_replace",
+                side_effect=AssertionError("destination backup attempted"),
+            ), self.assertRaisesRegex(
+                publish_local.PublishError,
+                "noncanonical permissions 0666",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(
+                    before_bytes[folder],
+                    snapshot(destination / folder),
+                )
+            self.assertEqual(before_inode, changed_file.stat().st_ino)
+            self.assertEqual(0o666, stat.S_IMODE(changed_file.stat().st_mode))
+            self.assertEqual(1, len(recovery_roots(destination)))
+
     def test_staged_empty_directory_is_rejected_before_publication(self) -> None:
         with TemporaryDirectory(prefix="publish-test-") as temporary:
             root = Path(temporary)
@@ -1067,6 +1176,18 @@ class PublishTransactionTests(unittest.TestCase):
                     snapshot(generated / folder),
                     snapshot(destination / folder),
                 )
+                installed_root = destination / folder
+                for path in [installed_root, *sorted(installed_root.rglob("*"))]:
+                    expected_mode = (
+                        release_state.CANONICAL_DIRECTORY_MODE
+                        if path.is_dir()
+                        else release_state.CANONICAL_FILE_MODE
+                    )
+                    self.assertEqual(
+                        expected_mode,
+                        stat.S_IMODE(path.lstat().st_mode),
+                        path,
+                    )
             self.assertEqual("leave me alone\n", unrelated.read_text(encoding="utf-8"))
             self.assertTrue(
                 (destination / publish_local.TRANSACTION_LOCK_NAME).is_file()
@@ -2440,25 +2561,159 @@ class PublishTransactionTests(unittest.TestCase):
 
                 self.assertIsNotNone(foreign_marker)
                 assert foreign_marker is not None
+                retained_markers = list(
+                    destination.rglob(relative_marker.name)
+                )
+                self.assertEqual(1, len(retained_markers))
                 self.assertEqual(
                     "preserve foreign transaction bytes\n",
-                    foreign_marker.read_text(encoding="utf-8"),
+                    retained_markers[0].read_text(encoding="utf-8"),
                 )
-                self.assertEqual(
-                    1,
-                    len(
-                        list(
-                            destination.glob(
-                                f"{publish_local.TRANSACTION_PREFIX}*"
-                            )
-                        )
-                    ),
-                )
+                self.assertEqual(1, len(recovery_roots(destination)))
                 for folder in release_state.SKILL_FOLDERS:
                     self.assertEqual(
                         snapshot(generated / folder),
                         snapshot(destination / folder),
                     )
+
+    def test_committed_cleanup_quarantines_complete_root_before_deletion(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            displaced_transaction = root / "displaced-transaction"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            real_verify = publish_local._verify_success_cleanup_state
+            accepted_snapshot: dict[str, bytes] | None = None
+            public_transaction: Path | None = None
+
+            def verify_then_displace_root(
+                transaction_root: publish_local.DirectoryHandle,
+                cleanup_plan: publish_local.TransactionCleanupPlan,
+            ) -> None:
+                nonlocal accepted_snapshot, public_transaction
+                real_verify(transaction_root, cleanup_plan)
+                public_transaction = transaction_root.display_path
+                accepted_snapshot = snapshot(public_transaction)
+                public_transaction.rename(displaced_transaction)
+                public_transaction.mkdir()
+                (public_transaction / "foreign-root.txt").write_text(
+                    "preserve replacement transaction bytes\n",
+                    encoding="utf-8",
+                )
+
+            with patch.object(
+                publish_local,
+                "_verify_success_cleanup_state",
+                side_effect=verify_then_displace_root,
+            ), self.assertRaisesRegex(
+                publish_local.PublishError,
+                "committed and verified.*unrecognized state",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertIsNotNone(accepted_snapshot)
+            self.assertIsNotNone(public_transaction)
+            assert accepted_snapshot is not None
+            assert public_transaction is not None
+            self.assertEqual(
+                accepted_snapshot,
+                snapshot(displaced_transaction),
+            )
+            self.assertEqual(
+                "preserve replacement transaction bytes\n",
+                (public_transaction / "foreign-root.txt").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(
+                    snapshot(generated / folder),
+                    snapshot(destination / folder),
+                )
+
+    def test_committed_cleanup_rejects_allowed_quarantine_substitution(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            root = Path(temporary)
+            generated = root / "generated"
+            destination = root / "skills"
+            receipt = root / "receipt.json"
+            displaced_cleanup = root / "displaced-cleanup"
+            write_skill_tree(generated, "new")
+            write_skill_tree(destination, "old")
+            self.create_receipt(generated, receipt)
+            real_assert = publish_local._assert_no_recovery_transactions
+            accepted_snapshot: dict[str, bytes] | None = None
+            replacement_marker: Path | None = None
+
+            def substitute_allowed_cleanup(
+                destination_root: publish_local.DestinationRootIdentity,
+                transaction_lock: publish_local.TransactionLock,
+                *,
+                allowed_directories: tuple[tuple[str, int, int], ...] = (),
+            ) -> None:
+                nonlocal accepted_snapshot, replacement_marker
+                if allowed_directories and accepted_snapshot is None:
+                    cleanup_name, _device, _inode = allowed_directories[0]
+                    cleanup_path = destination / cleanup_name
+                    accepted_snapshot = snapshot(cleanup_path)
+                    cleanup_path.rename(displaced_cleanup)
+                    cleanup_path.mkdir(mode=0o700)
+                    replacement_marker = (
+                        cleanup_path / "foreign-cleanup-root.txt"
+                    )
+                    replacement_marker.write_text(
+                        "preserve replacement cleanup bytes\n",
+                        encoding="utf-8",
+                    )
+                real_assert(
+                    destination_root,
+                    transaction_lock,
+                    allowed_directories=allowed_directories,
+                )
+
+            with patch.object(
+                publish_local,
+                "_assert_no_recovery_transactions",
+                side_effect=substitute_allowed_cleanup,
+            ), self.assertRaisesRegex(
+                publish_local.PublishError,
+                "committed and verified.*unrecognized state",
+            ):
+                publish_local.publish_skills(
+                    source_root=generated,
+                    dest_root=destination,
+                    receipt_path=receipt,
+                )
+
+            self.assertIsNotNone(accepted_snapshot)
+            self.assertIsNotNone(replacement_marker)
+            assert accepted_snapshot is not None
+            assert replacement_marker is not None
+            self.assertEqual(
+                accepted_snapshot,
+                snapshot(displaced_cleanup),
+            )
+            self.assertEqual(
+                "preserve replacement cleanup bytes\n",
+                replacement_marker.read_text(encoding="utf-8"),
+            )
+            for folder in release_state.SKILL_FOLDERS:
+                self.assertEqual(
+                    snapshot(generated / folder),
+                    snapshot(destination / folder),
+                )
 
     def test_committed_cleanup_preserves_backup_entry_added_after_manifest(
         self,
@@ -2510,16 +2765,7 @@ class PublishTransactionTests(unittest.TestCase):
                 "preserve late transaction bytes\n",
                 foreign_marker.read_text(encoding="utf-8"),
             )
-            self.assertEqual(
-                1,
-                len(
-                    list(
-                        destination.glob(
-                            f"{publish_local.TRANSACTION_PREFIX}*"
-                        )
-                    )
-                ),
-            )
+            self.assertEqual(1, len(recovery_roots(destination)))
             for folder in release_state.SKILL_FOLDERS:
                 self.assertEqual(
                     snapshot(generated / folder),
@@ -2629,16 +2875,7 @@ class PublishTransactionTests(unittest.TestCase):
                 foreign_payload,
                 (displaced_paths[0].parent / restored_name).read_bytes(),
             )
-            self.assertEqual(
-                1,
-                len(
-                    list(
-                        destination.glob(
-                            f"{publish_local.TRANSACTION_PREFIX}*"
-                        )
-                    )
-                ),
-            )
+            self.assertEqual(1, len(recovery_roots(destination)))
 
     def test_committed_cleanup_rechecks_file_immediately_before_unlink(
         self,
@@ -2740,11 +2977,7 @@ class PublishTransactionTests(unittest.TestCase):
 
                 self.assertIsNotNone(accepted_payload)
                 assert accepted_payload is not None
-                transactions = list(
-                    destination.glob(
-                        f"{publish_local.TRANSACTION_PREFIX}*"
-                    )
-                )
+                transactions = recovery_roots(destination)
                 self.assertEqual(1, len(transactions))
                 retained_payloads = [
                     path.read_bytes()
@@ -2833,11 +3066,15 @@ class PublishTransactionTests(unittest.TestCase):
             self.assertIsNotNone(restored_name)
             assert displaced_name is not None
             assert restored_name is not None
-            transactions = list(
-                destination.glob(f"{publish_local.TRANSACTION_PREFIX}*")
-            )
+            transactions = recovery_roots(destination)
             self.assertEqual(1, len(transactions))
-            backup_root = transactions[0] / "backups"
+            backup_roots = [
+                path
+                for path in transactions[0].rglob("backups")
+                if path.is_dir()
+            ]
+            self.assertEqual(1, len(backup_roots))
+            backup_root = backup_roots[0]
             self.assertEqual(
                 expected_core,
                 snapshot(backup_root / displaced_name),
@@ -3327,6 +3564,47 @@ class PublishTransactionTests(unittest.TestCase):
             self.assertTrue(
                 surfaced_diagnostic,
                 "sentinel descriptor close failure was silently discarded",
+            )
+
+    def test_sentinel_initialization_failure_never_unlinks_public_name(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            destination = Path(temporary) / "skills"
+            destination.mkdir()
+            sentinel = destination / publish_local.TRANSACTION_LOCK_NAME
+            root_descriptor = os.open(
+                destination,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+            try:
+                with patch.object(
+                    publish_local,
+                    "_fsync_directory_descriptor",
+                    side_effect=OSError("forced sentinel directory fsync failure"),
+                ), patch.object(
+                    publish_local.os,
+                    "unlink",
+                    wraps=os.unlink,
+                ) as unlink:
+                    with self.assertRaisesRegex(
+                        OSError,
+                        "forced sentinel directory fsync failure",
+                    ):
+                        publish_local._ensure_transaction_sentinel(
+                            root_descriptor,
+                            sentinel,
+                        )
+            finally:
+                os.close(root_descriptor)
+
+            unlink.assert_not_called()
+            self.assertEqual(
+                publish_local.TRANSACTION_LOCK_PAYLOAD,
+                sentinel.read_bytes(),
             )
 
     def test_substituted_transaction_directory_is_not_recursively_deleted(

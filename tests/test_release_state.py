@@ -459,6 +459,32 @@ class ReleaseDigestTests(unittest.TestCase):
 
         self.assertNotEqual(file_digest, directory_digest)
 
+    def test_tree_digest_rejects_noncanonical_file_mode(self) -> None:
+        with TemporaryDirectory(prefix="release-tree-file-mode-") as temp_root:
+            root = Path(temp_root)
+            write_complete_tree(root)
+            skill_file = root / "stata-core" / "SKILL.md"
+            skill_file.chmod(0o666)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "Tree file has noncanonical permissions 0666.*expected 0644",
+            ):
+                release_state.tree_digest(root)
+
+    def test_tree_digest_rejects_noncanonical_directory_mode(self) -> None:
+        with TemporaryDirectory(prefix="release-tree-directory-mode-") as temp_root:
+            root = Path(temp_root)
+            write_complete_tree(root)
+            agents = root / "stata-core" / "agents"
+            agents.chmod(0o777)
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "Tree directory has noncanonical permissions 0777.*expected 0755",
+            ):
+                release_state.tree_digest(root)
+
     def test_tree_digest_rejects_membership_change_during_walk(self) -> None:
         with TemporaryDirectory(prefix="release-tree-race-") as temp_root:
             root = Path(temp_root)
@@ -493,6 +519,21 @@ class ReleaseDigestTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "build/generated"):
                     release_state.verify_validation_receipt(build, receipt)
 
+    def test_receipt_rejects_permission_drift(self) -> None:
+        with TemporaryDirectory(prefix="release-tree-mode-receipt-") as temp_root:
+            root = Path(temp_root)
+            build = root / "generated"
+            receipt = root / "receipt.json"
+            write_complete_tree(build)
+            with patch.object(release_state, "source_digest", return_value="source"):
+                release_state.write_validation_receipt(build, receipt)
+                (build / "stata-core" / "SKILL.md").chmod(0o666)
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "noncanonical permissions 0666",
+                ):
+                    release_state.verify_validation_receipt(build, receipt)
+
     def test_schema_one_receipt_requires_revalidation(self) -> None:
         with TemporaryDirectory(prefix="release-schema-") as temp_root:
             receipt = Path(temp_root) / "receipt.json"
@@ -504,6 +545,21 @@ class ReleaseDigestTests(unittest.TestCase):
             with self.assertRaisesRegex(
                 ValueError,
                 "does not bind directory membership.*Run make validate",
+            ):
+                release_state.read_validation_receipt(receipt)
+
+    def test_schema_two_receipt_requires_permission_revalidation(self) -> None:
+        with TemporaryDirectory(prefix="release-schema-") as temp_root:
+            receipt = Path(temp_root) / "receipt.json"
+            receipt.write_text(
+                json.dumps({"schema_version": 2}),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                "does not enforce canonical file and directory permissions"
+                ".*Run make validate",
             ):
                 release_state.read_validation_receipt(receipt)
 
