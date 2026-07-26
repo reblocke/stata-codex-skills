@@ -58,7 +58,8 @@ stata-codex-skills/
 
 Also note:
 
-- `raw/`, `build/`, `tests/tmp/`, and common validation artifacts such as `*.log` are gitignored.
+- `raw/`, `build/`, and `tests/tmp/` are gitignored.
+- Runtime validation writes logs, generated documents, package files, and license-bearing output only inside a run-specific system temporary directory, never in the repository root.
 - The repo currently assumes a local Stata install under `/Applications/Stata`.
 
 ## Requirements
@@ -109,11 +110,27 @@ make PYTHON="$PYTHON" validate
 Useful targeted validation commands:
 
 ```bash
-$PYTHON scripts/validate_skill_pack.py --skip-plugin
-$PYTHON scripts/validate_skill_pack.py --skip-packages
-$PYTHON scripts/validate_skill_pack.py --skip-packages --skip-plugin
-$PYTHON scripts/validate_skill_pack.py --package-limit 5
+make PYTHON="$PYTHON" check
+make PYTHON="$PYTHON" validate-core
+make PYTHON="$PYTHON" validate-packages
+make PYTHON="$PYTHON" validate-packages PACKAGES="reghdfe rdrobust"
+make PYTHON="$PYTHON" validate-plugin-compile
+make PYTHON="$PYTHON" validate-plugin-runtime
 ```
+
+The validator CLI accepts repeatable suites and package selections:
+
+```bash
+$PYTHON scripts/validate_skill_pack.py --suite static --suite core
+$PYTHON scripts/validate_skill_pack.py --suite packages \
+  --package reghdfe --package rdrobust
+$PYTHON scripts/validate_skill_pack.py --suite plugin-runtime --keep-workdir
+```
+
+`--suite default` is used when no suite is supplied. It runs static checks, the
+core smoke test, every package smoke test, and plugin compilation. It does not
+execute the plugin. `--keep-workdir` preserves a failed run's temporary
+workspace for debugging; successful workspaces are always removed.
 
 If this is the first time you have installed the skills on a machine, restart Codex after `make ... publish`.
 
@@ -256,24 +273,35 @@ Use `make all` as a shortcut for steps 1 through 6.
 
 ## Validation model
 
-Validation has three layers:
+`make check` runs repository lint and Python unit tests without invoking Stata.
+Runtime validation is split into independently selectable suites:
 
-1. Static linting
-   - checks required YAML fields
-   - checks provenance
-   - checks generated files and routing integrity
+- `static`: YAML, provenance, generated-file, and routing lint
+- `core`: built-in Stata commands and assertions
+- `packages`: isolated package installation and content-specific smoke tests
+- `plugin-compile`: download the pinned official SDK inputs and compile the sample plugin
+- `plugin-runtime`: compile the plugin, then explicitly attempt to load and execute it in Stata
+- `default`: `static`, `core`, `packages`, and `plugin-compile`
 
-2. Runtime Stata smoke tests
-   - `stata-core`: built-in commands and batch execution
-   - `stata-packages`: install each package into a temporary `PLUS` directory and run a minimal example
-   - `stata-c-plugins`: compile a plugin and invoke it from batch-mode Stata
+Each Stata check receives a unique completion marker and writes one
+run-specific log in its own temporary directory. A check passes only when the
+expected log exists, contains the exact marker and expected assertions or pass
+line, and contains no Stata error. Pre-existing or similarly named logs are
+never considered. Every selected result is aggregated, and any failure makes
+the validator and corresponding Make target exit nonzero.
 
-3. Prompt-level trigger checks
-   - example prompts are stored in `tests/prompts/`
+The validator uses bounded network, compiler, subprocess, and Stata timeouts
+and terminates lingering Stata processes. Failed runs print bounded diagnostics
+with repository, home-directory, temporary-path, and Stata license metadata
+sanitized. The workspace is then deleted unless `--keep-workdir` was supplied.
+Package tests use isolated temporary `PLUS` and `PERSONAL` paths, and stochastic
+smoke tests use a fixed seed.
 
-The batch runner watches for a `VALIDATION COMPLETE` marker in the generated Stata log. This is necessary because local `StataBE` on this machine does not reliably exit on its own in `-b do` mode, even when the do-file ends with `exit, clear`.
-
-For `stata-core`, the validator stages `tests/stata/core/core_smoke.do` into its temporary working directory before invoking Stata. This avoids false failures when the repository checkout path contains spaces.
+Plugin compilation is part of the default gate. The official `stplugin.h`,
+`stplugin.c`, and `hello.c` downloads are pinned by URL and SHA-256 and verified
+before compilation. Plugin execution remains an explicit integration test
+because the official sample currently hangs at the plugin call on this local
+Stata/macOS loader boundary.
 
 ## Current status as of March 23, 2026
 
@@ -324,7 +352,7 @@ The package metadata changes that mattered most were:
 
 ### Plugin validation
 
-Plugin validation is implemented, but it does not currently pass on this machine.
+Plugin runtime validation is implemented, but it does not currently pass on this machine.
 
 What was verified:
 

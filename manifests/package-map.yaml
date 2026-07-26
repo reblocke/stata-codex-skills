@@ -125,6 +125,8 @@ entries:
   - ssc install csdid, replace
   smoke_test: 'clear
 
+    set seed 12345
+
     set obs 80
 
     gen id = ceil(_n/4)
@@ -335,6 +337,8 @@ entries:
   install_commands:
   - ssc install rdrobust, replace
   smoke_test: 'clear
+
+    set seed 12345
 
     set obs 200
 
