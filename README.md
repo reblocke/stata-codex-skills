@@ -124,7 +124,17 @@ make publish
 
 `make validate` invalidates any prior receipt before running `make check`, then
 writes a new digest-bound receipt only after the complete default gate
-succeeds. `make publish` requires that receipt to be less than one hour old,
+succeeds. Receipt invalidation and publication use no-replace filesystem
+operations. A prior receipt or an unpublished temporary receipt is retained
+under the exact hidden backup or temporary path printed by the validator; a
+same-name receipt that appears later is left untouched. To invalidate a
+receipt without running the complete gate, use:
+
+```bash
+uv run --frozen python scripts/validate_skill_pack.py --invalidate-receipt
+```
+
+`make publish` requires the current receipt to be less than one hour old,
 rejects both nonignored untracked files and ignored executable inputs, and
 requires the tracked source paths and bytes and exact staged tree to remain
 unchanged. Schema 3 receipts also require the deterministic publication modes
@@ -158,8 +168,11 @@ uv run --frozen python scripts/validate_skill_pack.py \
 
 `--suite default` is used when no suite is supplied. It runs static checks, the
 core smoke test, every package smoke test, and plugin compilation. It does not
-execute the plugin. `--keep-workdir` preserves a failed run's temporary
-workspace for debugging; successful workspaces are always removed.
+execute the plugin. Every run uses a private `stata-codex-validate-*`
+transaction, retains that transaction root after the run, and prints both its
+exact cleanup path and the inner `work` path for inspection. On a failed run,
+`--keep-workdir` is accepted for compatibility but no longer changes this
+retain-after-every-run behavior. See **Retained transaction cleanup** below.
 
 If this is the first installation on a machine, restart Codex after
 `make publish`.
@@ -296,20 +309,44 @@ rendering, and rejects any overlap between the output root and configuration,
 content, template, or lock inputs. The scan binds tracked, untracked, and
 ignored gate inputs to one stable Git-index snapshot; executable inputs must be
 tracked. Path containment checks use filesystem identities so case aliases on
-case-insensitive filesystems cannot bypass them. If identity or content changes
-make automatic cleanup uncertain, the renderer preserves the hidden stage or
-prior-tree backup and reports its exact surviving path for review. These render
-and publication transactions
+case-insensitive filesystems cannot bypass them. The renderer does not
+recursively delete a hidden stage or prior-tree backup after a transaction.
+Instead, it verifies the retained tree and reports its exact path for explicit
+cleanup. This avoids deleting content that appears or changes between
+verification and deletion checkpoints. These render and publication transactions
 restore or preserve state after handled Python exceptions and catchable process
 interruptions; they do not promise durability across sudden power loss, forced
 termination, or storage-device failure. Complete-tree preservation extends
-through the final public-name and private-quarantine checks. POSIX lacks
-inode-conditional `unlink` and `rmdir`, so a same-UID process deliberately
-racing the verified private tree or its parent/public transaction names after
-that boundary is outside the automatic cleanup guarantee. `make all` remains a
-compatibility alias for `make check`. Direct `--output-root` renders accept
+through the final public-name and private-quarantine checks. `make all` remains
+a compatibility alias for `make check`. Direct `--output-root` renders accept
 absent or empty external directories; an existing target must already have the
 dedicated three-skill generated-tree layout.
+
+### Retained transaction cleanup
+
+Repeated `make build`, `make check`, and validation commands can accumulate
+reported backup, stage, deterministic-render, generated-drift, or
+validation-workspace directories, plus hidden validation-receipt backup or
+temporary files. The deterministic and generated-drift callers retain their
+outer workspace even after success so a late or partial render is not erased
+by an enclosing temporary-directory finalizer. Validation receipt state is
+also retained whenever its ownership or publication cannot be confirmed.
+Removal is an explicit human step:
+
+1. Copy the exact path printed by the command; do not use a wildcard or prefix
+   scan.
+2. Confirm that no build, render, or validation command is still running.
+3. Inspect the reported directory and confirm that no content needs to be
+   recovered.
+4. Remove only the exact backup, stage, caller workspace, validation
+   transaction, or validation-receipt path marked for cleanup, using the
+   operating system's file manager or an exact-path removal command. The
+   separately reported validation `work` path is for inspection; its
+   `stata-codex-validate-*` parent is the cleanup unit.
+
+Filesystem state changes after a command has fully returned are outside that
+completed operation; the explicit quiet-period check above is the deletion
+boundary.
 
 Fetching upstream material, harvesting help, scaffolding candidates, and
 refreshing locks are explicit maintenance operations. Review their ignored
@@ -347,8 +384,8 @@ deleting a concurrent replacement.
 - `scripts/render_prompt_cases.py`: deterministically generates structured routing fixtures from every canonical reference plus boundary cases
 - `scripts/refresh_locks.py`: writes ignored lock candidates for explicit review; it never promotes them
 - `scripts/verify_locks.py`: verifies checked provenance locks, with optional live local/network checks
-- `scripts/lint_skill_pack.py`: validates schema quality, exact provenance, locks, prompt cases, generated routing, and metadata
-- `scripts/check_determinism.py`: renders twice in clean temporary roots and compares byte-level tree digests
+- `scripts/lint_skill_pack.py`: validates schema quality, exact provenance, locks, prompt cases, generated routing, and metadata; its generated-drift render workspace is retained and reported
+- `scripts/check_determinism.py`: renders twice in clean retained roots, compares byte-level tree digests, and reports the outer workspace for explicit cleanup
 - `scripts/scan_repository.py`: scans tracked and unignored files for generated artifacts, third-party code, and high-confidence secret patterns
 - `scripts/doctor.py`: verifies the pinned uv version and reports offline build and optional licensed-validation prerequisites
 - `scripts/validate_skill_pack.py`: runs static and licensed integration suites and writes the publication receipt after complete default success
@@ -389,9 +426,11 @@ the validator and corresponding Make target exit nonzero.
 The validator uses bounded network, compiler, subprocess, and Stata timeouts
 and terminates lingering Stata processes. Failed runs print bounded diagnostics
 with repository, home-directory, temporary-path, and Stata license metadata
-sanitized. The workspace is then deleted unless `--keep-workdir` was supplied.
-If workspace deletion fails, the gate fails without issuing a receipt and
-reports the retained temporary path for inspection.
+sanitized. The workspace is verified and retained after every run, and its exact
+path is printed for the explicit cleanup workflow above. If retention
+verification fails, the gate fails without issuing a receipt and reports the
+best descriptor-derived path for inspection. On a failed run, `--keep-workdir`
+is accepted for compatibility and has no additional effect.
 Package tests use isolated temporary `PLUS` and `PERSONAL` paths, and stochastic
 smoke tests use a fixed seed.
 

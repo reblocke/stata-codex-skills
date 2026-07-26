@@ -75,7 +75,7 @@ publish:
 validate:
 	@test ! -L "$(CURDIR)/build" || \
 		(echo "ERROR: build must not be a symlink"; exit 2)
-	@/bin/rm -f -- "$(CURDIR)/build/validation-receipt.json"
+	$(UV_RUN) python scripts/validate_skill_pack.py --invalidate-receipt
 	$(MAKE) check
 	$(UV_RUN) python scripts/validate_skill_pack.py \
 		--suite default --write-receipt $(KEEP_WORKDIR_ARG)
