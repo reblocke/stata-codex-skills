@@ -1268,6 +1268,7 @@ class TestRunnerTests(unittest.TestCase):
             ),
             cleanup_confirmed=False,
             leader_kill_sent=False,
+            permission_denied_after_anchored_exit=False,
         )
 
         with patch.object(
@@ -1295,6 +1296,57 @@ class TestRunnerTests(unittest.TestCase):
             ),
             registry.cleanup_uncertainties(),
         )
+
+    def test_permission_denied_exit_needs_guarded_descendant_confirmation(
+        self,
+    ) -> None:
+        stopped = SimpleNamespace(
+            stdout="",
+            stderr="",
+            diagnostic="Could not confirm process-group termination.",
+            cleanup_confirmed=False,
+            leader_kill_sent=False,
+            permission_denied_after_anchored_exit=True,
+        )
+
+        for guard_required, expected_cleanup in ((False, False), (True, True)):
+            with self.subTest(guard_required=guard_required):
+                registry = run_tests.ProcessRegistry()
+                process = SimpleNamespace(
+                    returncode=0,
+                    _test_guard_required=guard_required,
+                )
+                with patch.object(
+                    run_tests,
+                    "_stop_process_group",
+                    return_value=stopped,
+                ), patch.object(
+                    run_tests,
+                    "_request_descendant_stop",
+                    return_value=(True, None),
+                ), patch.object(
+                    run_tests,
+                    "_confirm_descendant_cleanup",
+                    return_value=(True, None),
+                ):
+                    result = run_tests._stop_module_process(
+                        "tests.test_eperm",
+                        process,
+                        registry,
+                        timed_out=False,
+                        reason="normal module completion",
+                        completed=True,
+                    )
+
+                self.assertEqual(expected_cleanup, result.cleanup_confirmed)
+                self.assertEqual(expected_cleanup, result.passed)
+                self.assertEqual(
+                    () if expected_cleanup else (
+                        "tests.test_eperm: "
+                        "Could not confirm process-group termination.",
+                    ),
+                    registry.cleanup_uncertainties(),
+                )
 
     @unittest.skipUnless(
         os.name == "posix" and hasattr(os, "waitpid"),

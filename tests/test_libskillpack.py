@@ -596,43 +596,79 @@ class RunStataDoTests(unittest.TestCase):
 
 
 class ProcessGroupSignalTests(unittest.TestCase):
-    def test_signal_error_exit_race_confirms_anchored_natural_exit(
+    def test_process_lookup_exit_race_confirms_anchored_natural_exit(
         self,
     ) -> None:
-        for signal_error in (ProcessLookupError, PermissionError):
-            with self.subTest(signal_error=signal_error.__name__):
-                process = MarkerThenNonexitProcess()
-                states = [
-                    libskillpack._ProcessLeaderState.LIVE_ANCHORED,
-                    libskillpack._ProcessLeaderState.LIVE_ANCHORED,
-                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-                ]
+        process = MarkerThenNonexitProcess()
+        states = [
+            libskillpack._ProcessLeaderState.LIVE_ANCHORED,
+            libskillpack._ProcessLeaderState.LIVE_ANCHORED,
+            libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+        ]
 
-                with patch.object(
-                    libskillpack,
-                    "_process_leader_state",
-                    side_effect=states,
-                ) as observe, patch.object(
-                    libskillpack.os,
-                    "killpg",
-                    side_effect=signal_error,
-                ) as killpg, patch.object(
-                    libskillpack.time,
-                    "sleep",
-                ) as sleep:
-                    result = libskillpack._signal_process_group(
-                        process,
-                        signal.SIGKILL,
-                    )
+        with patch.object(
+            libskillpack,
+            "_process_leader_state",
+            side_effect=states,
+        ) as observe, patch.object(
+            libskillpack.os,
+            "killpg",
+            side_effect=ProcessLookupError,
+        ) as killpg, patch.object(
+            libskillpack.time,
+            "sleep",
+        ) as sleep:
+            result = libskillpack._signal_process_group(
+                process,
+                signal.SIGKILL,
+            )
 
-                self.assertTrue(result.cleanup_confirmed)
-                self.assertFalse(result.live_leader_signaled)
-                self.assertEqual(3, observe.call_count)
-                killpg.assert_called_once_with(
-                    process.pid,
-                    signal.SIGKILL,
-                )
-                sleep.assert_called_once()
+        self.assertTrue(result.cleanup_confirmed)
+        self.assertFalse(result.live_leader_signaled)
+        self.assertEqual(3, observe.call_count)
+        killpg.assert_called_once_with(
+            process.pid,
+            signal.SIGKILL,
+        )
+        sleep.assert_called_once()
+
+    def test_permission_error_exit_race_requires_fork_denial(self) -> None:
+        process = MarkerThenNonexitProcess()
+        with patch.object(
+            libskillpack,
+            "_process_leader_state",
+            return_value=libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+        ) as observe, patch.object(
+            libskillpack.os,
+            "killpg",
+            side_effect=PermissionError,
+        ):
+            generic_result = libskillpack._signal_process_group(
+                process,
+                signal.SIGKILL,
+            )
+
+        self.assertFalse(generic_result.cleanup_confirmed)
+        self.assertFalse(generic_result.live_leader_signaled)
+        self.assertEqual(2, observe.call_count)
+
+        with patch.object(
+            libskillpack,
+            "_process_leader_state",
+            return_value=libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+        ), patch.object(
+            libskillpack.os,
+            "killpg",
+            side_effect=PermissionError,
+        ):
+            contained_result = libskillpack._signal_process_group(
+                process,
+                signal.SIGKILL,
+                fork_denial_guarantees_no_descendants=True,
+            )
+
+        self.assertTrue(contained_result.cleanup_confirmed)
+        self.assertFalse(contained_result.live_leader_signaled)
 
     def test_signal_error_live_leader_remains_cleanup_failure(self) -> None:
         for signal_error in (ProcessLookupError, PermissionError):
@@ -657,6 +693,9 @@ class ProcessGroupSignalTests(unittest.TestCase):
                     result = libskillpack._signal_process_group(
                         process,
                         signal.SIGKILL,
+                        fork_denial_guarantees_no_descendants=(
+                            signal_error is PermissionError
+                        ),
                     )
 
                 self.assertFalse(result.cleanup_confirmed)
@@ -703,7 +742,11 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
 
                 stopped = libskillpack._stop_process_group(process)
 
-            self.assertTrue(stopped.cleanup_confirmed, stopped.diagnostic)
+            self.assertFalse(stopped.cleanup_confirmed)
+            self.assertTrue(
+                stopped.permission_denied_after_anchored_exit,
+                stopped.diagnostic,
+            )
             self.assertFalse(stopped.leader_kill_sent)
             self.assertEqual(0, process.returncode)
         finally:
@@ -734,7 +777,11 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
 
             stopped = libskillpack._stop_process_group(process)
 
-            self.assertTrue(stopped.cleanup_confirmed, stopped.diagnostic)
+            self.assertFalse(stopped.cleanup_confirmed)
+            self.assertTrue(
+                stopped.permission_denied_after_anchored_exit,
+                stopped.diagnostic,
+            )
             self.assertFalse(stopped.leader_kill_sent)
             self.assertEqual(0, process.returncode)
         finally:
@@ -823,6 +870,101 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
                         os.kill(child_pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+
+    def test_permission_error_with_same_group_descendant_fails_closed(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="stata-group-eperm-") as temp_root:
+            child_pid_path = Path(temp_root) / "child.pid"
+            read_fd, write_fd = os.pipe()
+            os.set_blocking(read_fd, False)
+            source = (
+                "import os, signal, time\n"
+                "child = os.fork()\n"
+                "if child == 0:\n"
+                f"    pid_path = {str(child_pid_path)!r}\n"
+                "    with open(pid_path + '.tmp', 'w') as stream:\n"
+                "        stream.write(str(os.getpid()))\n"
+                "        stream.flush()\n"
+                "        os.fsync(stream.fileno())\n"
+                "    os.replace(pid_path + '.tmp', pid_path)\n"
+                "    os.close(1)\n"
+                "    os.close(2)\n"
+                "    while True:\n"
+                "        time.sleep(1)\n"
+                "os._exit(0)\n"
+            )
+            with allow_detached_process():
+                process = subprocess.Popen(
+                    [sys.executable, "-c", source],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    start_new_session=True,
+                    pass_fds=(write_fd,),
+                )
+            os.close(write_fd)
+            child_pid: int | None = None
+            reached_eof = False
+            try:
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    if child_pid_path.exists():
+                        child_pid = int(
+                            child_pid_path.read_text(encoding="utf-8")
+                        )
+                    if (
+                        child_pid is not None
+                        and libskillpack._process_leader_state(process)
+                        is libskillpack._ProcessLeaderState.EXITED_ANCHORED
+                    ):
+                        break
+                    time.sleep(0.02)
+                self.assertIsNotNone(child_pid)
+                self.assertIs(
+                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+                    libskillpack._process_leader_state(process),
+                )
+                self.assertEqual(process.pid, os.getpgid(child_pid))
+
+                with patch.object(
+                    libskillpack.os,
+                    "killpg",
+                    side_effect=PermissionError,
+                ):
+                    stopped = libskillpack._stop_process_group(process)
+
+                self.assertFalse(stopped.cleanup_confirmed)
+                self.assertIn(
+                    "Could not confirm process-group termination",
+                    stopped.diagnostic,
+                )
+                os.kill(child_pid, 0)
+            finally:
+                if process.returncode is None:
+                    libskillpack._force_cleanup_process(process)
+                if child_pid is not None:
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
+                        try:
+                            reached_eof = os.read(read_fd, 1) == b""
+                        except BlockingIOError:
+                            reached_eof = False
+                        if reached_eof:
+                            break
+                        time.sleep(0.02)
+                    self.assertTrue(
+                        reached_eof,
+                        "same-group descendant did not exit after test cleanup",
+                    )
+                try:
+                    os.close(read_fd)
+                except OSError:
+                    pass
 
     def test_lost_waitable_child_prevents_stale_group_signal(self) -> None:
         with allow_detached_process():

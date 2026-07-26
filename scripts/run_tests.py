@@ -776,46 +776,59 @@ def _stop_module_process(
     """Stop one worker-owned group and fail closed on uncertain cleanup."""
 
     cleanup_confirmed = False
+    permission_denied_after_anchored_exit = False
+    group_diagnostic = ""
     output_parts: list[str] = []
     try:
         stop_result = _stop_process_group(process)
     except Exception as error:
-        diagnostic = (
+        group_diagnostic = (
             f"{reason}; cleanup raised "
             f"{type(error).__name__}: {error}"
         )
-        registry.record_cleanup_uncertainty(module, diagnostic)
-        output_parts.append(f"TEST RUNNER CLEANUP: {diagnostic}")
     else:
         cleanup_confirmed = stop_result.cleanup_confirmed
+        permission_denied_after_anchored_exit = (
+            stop_result.permission_denied_after_anchored_exit
+        )
+        group_diagnostic = stop_result.diagnostic
         output_parts.extend(
             part.rstrip("\n")
             for part in (stop_result.stdout, stop_result.stderr)
             if part
         )
-        if stop_result.diagnostic:
-            output_parts.append(
-                f"TEST RUNNER CLEANUP: {stop_result.diagnostic}"
-            )
-        if not cleanup_confirmed:
-            diagnostic = stop_result.diagnostic or (
-                f"{reason}; process-group cleanup could not be confirmed"
-            )
-            registry.record_cleanup_uncertainty(module, diagnostic)
-
-    stop_requested, stop_diagnostic = _request_descendant_stop(process)
-    if stop_diagnostic:
-        diagnostic = f"{reason}; {stop_diagnostic}"
+    stop_requested, descendant_stop_diagnostic = (
+        _request_descendant_stop(process)
+    )
+    if descendant_stop_diagnostic:
+        diagnostic = f"{reason}; {descendant_stop_diagnostic}"
         registry.record_cleanup_uncertainty(module, diagnostic)
         output_parts.append(f"TEST RUNNER CLEANUP: {diagnostic}")
     descendants_confirmed, descendant_diagnostic = (
         _confirm_descendant_cleanup(process)
     )
+    guarded_descendants_confirmed = (
+        getattr(process, "_test_guard_required", False)
+        and stop_requested
+        and descendants_confirmed
+    )
+    if (
+        permission_denied_after_anchored_exit
+        and guarded_descendants_confirmed
+    ):
+        cleanup_confirmed = True
+        group_diagnostic = ""
     cleanup_confirmed = (
         cleanup_confirmed
         and stop_requested
         and descendants_confirmed
     )
+    if not cleanup_confirmed:
+        diagnostic = group_diagnostic or (
+            f"{reason}; process-group cleanup could not be confirmed"
+        )
+        registry.record_cleanup_uncertainty(module, diagnostic)
+        output_parts.append(f"TEST RUNNER CLEANUP: {diagnostic}")
     if descendant_diagnostic:
         diagnostic = f"{reason}; {descendant_diagnostic}"
         registry.record_cleanup_uncertainty(module, diagnostic)

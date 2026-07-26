@@ -84,12 +84,14 @@ class _ProcessStopResult:
     diagnostic: str
     cleanup_confirmed: bool
     leader_kill_sent: bool
+    permission_denied_after_anchored_exit: bool = False
 
 
 @dataclass(frozen=True)
 class _ProcessGroupSignalResult:
     cleanup_confirmed: bool
     live_leader_signaled: bool
+    permission_denied_after_anchored_exit: bool = False
 
 
 class _ProcessLeaderState(Enum):
@@ -899,6 +901,8 @@ def detect_stata_binary() -> Path | None:
 def _signal_process_group(
     process: subprocess.Popen[str],
     process_signal: signal.Signals,
+    *,
+    fork_denial_guarantees_no_descendants: bool = False,
 ) -> _ProcessGroupSignalResult:
     # Confirm immediately before signaling that this Popen still owns a
     # waitable leader.  A reaped leader no longer reserves its PID, so its
@@ -906,28 +910,44 @@ def _signal_process_group(
     leader_state = _process_leader_state(process)
     if leader_state is _ProcessLeaderState.UNANCHORED:
         return _ProcessGroupSignalResult(False, False)
-    try:
-        os.killpg(process.pid, process_signal)
-    except (ProcessLookupError, PermissionError):
-        # On macOS, ESRCH or EPERM can race with a natural leader exit between
-        # the anchored state observation and killpg().  Keep the waitable leader
-        # as the PID anchor, never retry the signal, and briefly observe whether
-        # it reaches the exited-but-unreaped state.  A still-live leader or lost
-        # ownership remains an explicit cleanup failure.
+
+    def observe_anchored_exit() -> bool:
         deadline = (
             time.monotonic() + PROCESS_SIGNAL_EXIT_RACE_TIMEOUT_SECONDS
         )
         while True:
-            leader_state = _process_leader_state(process)
-            if leader_state is not _ProcessLeaderState.LIVE_ANCHORED:
-                break
+            observed_state = _process_leader_state(process)
+            if observed_state is not _ProcessLeaderState.LIVE_ANCHORED:
+                return observed_state is _ProcessLeaderState.EXITED_ANCHORED
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                break
+                return False
             time.sleep(min(0.01, remaining))
+
+    try:
+        os.killpg(process.pid, process_signal)
+    except ProcessLookupError:
+        # ESRCH can race with a natural leader exit between the anchored state
+        # observation and killpg().  Keep the waitable leader as the PID
+        # anchor, never retry the signal, and briefly observe whether it reaches
+        # the exited-but-unreaped state that proves the group disappeared.
         return _ProcessGroupSignalResult(
-            leader_state is _ProcessLeaderState.EXITED_ANCHORED,
+            observe_anchored_exit(),
             False,
+        )
+    except PermissionError:
+        # EPERM does not prove that the group is empty: an exited leader can
+        # leave unsignalable descendants behind.  Only the fixed Stata sandbox
+        # may opt into the natural-exit observation because its successfully
+        # probed profile denies process-fork before launch.
+        anchored_exit = observe_anchored_exit()
+        return _ProcessGroupSignalResult(
+            (
+                anchored_exit
+                and fork_denial_guarantees_no_descendants
+            ),
+            False,
+            permission_denied_after_anchored_exit=anchored_exit,
         )
     return _ProcessGroupSignalResult(
         cleanup_confirmed=True,
@@ -1071,12 +1091,15 @@ def _force_cleanup_process(process: subprocess.Popen[str]) -> None:
 
 def _stop_process_group(
     process: subprocess.Popen[str],
+    *,
+    fork_denial_guarantees_no_descendants: bool = False,
 ) -> _ProcessStopResult:
     """Signal one anchored group before reaping its leader and collect output."""
 
     try:
         cleanup_confirmed = False
         leader_kill_sent = False
+        permission_denied_after_anchored_exit = False
         diagnostic = ""
         if (
             _process_leader_state(process)
@@ -1093,9 +1116,15 @@ def _stop_process_group(
             signal_result = _signal_process_group(
                 process,
                 signal.SIGKILL,
+                fork_denial_guarantees_no_descendants=(
+                    fork_denial_guarantees_no_descendants
+                ),
             )
             cleanup_confirmed = signal_result.cleanup_confirmed
             leader_kill_sent = signal_result.live_leader_signaled
+            permission_denied_after_anchored_exit = (
+                signal_result.permission_denied_after_anchored_exit
+            )
             if not cleanup_confirmed:
                 diagnostic = "Could not confirm process-group termination."
         try:
@@ -1132,6 +1161,9 @@ def _stop_process_group(
             diagnostic=diagnostic,
             cleanup_confirmed=cleanup_confirmed,
             leader_kill_sent=leader_kill_sent,
+            permission_denied_after_anchored_exit=(
+                permission_denied_after_anchored_exit
+            ),
         )
     except BaseException:
         _force_cleanup_process(process)
@@ -1254,7 +1286,10 @@ def run_stata_do(
         _force_cleanup_process(process)
         raise
 
-    stop_result = _stop_process_group(process)
+    stop_result = _stop_process_group(
+        process,
+        fork_denial_guarantees_no_descendants=True,
+    )
 
     log_text = read_text(log_path) if log_path.exists() else ""
     marker_found = any(line.strip() == completion_marker for line in log_text.splitlines())
