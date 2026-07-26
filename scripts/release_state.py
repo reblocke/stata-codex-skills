@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -13,8 +13,13 @@ from pathlib import Path
 import stat
 import subprocess
 import tempfile
+import uuid
 
-from libskillpack import BUILD_ROOT, REPO_ROOT
+from libskillpack import (
+    BUILD_ROOT,
+    REPO_ROOT,
+    atomic_rename_at_no_replace,
+)
 
 
 VALIDATION_RECEIPT_PATH = BUILD_ROOT.parent / "validation-receipt.json"
@@ -85,6 +90,33 @@ class SourcePathInventory:
 class _SourceSnapshot:
     inventory: SourcePathInventory
     digest: str | None
+
+
+class ReceiptTransactionError(RuntimeError):
+    """Receipt invalidation or publication could not be completed safely."""
+
+
+@dataclass
+class ValidationReceiptTransaction:
+    """Descriptor-retained receipt parent and its preserved transaction state."""
+
+    receipt_path: Path
+    parent_path: Path
+    parent_descriptor: int
+    parent_identity: tuple[int, int]
+    prior_descriptor: int | None = None
+    prior_identity: tuple[int, int] | None = None
+    prior_backup_name: str | None = None
+    temporary_descriptor: int | None = None
+    temporary_identity: tuple[int, int] | None = None
+    temporary_name: str | None = None
+    temporary_size: int | None = None
+    temporary_sha256: str | None = None
+    published_identity: tuple[int, int] | None = None
+    retained_extra_identities: list[tuple[int, int]] = field(
+        default_factory=list
+    )
+    closed: bool = False
 
 
 def _hash_records(records: list[tuple[str, bytes]]) -> str:
@@ -1284,12 +1316,578 @@ def validation_state(
     }
 
 
+def _receipt_entry_metadata(
+    parent_descriptor: int,
+    name: str,
+) -> os.stat_result | None:
+    try:
+        return os.stat(
+            name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+    except FileNotFoundError:
+        return None
+
+
+def _receipt_metadata_signature(
+    metadata: os.stat_result,
+) -> tuple[int, int, int, int, int, int, int]:
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _receipt_descriptor_digest(
+    descriptor: int,
+    expected_size: int,
+) -> tuple[int, str]:
+    digest = hashlib.sha256()
+    offset = 0
+    limit = expected_size + 1
+    while offset < limit:
+        chunk = os.pread(
+            descriptor,
+            min(1024 * 1024, limit - offset),
+            offset,
+        )
+        if not chunk:
+            break
+        digest.update(chunk)
+        offset += len(chunk)
+    return offset, digest.hexdigest()
+
+
+def _verify_receipt_temporary_state(
+    transaction: ValidationReceiptTransaction,
+    public_name: str,
+    *,
+    message: str,
+) -> None:
+    if (
+        transaction.temporary_descriptor is None
+        or transaction.temporary_identity is None
+        or transaction.temporary_size is None
+        or transaction.temporary_sha256 is None
+    ):
+        raise ReceiptTransactionError(
+            "validation receipt temporary has no complete expected state"
+        )
+    before = os.fstat(transaction.temporary_descriptor)
+    observed_size, observed_digest = _receipt_descriptor_digest(
+        transaction.temporary_descriptor,
+        transaction.temporary_size,
+    )
+    after = os.fstat(transaction.temporary_descriptor)
+    public = _receipt_entry_metadata(
+        transaction.parent_descriptor,
+        public_name,
+    )
+    if public is not None:
+        public_identity = (public.st_dev, public.st_ino)
+        if public_identity != transaction.temporary_identity:
+            transaction.retained_extra_identities.append(public_identity)
+    expected_signature = _receipt_metadata_signature(after)
+    if (
+        public is None
+        or _receipt_metadata_signature(before) != expected_signature
+        or _receipt_metadata_signature(public) != expected_signature
+        or not stat.S_ISREG(after.st_mode)
+        or after.st_nlink != 1
+        or (after.st_dev, after.st_ino) != transaction.temporary_identity
+        or stat.S_IMODE(after.st_mode) != CANONICAL_FILE_MODE
+        or observed_size != transaction.temporary_size
+        or after.st_size != transaction.temporary_size
+        or observed_digest != transaction.temporary_sha256
+    ):
+        raise ReceiptTransactionError(message)
+
+
+def _verified_receipt_parent_path(
+    transaction: ValidationReceiptTransaction,
+) -> Path | None:
+    try:
+        candidates = [
+            transaction.parent_path,
+            *transaction.parent_path.parent.iterdir(),
+        ]
+    except BaseException:
+        candidates = [transaction.parent_path]
+    matches: list[Path] = []
+    checked: set[Path] = set()
+    for candidate in candidates:
+        if candidate in checked:
+            continue
+        checked.add(candidate)
+        try:
+            metadata = candidate.lstat()
+        except BaseException:
+            continue
+        if (
+            stat.S_ISDIR(metadata.st_mode)
+            and (metadata.st_dev, metadata.st_ino)
+            == transaction.parent_identity
+        ):
+            matches.append(candidate)
+    if len(matches) != 1:
+        return None
+    try:
+        confirmed = matches[0].lstat()
+    except BaseException:
+        return None
+    if (
+        not stat.S_ISDIR(confirmed.st_mode)
+        or (confirmed.st_dev, confirmed.st_ino)
+        != transaction.parent_identity
+    ):
+        return None
+    return matches[0]
+
+
+def _receipt_identity_location(
+    transaction: ValidationReceiptTransaction,
+    identity: tuple[int, int] | None,
+) -> str:
+    if identity is None:
+        return "unknown pathname (receipt identity unavailable)"
+    try:
+        names = [
+            name
+            for name in os.listdir(transaction.parent_descriptor)
+            if (
+                (metadata := _receipt_entry_metadata(
+                    transaction.parent_descriptor,
+                    name,
+                ))
+                is not None
+                and (metadata.st_dev, metadata.st_ino) == identity
+            )
+        ]
+        parent_path = _verified_receipt_parent_path(transaction)
+        if len(names) == 1 and parent_path is not None:
+            candidate = parent_path / names[0]
+            confirmed = candidate.lstat()
+            if (confirmed.st_dev, confirmed.st_ino) == identity:
+                return str(candidate)
+    except BaseException:
+        pass
+    return (
+        "unknown pathname beneath the retained receipt parent "
+        f"(device={identity[0]}, inode={identity[1]})"
+    )
+
+
+def retained_validation_receipt_locations(
+    transaction: ValidationReceiptTransaction,
+) -> tuple[str, ...]:
+    """Return reverified locations for receipt state retained by a transaction."""
+
+    identities = [
+        transaction.prior_identity,
+        transaction.temporary_identity,
+        transaction.published_identity,
+        *transaction.retained_extra_identities,
+    ]
+    locations: list[str] = []
+    observed: set[tuple[int, int]] = set()
+    for identity in identities:
+        if identity is None or identity in observed:
+            continue
+        observed.add(identity)
+        locations.append(_receipt_identity_location(transaction, identity))
+    return tuple(locations)
+
+
+def _assert_receipt_parent_current(
+    transaction: ValidationReceiptTransaction,
+) -> None:
+    try:
+        public = transaction.parent_path.lstat()
+        held = os.fstat(transaction.parent_descriptor)
+    except OSError as error:
+        raise ReceiptTransactionError(
+            "validation receipt parent changed during the transaction; "
+            "retained parent location: "
+            f"{_verified_receipt_parent_path(transaction) or 'unknown pathname'}"
+        ) from error
+    if (
+        not stat.S_ISDIR(public.st_mode)
+        or not stat.S_ISDIR(held.st_mode)
+        or (public.st_dev, public.st_ino) != transaction.parent_identity
+        or (held.st_dev, held.st_ino) != transaction.parent_identity
+    ):
+        recovered = _verified_receipt_parent_path(transaction)
+        location = (
+            str(recovered)
+            if recovered is not None
+            else (
+                "unknown pathname "
+                f"(device={transaction.parent_identity[0]}, "
+                f"inode={transaction.parent_identity[1]})"
+            )
+        )
+        raise ReceiptTransactionError(
+            "validation receipt parent changed during the transaction; "
+            f"retained parent location: {location}"
+        )
+
+
+def _close_receipt_transaction(
+    transaction: ValidationReceiptTransaction,
+    primary_error: BaseException | None = None,
+    primary_traceback: object | None = None,
+) -> None:
+    if transaction.closed:
+        if primary_error is not None:
+            raise primary_error.with_traceback(primary_traceback)
+        return
+    transaction.closed = True
+    close_errors: list[BaseException] = []
+    attempted: set[int] = set()
+    for descriptor in (
+        transaction.temporary_descriptor,
+        transaction.prior_descriptor,
+        transaction.parent_descriptor,
+    ):
+        if descriptor is None or descriptor in attempted:
+            continue
+        attempted.add(descriptor)
+        try:
+            os.close(descriptor)
+        except BaseException as error:
+            close_errors.append(error)
+    if primary_error is not None:
+        if close_errors:
+            try:
+                primary_error.add_note(
+                    "validation receipt descriptor finalization also "
+                    "encountered: "
+                    + ", ".join(
+                        type(error).__name__ for error in close_errors
+                    )
+                )
+            except BaseException:
+                pass
+        raise primary_error.with_traceback(primary_traceback)
+    if close_errors:
+        first_error = close_errors[0]
+        if len(close_errors) > 1:
+            try:
+                first_error.add_note(
+                    "additional validation receipt descriptor finalization "
+                    "failures: "
+                    + ", ".join(
+                        type(error).__name__ for error in close_errors[1:]
+                    )
+                )
+            except BaseException:
+                pass
+        raise first_error
+
+
+def close_validation_receipt_transaction(
+    transaction: ValidationReceiptTransaction,
+) -> None:
+    """Close every descriptor owned by a live receipt transaction."""
+
+    _close_receipt_transaction(transaction)
+
+
+def _open_observed_receipt(
+    transaction: ValidationReceiptTransaction,
+    metadata: os.stat_result,
+) -> tuple[int, tuple[int, int]]:
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ReceiptTransactionError(
+            "existing validation receipt is not an ordinary file"
+        )
+    descriptor = os.open(
+        transaction.receipt_path.name,
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+        | getattr(os, "O_NONBLOCK", 0),
+        dir_fd=transaction.parent_descriptor,
+    )
+    try:
+        opened = os.fstat(descriptor)
+        identity = (metadata.st_dev, metadata.st_ino)
+        if (
+            not stat.S_ISREG(opened.st_mode)
+            or (opened.st_dev, opened.st_ino) != identity
+        ):
+            raise ReceiptTransactionError(
+                "existing validation receipt changed while opening it"
+            )
+    except BaseException as error:
+        try:
+            os.close(descriptor)
+        except BaseException as close_error:
+            try:
+                error.add_note(
+                    "receipt-open descriptor finalization also encountered "
+                    f"{type(close_error).__name__}"
+                )
+            except BaseException:
+                pass
+        raise
+    return descriptor, identity
+
+
+def begin_validation_receipt_transaction(
+    receipt_path: Path = VALIDATION_RECEIPT_PATH,
+) -> ValidationReceiptTransaction:
+    """Bind the receipt parent and preserve any prior receipt by identity."""
+
+    receipt_path = Path(receipt_path).expanduser().absolute()
+    parent_path = receipt_path.parent
+    parent_descriptor = os.open(
+        parent_path,
+        DIRECTORY_OPEN_FLAGS | getattr(os, "O_CLOEXEC", 0),
+    )
+    transaction: ValidationReceiptTransaction | None = None
+    try:
+        parent_metadata = os.fstat(parent_descriptor)
+        transaction = ValidationReceiptTransaction(
+            receipt_path=receipt_path,
+            parent_path=parent_path,
+            parent_descriptor=parent_descriptor,
+            parent_identity=(
+                parent_metadata.st_dev,
+                parent_metadata.st_ino,
+            ),
+        )
+        _assert_receipt_parent_current(transaction)
+        existing = _receipt_entry_metadata(
+            parent_descriptor,
+            receipt_path.name,
+        )
+        if existing is None:
+            return transaction
+        prior_descriptor, prior_identity = _open_observed_receipt(
+            transaction,
+            existing,
+        )
+        transaction.prior_descriptor = prior_descriptor
+        transaction.prior_identity = prior_identity
+        backup_name: str | None = None
+        for _ in range(128):
+            candidate = (
+                f".{receipt_path.name}.backup-{uuid.uuid4().hex}"
+            )
+            try:
+                atomic_rename_at_no_replace(
+                    parent_descriptor,
+                    receipt_path.name,
+                    parent_descriptor,
+                    candidate,
+                )
+            except FileExistsError:
+                continue
+            except BaseException as error:
+                try:
+                    moved = _receipt_entry_metadata(
+                        parent_descriptor,
+                        candidate,
+                    )
+                    if (
+                        moved is not None
+                        and (moved.st_dev, moved.st_ino) == prior_identity
+                    ):
+                        transaction.prior_backup_name = candidate
+                except BaseException as inspection_error:
+                    try:
+                        error.add_note(
+                            "post-rename receipt accounting also encountered "
+                            f"{type(inspection_error).__name__}"
+                        )
+                    except BaseException:
+                        pass
+                raise
+            backup_name = candidate
+            break
+        if backup_name is None:
+            raise ReceiptTransactionError(
+                "could not allocate a prior-receipt backup name"
+            )
+        moved = _receipt_entry_metadata(parent_descriptor, backup_name)
+        moved_identity = (
+            (moved.st_dev, moved.st_ino)
+            if moved is not None
+            else None
+        )
+        if moved_identity != prior_identity:
+            restore_error: BaseException | None = None
+            if moved_identity is not None:
+                transaction.retained_extra_identities.append(
+                    moved_identity
+                )
+            if moved is not None:
+                try:
+                    atomic_rename_at_no_replace(
+                        parent_descriptor,
+                        backup_name,
+                        parent_descriptor,
+                        receipt_path.name,
+                    )
+                except BaseException as error:
+                    restore_error = error
+            detail = (
+                "; the changed entry could not be restored without replacing "
+                f"another public name: {restore_error}"
+                if restore_error is not None
+                else "; the changed entry was restored"
+            )
+            raise ReceiptTransactionError(
+                "validation receipt changed during identity-preserving "
+                f"invalidation{detail}"
+            )
+        transaction.prior_backup_name = backup_name
+        _assert_receipt_parent_current(transaction)
+        if (
+            _receipt_entry_metadata(parent_descriptor, receipt_path.name)
+            is not None
+        ):
+            raise ReceiptTransactionError(
+                "validation receipt public name reappeared during invalidation; "
+                "the prior receipt remains at "
+                f"{_receipt_identity_location(transaction, prior_identity)}"
+            )
+        return transaction
+    except BaseException as error:
+        if transaction is None:
+            try:
+                os.close(parent_descriptor)
+            except BaseException as close_error:
+                try:
+                    error.add_note(
+                        "receipt-parent descriptor finalization also "
+                        f"encountered {type(close_error).__name__}"
+                    )
+                except BaseException:
+                    pass
+            raise
+        locations = retained_validation_receipt_locations(transaction)
+        if locations:
+            try:
+                error.add_note(
+                    "retained validation receipt state: "
+                    + "; ".join(locations)
+                )
+            except BaseException:
+                pass
+        _close_receipt_transaction(
+            transaction,
+            error,
+            error.__traceback__,
+        )
+        raise AssertionError("unreachable")
+
+
+def _create_receipt_temporary(
+    transaction: ValidationReceiptTransaction,
+    payload: bytes,
+) -> None:
+    if (
+        transaction.closed
+        or transaction.temporary_descriptor is not None
+        or transaction.published_identity is not None
+    ):
+        raise ReceiptTransactionError(
+            "validation receipt transaction is not available for publication"
+        )
+    for _ in range(128):
+        temporary_name = (
+            f".{transaction.receipt_path.name}.tmp-{uuid.uuid4().hex}"
+        )
+        try:
+            descriptor = os.open(
+                temporary_name,
+                os.O_RDWR
+                | os.O_CREAT
+                | os.O_EXCL
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+                dir_fd=transaction.parent_descriptor,
+            )
+        except FileExistsError:
+            continue
+        transaction.temporary_name = temporary_name
+        transaction.temporary_descriptor = descriptor
+        break
+    if transaction.temporary_descriptor is None:
+        raise ReceiptTransactionError(
+            "could not allocate a validation receipt temporary file"
+        )
+    descriptor = transaction.temporary_descriptor
+    metadata = os.fstat(descriptor)
+    transaction.temporary_identity = (metadata.st_dev, metadata.st_ino)
+    transaction.temporary_size = len(payload)
+    transaction.temporary_sha256 = hashlib.sha256(payload).hexdigest()
+    os.fchmod(descriptor, CANONICAL_FILE_MODE)
+    remaining = memoryview(payload)
+    while remaining:
+        written = os.write(descriptor, remaining)
+        if written == 0:
+            raise OSError("short write while creating validation receipt")
+        remaining = remaining[written:]
+    os.fsync(descriptor)
+    os.fsync(transaction.parent_descriptor)
+    _verify_receipt_temporary_state(
+        transaction,
+        transaction.temporary_name,
+        message="validation receipt temporary changed during creation",
+    )
+
+
+def _publish_receipt_temporary(
+    transaction: ValidationReceiptTransaction,
+) -> None:
+    if (
+        transaction.temporary_descriptor is None
+        or transaction.temporary_identity is None
+        or transaction.temporary_name is None
+    ):
+        raise ReceiptTransactionError(
+            "validation receipt temporary is not ready for publication"
+        )
+    _assert_receipt_parent_current(transaction)
+    _verify_receipt_temporary_state(
+        transaction,
+        transaction.temporary_name,
+        message="validation receipt temporary changed before publication",
+    )
+    atomic_rename_at_no_replace(
+        transaction.parent_descriptor,
+        transaction.temporary_name,
+        transaction.parent_descriptor,
+        transaction.receipt_path.name,
+    )
+    os.fsync(transaction.parent_descriptor)
+    _assert_receipt_parent_current(transaction)
+    _verify_receipt_temporary_state(
+        transaction,
+        transaction.receipt_path.name,
+        message="validation receipt changed after publication",
+    )
+    transaction.published_identity = transaction.temporary_identity
+    transaction.temporary_name = None
+
+
 def write_validation_receipt(
     build_root: Path = BUILD_ROOT,
     receipt_path: Path = VALIDATION_RECEIPT_PATH,
     expected_state: dict[str, str] | None = None,
     *,
     repo_root: Path = REPO_ROOT,
+    transaction: ValidationReceiptTransaction | None = None,
 ) -> dict:
     current_state = validation_state(build_root, repo_root=repo_root)
     if expected_state is not None and current_state != expected_state:
@@ -1309,29 +1907,54 @@ def write_validation_receipt(
             "plugin-compile",
         ],
     }
-    receipt_path.parent.mkdir(parents=True, exist_ok=True)
-    file_descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{receipt_path.name}.",
-        suffix=".tmp",
-        dir=receipt_path.parent,
-    )
-    temporary = Path(temporary_name)
+    receipt_path = Path(receipt_path).expanduser().absolute()
+    owns_transaction = transaction is None
+    if transaction is None:
+        transaction = begin_validation_receipt_transaction(receipt_path)
+    elif transaction.receipt_path != receipt_path:
+        raise ValueError(
+            "live validation receipt transaction targets a different path"
+        )
+    primary_error: BaseException | None = None
+    primary_traceback = None
     try:
-        with os.fdopen(file_descriptor, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=2, sort_keys=True)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
+        encoded_payload = (
+            json.dumps(payload, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        _create_receipt_temporary(transaction, encoded_payload)
         final_state = validation_state(build_root, repo_root=repo_root)
         if final_state != current_state:
             raise ValueError(
                 "Source or generated bytes changed before receipt publication; "
                 "run make validate again."
             )
-        temporary.replace(receipt_path)
-    except BaseException:
-        temporary.unlink(missing_ok=True)
-        raise
+        _publish_receipt_temporary(transaction)
+        if transaction.prior_backup_name is not None:
+            print(
+                "NOTICE: prior validation receipt retained for explicit "
+                "cleanup at: "
+                f"{_receipt_identity_location(transaction, transaction.prior_identity)}"
+            )
+    except BaseException as error:
+        primary_error = error
+        primary_traceback = error.__traceback__
+        locations = retained_validation_receipt_locations(transaction)
+        if locations:
+            try:
+                error.add_note(
+                    "retained validation receipt state: "
+                    + "; ".join(locations)
+                )
+            except BaseException:
+                pass
+    if owns_transaction:
+        _close_receipt_transaction(
+            transaction,
+            primary_error,
+            primary_traceback,
+        )
+    elif primary_error is not None:
+        raise primary_error.with_traceback(primary_traceback)
     return payload
 
 

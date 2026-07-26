@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import chdir
 from pathlib import Path
 from subprocess import CompletedProcess, TimeoutExpired
 from tempfile import TemporaryDirectory
@@ -149,6 +150,35 @@ class RunStataDoTests(unittest.TestCase):
                 )
 
             self.assertEqual(0, result.returncode)
+
+    def test_relative_do_file_exists_from_child_workdir(self) -> None:
+        with TemporaryDirectory(prefix="stata-run-relative-") as temp_root:
+            root = Path(temp_root)
+            cwd = Path("work")
+            marker = "VALIDATION COMPLETE: child-cwd"
+            stub = root / "stata-stub"
+            stub.write_text(
+                "#!/bin/sh\n"
+                'do_file="$3"\n'
+                '[ -f "$do_file" ] || exit 9\n'
+                'log_file="${do_file%.do}.log"\n'
+                f"printf '%s\\n' '{marker}' > \"$log_file\"\n",
+                encoding="utf-8",
+            )
+            stub.chmod(0o755)
+
+            with chdir(root):
+                do_file = self._make_do_file(cwd)
+                result, log_path = libskillpack.run_stata_do(
+                    stub,
+                    do_file,
+                    cwd,
+                    completion_marker=marker,
+                    timeout_seconds=2,
+                )
+
+            self.assertEqual(0, result.returncode)
+            self.assertEqual(root / "work" / "smoke.log", root / log_path)
 
     def test_preexisting_workdir_log_is_not_accepted_as_fresh(self) -> None:
         with TemporaryDirectory(prefix="stata-run-") as temp_root:

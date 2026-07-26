@@ -575,10 +575,15 @@ class ReleaseDigestTests(unittest.TestCase):
             build = root / "build" / "generated"
             receipt = root / "build" / "validation-receipt.json"
             write_complete_tree(build)
-            real_mkstemp = release_state.tempfile.mkstemp
+            real_create_temporary = (
+                release_state._create_receipt_temporary
+            )
 
-            def add_input_after_temporary_receipt(*args, **kwargs):
-                result = real_mkstemp(*args, **kwargs)
+            def add_input_after_temporary_receipt(
+                transaction,
+                payload,
+            ):
+                result = real_create_temporary(transaction, payload)
                 source = root / "scripts" / "late_validator.py"
                 source.parent.mkdir()
                 source.write_text(
@@ -588,13 +593,13 @@ class ReleaseDigestTests(unittest.TestCase):
                 return result
 
             with patch.object(
-                release_state.tempfile,
-                "mkstemp",
+                release_state,
+                "_create_receipt_temporary",
                 side_effect=add_input_after_temporary_receipt,
             ), self.assertRaisesRegex(
                 ValueError,
                 "Untracked, nonignored.*scripts/late_validator.py",
-            ):
+            ) as raised:
                 release_state.write_validation_receipt(
                     build,
                     receipt,
@@ -602,7 +607,16 @@ class ReleaseDigestTests(unittest.TestCase):
                 )
 
             self.assertFalse(receipt.exists())
-            self.assertEqual([], list(receipt.parent.glob(".*.tmp")))
+            retained = list(
+                receipt.parent.glob(
+                    f".{receipt.name}.tmp-*"
+                )
+            )
+            self.assertEqual(1, len(retained))
+            self.assertIn(
+                "retained validation receipt state",
+                "\n".join(getattr(raised.exception, "__notes__", ())),
+            )
 
     def test_untracked_python_blocks_receipt_verification(self) -> None:
         with TemporaryDirectory(prefix="release-untracked-python-") as temp_root:
@@ -692,7 +706,7 @@ class ReleaseDigestTests(unittest.TestCase):
             ) as validation, self.assertRaisesRegex(
                 ValueError,
                 "changed before receipt publication",
-            ):
+            ) as raised:
                 release_state.write_validation_receipt(
                     root / "generated",
                     receipt,
@@ -700,7 +714,431 @@ class ReleaseDigestTests(unittest.TestCase):
 
             self.assertEqual(2, validation.call_count)
             self.assertFalse(receipt.exists())
-            self.assertEqual([], list(root.glob(".*.tmp")))
+            retained = list(root.glob(f".{receipt.name}.tmp-*"))
+            self.assertEqual(1, len(retained))
+            self.assertIn(
+                str(retained[0]),
+                "\n".join(getattr(raised.exception, "__notes__", ())),
+            )
+
+    def test_live_receipt_transaction_retains_prior_and_stays_open(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="release-receipt-live-") as temp_root:
+            root = Path(temp_root)
+            receipt = root / "validation-receipt.json"
+            receipt.write_text("prior receipt bytes\n", encoding="utf-8")
+            state = {
+                "source_sha256": "stable-source",
+                "tree_sha256": "stable-tree",
+            }
+            before_fds = len(os.listdir("/dev/fd"))
+            transaction = (
+                release_state.begin_validation_receipt_transaction(receipt)
+            )
+            try:
+                self.assertFalse(receipt.exists())
+                prior_backups = list(
+                    root.glob(f".{receipt.name}.backup-*")
+                )
+                self.assertEqual(1, len(prior_backups))
+                self.assertEqual(
+                    "prior receipt bytes\n",
+                    prior_backups[0].read_text(encoding="utf-8"),
+                )
+
+                with patch.object(
+                    release_state,
+                    "validation_state",
+                    return_value=state,
+                ):
+                    payload = release_state.write_validation_receipt(
+                        root / "generated",
+                        receipt,
+                        transaction=transaction,
+                    )
+
+                self.assertEqual("stable-source", payload["source_sha256"])
+                self.assertTrue(receipt.is_file())
+                self.assertFalse(transaction.closed)
+                os.fstat(transaction.parent_descriptor)
+                self.assertIn(
+                    str(prior_backups[0]),
+                    release_state.retained_validation_receipt_locations(
+                        transaction
+                    ),
+                )
+            finally:
+                release_state.close_validation_receipt_transaction(
+                    transaction
+                )
+
+            self.assertTrue(transaction.closed)
+            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
+
+    def test_post_rename_sync_failure_reports_prior_backup(self) -> None:
+        with TemporaryDirectory(prefix="release-receipt-sync-") as temp_root:
+            root = Path(temp_root)
+            receipt = root / "validation-receipt.json"
+            receipt.write_text("prior receipt bytes\n", encoding="utf-8")
+            real_fsync = release_state.os.fsync
+            before_fds = len(os.listdir("/dev/fd"))
+
+            def sync_then_fail(descriptor: int) -> None:
+                real_fsync(descriptor)
+                raise OSError("forced receipt directory sync failure")
+
+            with patch.object(
+                release_state.os,
+                "fsync",
+                side_effect=sync_then_fail,
+            ), self.assertRaises(OSError) as raised:
+                release_state.begin_validation_receipt_transaction(receipt)
+
+            self.assertFalse(receipt.exists())
+            backups = list(root.glob(f".{receipt.name}.backup-*"))
+            self.assertEqual(1, len(backups))
+            self.assertEqual(
+                "prior receipt bytes\n",
+                backups[0].read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                str(backups[0]),
+                "\n".join(getattr(raised.exception, "__notes__", ())),
+            )
+            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
+
+    def test_late_public_receipt_is_not_replaced(self) -> None:
+        with TemporaryDirectory(prefix="release-receipt-late-") as temp_root:
+            root = Path(temp_root)
+            receipt = root / "validation-receipt.json"
+            state = {
+                "source_sha256": "stable-source",
+                "tree_sha256": "stable-tree",
+            }
+            real_rename = release_state.atomic_rename_at_no_replace
+            appeared = False
+
+            def create_public_name_before_placement(
+                source_descriptor,
+                source_name,
+                destination_descriptor,
+                destination_name,
+            ):
+                nonlocal appeared
+                if (
+                    destination_name == receipt.name
+                    and source_name.startswith(f".{receipt.name}.tmp-")
+                ):
+                    appeared = True
+                    receipt.write_text(
+                        "late receipt bytes\n",
+                        encoding="utf-8",
+                    )
+                return real_rename(
+                    source_descriptor,
+                    source_name,
+                    destination_descriptor,
+                    destination_name,
+                )
+
+            with patch.object(
+                release_state,
+                "validation_state",
+                return_value=state,
+            ), patch.object(
+                release_state,
+                "atomic_rename_at_no_replace",
+                side_effect=create_public_name_before_placement,
+            ), self.assertRaises(FileExistsError) as raised:
+                release_state.write_validation_receipt(
+                    root / "generated",
+                    receipt,
+                )
+
+            self.assertTrue(appeared)
+            self.assertEqual(
+                "late receipt bytes\n",
+                receipt.read_text(encoding="utf-8"),
+            )
+            retained = list(root.glob(f".{receipt.name}.tmp-*"))
+            self.assertEqual(1, len(retained))
+            self.assertIn(
+                str(retained[0]),
+                "\n".join(getattr(raised.exception, "__notes__", ())),
+            )
+
+    def test_parent_move_before_publication_preserves_replacement(self) -> None:
+        with TemporaryDirectory(prefix="release-receipt-parent-") as temp_root:
+            outer = Path(temp_root)
+            accepted_parent = outer / "accepted"
+            accepted_parent.mkdir()
+            moved_parent = outer / "accepted-moved"
+            receipt = accepted_parent / "validation-receipt.json"
+            state = {
+                "source_sha256": "stable-source",
+                "tree_sha256": "stable-tree",
+            }
+            real_publish = release_state._publish_receipt_temporary
+            replacement_marker = accepted_parent / "valuable.txt"
+
+            def move_parent_before_publication(transaction):
+                accepted_parent.rename(moved_parent)
+                accepted_parent.mkdir()
+                replacement_marker.write_text(
+                    "preserve replacement\n",
+                    encoding="utf-8",
+                )
+                return real_publish(transaction)
+
+            with patch.object(
+                release_state,
+                "validation_state",
+                return_value=state,
+            ), patch.object(
+                release_state,
+                "_publish_receipt_temporary",
+                side_effect=move_parent_before_publication,
+            ), self.assertRaisesRegex(
+                release_state.ReceiptTransactionError,
+                "receipt parent changed",
+            ) as raised:
+                release_state.write_validation_receipt(
+                    outer / "generated",
+                    receipt,
+                )
+
+            self.assertEqual(
+                "preserve replacement\n",
+                replacement_marker.read_text(encoding="utf-8"),
+            )
+            self.assertFalse(receipt.exists())
+            retained = list(
+                moved_parent.glob(f".{receipt.name}.tmp-*")
+            )
+            self.assertEqual(1, len(retained))
+            self.assertIn(
+                str(retained[0]),
+                "\n".join(getattr(raised.exception, "__notes__", ())),
+            )
+
+    def test_changed_temporary_name_is_preserved_and_fds_close(self) -> None:
+        with TemporaryDirectory(prefix="release-receipt-temp-") as temp_root:
+            root = Path(temp_root)
+            receipt = root / "validation-receipt.json"
+            moved_temporary = root / ".accepted-receipt-temporary"
+            state = {
+                "source_sha256": "stable-source",
+                "tree_sha256": "stable-tree",
+            }
+            real_create = release_state._create_receipt_temporary
+            replacement: Path | None = None
+            before_fds = len(os.listdir("/dev/fd"))
+
+            def replace_temporary_name(transaction, payload):
+                nonlocal replacement
+                real_create(transaction, payload)
+                assert transaction.temporary_name is not None
+                temporary = root / transaction.temporary_name
+                temporary.rename(moved_temporary)
+                replacement = temporary
+                replacement.write_text(
+                    "preserve replacement temp\n",
+                    encoding="utf-8",
+                )
+
+            with patch.object(
+                release_state,
+                "validation_state",
+                return_value=state,
+            ), patch.object(
+                release_state,
+                "_create_receipt_temporary",
+                side_effect=replace_temporary_name,
+            ), self.assertRaisesRegex(
+                release_state.ReceiptTransactionError,
+                "temporary changed before publication",
+            ) as raised:
+                release_state.write_validation_receipt(
+                    root / "generated",
+                    receipt,
+                )
+
+            self.assertIsNotNone(replacement)
+            assert replacement is not None
+            self.assertEqual(
+                "preserve replacement temp\n",
+                replacement.read_text(encoding="utf-8"),
+            )
+            self.assertTrue(moved_temporary.is_file())
+            self.assertFalse(receipt.exists())
+            self.assertIn(
+                str(moved_temporary),
+                "\n".join(getattr(raised.exception, "__notes__", ())),
+            )
+            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
+
+    def test_close_interruption_does_not_replace_publication_failure(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="release-receipt-close-") as temp_root:
+            root = Path(temp_root)
+            receipt = root / "validation-receipt.json"
+            state = {
+                "source_sha256": "stable-source",
+                "tree_sha256": "stable-tree",
+            }
+            primary = KeyboardInterrupt("receipt creation interrupted")
+            close_interruption = SystemExit("receipt close interrupted")
+            real_create = release_state._create_receipt_temporary
+            real_close = os.close
+            close_calls: list[int] = []
+            before_fds = len(os.listdir("/dev/fd"))
+
+            def create_then_interrupt(transaction, payload):
+                real_create(transaction, payload)
+                raise primary
+
+            def close_all_with_first_interruption(descriptor):
+                close_calls.append(descriptor)
+                real_close(descriptor)
+                if len(close_calls) == 1:
+                    raise close_interruption
+
+            with patch.object(
+                release_state,
+                "validation_state",
+                return_value=state,
+            ), patch.object(
+                release_state,
+                "_create_receipt_temporary",
+                side_effect=create_then_interrupt,
+            ), patch.object(
+                release_state.os,
+                "close",
+                side_effect=close_all_with_first_interruption,
+            ), self.assertRaises(KeyboardInterrupt) as raised:
+                release_state.write_validation_receipt(
+                    root / "generated",
+                    receipt,
+                )
+
+            self.assertIs(primary, raised.exception)
+            self.assertEqual(2, len(close_calls))
+            self.assertEqual(2, len(set(close_calls)))
+            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
+            self.assertIn(
+                "descriptor finalization also encountered: SystemExit",
+                "\n".join(getattr(raised.exception, "__notes__", ())),
+            )
+
+    def test_same_inode_temporary_byte_change_is_preserved_and_rejected(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="release-receipt-bytes-") as temp_root:
+            root = Path(temp_root)
+            receipt = root / "validation-receipt.json"
+            state = {
+                "source_sha256": "stable-source",
+                "tree_sha256": "stable-tree",
+            }
+            real_publish = release_state._publish_receipt_temporary
+            changed_temporary: Path | None = None
+            before_fds = len(os.listdir("/dev/fd"))
+
+            def change_temporary_bytes(transaction):
+                nonlocal changed_temporary
+                assert transaction.temporary_name is not None
+                changed_temporary = root / transaction.temporary_name
+                before = changed_temporary.stat()
+                changed_temporary.write_bytes(b"changed temporary bytes\n")
+                after = changed_temporary.stat()
+                self.assertEqual(
+                    (before.st_dev, before.st_ino),
+                    (after.st_dev, after.st_ino),
+                )
+                return real_publish(transaction)
+
+            with patch.object(
+                release_state,
+                "validation_state",
+                return_value=state,
+            ), patch.object(
+                release_state,
+                "_publish_receipt_temporary",
+                side_effect=change_temporary_bytes,
+            ), self.assertRaisesRegex(
+                release_state.ReceiptTransactionError,
+                "temporary changed before publication",
+            ) as raised:
+                release_state.write_validation_receipt(
+                    root / "generated",
+                    receipt,
+                )
+
+            self.assertIsNotNone(changed_temporary)
+            assert changed_temporary is not None
+            self.assertFalse(receipt.exists())
+            self.assertEqual(
+                b"changed temporary bytes\n",
+                changed_temporary.read_bytes(),
+            )
+            self.assertIn(
+                str(changed_temporary),
+                "\n".join(getattr(raised.exception, "__notes__", ())),
+            )
+            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
+
+    def test_public_receipt_change_after_placement_is_reported_and_rejected(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="release-receipt-public-") as temp_root:
+            root = Path(temp_root)
+            receipt = root / "validation-receipt.json"
+            displaced_receipt = root / "validated-receipt-displaced.json"
+            replacement_bytes = b"replacement receipt bytes\n"
+            state = {
+                "source_sha256": "stable-source",
+                "tree_sha256": "stable-tree",
+            }
+            real_fsync = release_state.os.fsync
+            fsync_calls = 0
+            changed = False
+            before_fds = len(os.listdir("/dev/fd"))
+
+            def change_public_name_before_final_sync(descriptor):
+                nonlocal fsync_calls, changed
+                fsync_calls += 1
+                if fsync_calls == 4:
+                    receipt.rename(displaced_receipt)
+                    receipt.write_bytes(replacement_bytes)
+                    changed = True
+                return real_fsync(descriptor)
+
+            with patch.object(
+                release_state,
+                "validation_state",
+                return_value=state,
+            ), patch.object(
+                release_state.os,
+                "fsync",
+                side_effect=change_public_name_before_final_sync,
+            ), self.assertRaisesRegex(
+                release_state.ReceiptTransactionError,
+                "changed after publication",
+            ) as raised:
+                release_state.write_validation_receipt(
+                    root / "generated",
+                    receipt,
+                )
+
+            self.assertTrue(changed)
+            self.assertEqual(replacement_bytes, receipt.read_bytes())
+            self.assertTrue(displaced_receipt.is_file())
+            notes = "\n".join(getattr(raised.exception, "__notes__", ()))
+            self.assertIn(str(displaced_receipt), notes)
+            self.assertIn(str(receipt), notes)
+            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
 
     def test_untracked_inventory_ignores_worktree_fsmonitor_config(self) -> None:
         with TemporaryDirectory(prefix="release-fsmonitor-") as temp_root:

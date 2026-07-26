@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import ctypes
 from functools import lru_cache
 import hashlib
 import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import time
 import urllib.request
 import yaml
@@ -26,6 +28,74 @@ UPSTREAM_REPO_URL = "https://github.com/dylantmoore/stata-skill.git"
 UPSTREAM_REPO_DIR = RAW_ROOT / "upstream" / "stata-skill"
 STATA_ROOT = Path("/Applications/Stata")
 STATA_ADO_BASE = STATA_ROOT / "ado" / "base"
+
+
+def atomic_rename_at_no_replace(
+    source_descriptor: int,
+    source_name: str,
+    destination_descriptor: int,
+    destination_name: str,
+) -> None:
+    """Atomically move one descriptor-relative entry only when target is absent."""
+
+    for label, name in (
+        ("source", source_name),
+        ("destination", destination_name),
+    ):
+        if not name or name in {".", ".."} or Path(name).name != name:
+            raise ValueError(
+                f"atomic no-replace {label} must be one path component"
+            )
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        try:
+            rename_exclusive = libc.renameatx_np
+        except AttributeError as error:
+            raise RuntimeError(
+                "This macOS runtime lacks descriptor-relative atomic "
+                "no-replace rename support"
+            ) from error
+        flag = 0x00000004  # RENAME_EXCL from <sys/stdio.h>
+    elif sys.platform.startswith("linux"):
+        try:
+            rename_exclusive = libc.renameat2
+        except AttributeError as error:
+            raise RuntimeError(
+                "This Linux runtime lacks descriptor-relative atomic "
+                "no-replace rename support"
+            ) from error
+        flag = 1  # RENAME_NOREPLACE from <linux/fs.h>
+    else:
+        raise RuntimeError(
+            "Descriptor-relative atomic no-replace rename is supported only "
+            "on macOS and Linux"
+        )
+    rename_exclusive.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    rename_exclusive.restype = ctypes.c_int
+    result = rename_exclusive(
+        source_descriptor,
+        os.fsencode(source_name),
+        destination_descriptor,
+        os.fsencode(destination_name),
+        flag,
+    )
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(
+            error_number,
+            os.strerror(error_number),
+            destination_name,
+        )
+    os.fsync(destination_descriptor)
+    if source_descriptor != destination_descriptor:
+        os.fsync(source_descriptor)
 
 
 def ensure_dir(path: Path) -> Path:
@@ -358,8 +428,9 @@ def run_stata_do(
     if log_path.exists():
         log_path.unlink()
 
+    child_do_file = Path(os.path.relpath(do_file, start=cwd))
     process = subprocess.Popen(
-        [str(stata_binary), "-e", "do", str(do_file)],
+        [str(stata_binary), "-e", "do", str(child_do_file)],
         cwd=str(cwd),
         env={**os.environ, "PWD": str(cwd)},
         stdout=subprocess.PIPE,
