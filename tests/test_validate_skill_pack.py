@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from contextlib import chdir, contextmanager
 from pathlib import Path
 from subprocess import CompletedProcess
 from tempfile import TemporaryDirectory
+import os
 import sys
 import unittest
 from unittest.mock import Mock, patch
@@ -12,6 +14,29 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import validate_skill_pack  # noqa: E402
+
+
+@contextmanager
+def supplied_validation_workspace(work_root: Path):
+    workspace = validate_skill_pack._retain_existing_validation_workspace(
+        work_root
+    )
+    try:
+        with patch.object(
+            validate_skill_pack,
+            "_create_validation_workspace",
+            return_value=workspace,
+        ):
+            yield workspace
+    finally:
+        for descriptor in (
+            workspace.work_descriptor,
+            workspace.transaction_descriptor,
+        ):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
 
 class ValidateCoreTests(unittest.TestCase):
@@ -97,6 +122,104 @@ class ValidateCoreTests(unittest.TestCase):
             self.assertEqual(1, len(results))
             self.assertFalse(results[0][1])
 
+    def test_validate_packages_uses_child_relative_plus_path(self) -> None:
+        with TemporaryDirectory(prefix="validate-package-path-") as temp_root:
+            root = Path(temp_root)
+            entry = {
+                "slug": "sample",
+                "install_commands": [],
+                "preflight_commands": [],
+                "smoke_test": "display 1",
+            }
+            observed_do_text = ""
+
+            def fake_run_stata_do(
+                stata_binary: Path,
+                do_file: Path,
+                cwd: Path,
+                completion_marker: str,
+                timeout_seconds: int = 180,
+            ) -> tuple[CompletedProcess[str], Path]:
+                nonlocal observed_do_text
+                del stata_binary, timeout_seconds
+                observed_do_text = do_file.read_text(encoding="utf-8")
+                log_path = cwd / f"{do_file.stem}.log"
+                log_path.write_text(
+                    f"PASS: sample\n{completion_marker}\n",
+                    encoding="utf-8",
+                )
+                return CompletedProcess(["stata"], 0, "", ""), log_path
+
+            with chdir(root), patch.object(
+                validate_skill_pack,
+                "package_content_entries",
+                return_value=[entry],
+            ), patch.object(
+                validate_skill_pack,
+                "run_stata_do",
+                side_effect=fake_run_stata_do,
+            ), patch.object(
+                validate_skill_pack,
+                "diagnostics_alias_check",
+                return_value=(True, ""),
+            ):
+                results = validate_skill_pack.validate_packages(
+                    Path("/fake/stata"),
+                    Path("."),
+                )
+
+            self.assertTrue(results[0][1])
+            self.assertIn('sysdir set PLUS "plus"', observed_do_text)
+            self.assertNotIn(
+                'sysdir set PLUS "packages/sample/plus"',
+                observed_do_text,
+            )
+
+    def test_plugin_runtime_uses_path_relative_to_child_workdir(self) -> None:
+        with TemporaryDirectory(prefix="validate-plugin-path-") as temp_root:
+            root = Path(temp_root)
+            plugin_path = Path("plugins/compile/hello.plugin")
+            observed_do_text = ""
+
+            def fake_run_stata_do(
+                stata_binary: Path,
+                do_file: Path,
+                cwd: Path,
+                completion_marker: str,
+                timeout_seconds: int = 30,
+            ) -> tuple[CompletedProcess[str], Path]:
+                nonlocal observed_do_text
+                del stata_binary, timeout_seconds
+                observed_do_text = do_file.read_text(encoding="utf-8")
+                log_path = cwd / f"{do_file.stem}.log"
+                log_path.write_text(
+                    f"PASS: plugin-smoke\n{completion_marker}\n",
+                    encoding="utf-8",
+                )
+                return CompletedProcess(["stata"], 0, "", ""), log_path
+
+            with chdir(root):
+                plugin_path.parent.mkdir(parents=True)
+                plugin_path.write_bytes(b"plugin")
+                with patch.object(
+                    validate_skill_pack,
+                    "run_stata_do",
+                    side_effect=fake_run_stata_do,
+                ):
+                    success, _ = (
+                        validate_skill_pack.validate_plugin_runtime(
+                            Path("/fake/stata"),
+                            Path("."),
+                            plugin_path,
+                        )
+                    )
+
+            self.assertTrue(success)
+            self.assertIn(
+                'plugin using("../compile/hello.plugin")',
+                observed_do_text,
+            )
+
 
 class CliValidationTests(unittest.TestCase):
     def test_any_failed_suite_makes_main_nonzero_without_short_circuiting(self) -> None:
@@ -113,9 +236,7 @@ class CliValidationTests(unittest.TestCase):
                 validate_skill_pack,
                 "validate_packages",
                 return_value=[("selected", True, "package passed")],
-            ) as validate_packages, patch.object(
-                validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
-            ):
+            ) as validate_packages, supplied_validation_workspace(work_root):
                 exit_code = validate_skill_pack.main(
                     ["--suite", "core", "--suite", "packages", "--package", "selected"]
                 )
@@ -123,7 +244,7 @@ class CliValidationTests(unittest.TestCase):
             self.assertEqual(1, exit_code)
             validate_core.assert_called_once()
             validate_packages.assert_called_once()
-            self.assertFalse(work_root.exists())
+            self.assertTrue(work_root.is_dir())
 
     def test_failed_package_result_makes_main_nonzero(self) -> None:
         with TemporaryDirectory(prefix="validation-parent-") as parent:
@@ -138,9 +259,7 @@ class CliValidationTests(unittest.TestCase):
                     ("failed-package", False, "install failed"),
                     ("passing-package", True, ""),
                 ],
-            ), patch.object(
-                validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
-            ):
+            ), supplied_validation_workspace(work_root):
                 exit_code = validate_skill_pack.main(["--suite", "packages"])
 
             self.assertEqual(1, exit_code)
@@ -154,9 +273,7 @@ class CliValidationTests(unittest.TestCase):
                 validate_skill_pack, "detect_stata_binary", return_value=Path("/fake/stata")
             ), patch.object(
                 validate_skill_pack, "validate_packages", package_validator
-            ), patch.object(
-                validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
-            ):
+            ), supplied_validation_workspace(work_root):
                 exit_code = validate_skill_pack.main(
                     [
                         "--suite",
@@ -175,7 +292,7 @@ class CliValidationTests(unittest.TestCase):
         with TemporaryDirectory(prefix="validation-parent-") as parent:
             work_root = Path(parent) / "run"
             work_root.mkdir()
-            plugin_path = work_root / "plugins" / "hello.plugin"
+            plugin_path = Path("plugins") / "hello.plugin"
             compile_validator = Mock(return_value=(True, "compiled", plugin_path))
             runtime_validator = Mock(return_value=(True, "executed"))
             with patch.object(validate_skill_pack, "lint_repo", return_value=[]), patch.object(
@@ -192,9 +309,7 @@ class CliValidationTests(unittest.TestCase):
                 validate_skill_pack, "validate_plugin_compile", compile_validator
             ), patch.object(
                 validate_skill_pack, "validate_plugin_runtime", runtime_validator
-            ), patch.object(
-                validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
-            ):
+            ), supplied_validation_workspace(work_root):
                 exit_code = validate_skill_pack.main(["--suite", "default"])
 
             self.assertEqual(0, exit_code)
@@ -209,9 +324,7 @@ class CliValidationTests(unittest.TestCase):
                 validate_skill_pack, "detect_stata_binary", return_value=Path("/fake/stata")
             ), patch.object(
                 validate_skill_pack, "validate_packages", return_value=[]
-            ), patch.object(
-                validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
-            ):
+            ), supplied_validation_workspace(work_root):
                 exit_code = validate_skill_pack.main(["--suite", "packages"])
 
             self.assertEqual(1, exit_code)
@@ -229,15 +342,13 @@ class CliValidationTests(unittest.TestCase):
                 validate_skill_pack, "validate_plugin_compile", compile_validator
             ), patch.object(
                 validate_skill_pack, "validate_plugin_runtime", runtime_validator
-            ), patch.object(
-                validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
-            ):
+            ), supplied_validation_workspace(work_root):
                 exit_code = validate_skill_pack.main(["--suite", "plugin-runtime"])
 
             self.assertEqual(0, exit_code)
             compile_validator.assert_called_once()
             runtime_validator.assert_called_once_with(
-                Path("/fake/stata"), work_root, plugin_path
+                Path("/fake/stata"), Path("."), plugin_path
             )
 
     def test_failed_plugin_compile_is_nonzero_and_blocks_runtime(self) -> None:
@@ -253,9 +364,7 @@ class CliValidationTests(unittest.TestCase):
                 return_value=(False, "compile failed", None),
             ), patch.object(
                 validate_skill_pack, "validate_plugin_runtime", runtime_validator
-            ), patch.object(
-                validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
-            ):
+            ), supplied_validation_workspace(work_root):
                 exit_code = validate_skill_pack.main(
                     ["--suite", "plugin-runtime"]
                 )
@@ -273,9 +382,7 @@ class CliValidationTests(unittest.TestCase):
                 validate_skill_pack,
                 "validate_core",
                 return_value=[("sample", False, "failed")],
-            ), patch.object(
-                validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
-            ):
+            ), supplied_validation_workspace(work_root):
                 exit_code = validate_skill_pack.main(
                     ["--suite", "core", "--keep-workdir"]
                 )
@@ -283,7 +390,7 @@ class CliValidationTests(unittest.TestCase):
             self.assertEqual(1, exit_code)
             self.assertTrue(work_root.is_dir())
 
-    def test_keep_workdir_does_not_preserve_successful_run(self) -> None:
+    def test_successful_run_is_retained_for_explicit_cleanup(self) -> None:
         with TemporaryDirectory(prefix="validation-parent-") as parent:
             work_root = Path(parent) / "successful"
             work_root.mkdir()
@@ -293,17 +400,15 @@ class CliValidationTests(unittest.TestCase):
                 validate_skill_pack,
                 "validate_core",
                 return_value=[("sample", True, "")],
-            ), patch.object(
-                validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
-            ):
+            ), supplied_validation_workspace(work_root):
                 exit_code = validate_skill_pack.main(
                     ["--suite", "core", "--keep-workdir"]
                 )
 
             self.assertEqual(0, exit_code)
-            self.assertFalse(work_root.exists())
+            self.assertTrue(work_root.is_dir())
 
-    def test_failed_run_is_removed_without_keep_workdir(self) -> None:
+    def test_failed_run_is_retained_without_keep_workdir(self) -> None:
         with TemporaryDirectory(prefix="validation-parent-") as parent:
             work_root = Path(parent) / "failed"
             work_root.mkdir()
@@ -313,13 +418,11 @@ class CliValidationTests(unittest.TestCase):
                 validate_skill_pack,
                 "validate_core",
                 return_value=[("sample", False, "failed")],
-            ), patch.object(
-                validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
-            ):
+            ), supplied_validation_workspace(work_root):
                 exit_code = validate_skill_pack.main(["--suite", "core"])
 
             self.assertEqual(1, exit_code)
-            self.assertFalse(work_root.exists())
+            self.assertTrue(work_root.is_dir())
 
 
 class DiagnosticSanitizationTests(unittest.TestCase):

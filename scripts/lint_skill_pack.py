@@ -15,6 +15,7 @@ from libskillpack import (
     MANIFEST_ROOT,
     PROMPT_CASES_PATH,
     REPO_ROOT,
+    UPSTREAM_REPO_URL,
     iter_content_entries,
     load_skill_config,
     read_text,
@@ -608,8 +609,11 @@ def lint_upstream_lock(entries: list[tuple[str, Path, dict]]) -> list[str]:
         errors.append(
             f"{path}: repository commit drift requires explicit lock review"
         )
-    if not str(repository.get("url", "")).startswith("https://"):
-        errors.append(f"{path}: repository.url must use HTTPS")
+    if repository.get("url") != UPSTREAM_REPO_URL:
+        errors.append(
+            f"{path}: repository.url must exactly match the configured upstream "
+            f"repository {UPSTREAM_REPO_URL}"
+        )
     files = lock.get("files")
     if not isinstance(files, dict):
         return [*errors, f"{path}: files must be a mapping"]
@@ -856,16 +860,22 @@ def tree_snapshot(root: Path) -> dict[str, bytes]:
 def lint_generated_drift() -> list[str]:
     if not BUILD_ROOT.exists():
         return []
-    from render_skills import render_all
+    from render_skills import _retained_workspace_scope, render_all
 
-    with tempfile.TemporaryDirectory(prefix="stata-render-check-") as temp_root:
-        expected_root = Path(temp_root) / "generated"
-        try:
+    retained_root = Path(
+        tempfile.mkdtemp(prefix="stata-render-check-")
+    ).resolve()
+    try:
+        with _retained_workspace_scope(
+            retained_root,
+            "generated-drift",
+        ):
+            expected_root = retained_root / "generated"
             render_all(output_root=expected_root)
-        except Exception as error:
-            return [f"generated render failed: {error}"]
-        expected = tree_snapshot(expected_root)
-        actual = tree_snapshot(BUILD_ROOT)
+            expected = tree_snapshot(expected_root)
+            actual = tree_snapshot(BUILD_ROOT)
+    except Exception as error:
+        return [f"generated render failed: {error}"]
     if expected == actual:
         return []
     missing = sorted(set(expected) - set(actual))

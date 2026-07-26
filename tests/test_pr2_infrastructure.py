@@ -170,6 +170,41 @@ class ContentSchemaTests(unittest.TestCase):
         self.assertLess(text.index("ssc install sample"), text.index("which sample"))
         self.assertLess(text.index("ado describe sample"), text.index("\nsample\n"))
 
+    def test_upstream_lock_repository_must_match_configured_repository(self) -> None:
+        with TemporaryDirectory(prefix="upstream-lock-url-") as temp_root:
+            lock_root = Path(temp_root)
+            (lock_root / "upstream.yaml").write_text(
+                yaml.safe_dump(
+                    {
+                        "schema_version": 1,
+                        "repository": {
+                            "url": "https://example.invalid/other.git",
+                            "commit": "a" * 40,
+                            "expected_commit": "a" * 40,
+                        },
+                        "files": {},
+                    },
+                    sort_keys=False,
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.multiple(
+                lint_skill_pack,
+                LOCK_ROOT=lock_root,
+                UPSTREAM_REPO_URL="https://example.invalid/configured.git",
+            ):
+                errors = lint_skill_pack.lint_upstream_lock([])
+
+        self.assertTrue(
+            any(
+                "repository.url must exactly match the configured upstream repository"
+                in error
+                for error in errors
+            ),
+            errors,
+        )
+
 
 class DeterministicRenderTests(unittest.TestCase):
     @staticmethod

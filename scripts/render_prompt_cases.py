@@ -11,6 +11,7 @@ from libskillpack import (
     PROMPT_CASES_PATH,
     iter_content_entries,
     load_skill_config,
+    read_yaml,
     write_yaml,
 )
 
@@ -206,11 +207,25 @@ def canonical_cases() -> list[dict]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, default=PROMPT_CASES_PATH)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="Fail if the checked structured cases differ from canonical content.",
+    )
     args = parser.parse_args(argv)
     payload = {
         "schema_version": 1,
         "cases": [*canonical_cases(), *BOUNDARY_CASES],
     }
+    if args.check:
+        if read_yaml(args.output) != payload:
+            print(
+                f"ERROR: {args.output} is stale; run "
+                "scripts/render_prompt_cases.py"
+            )
+            return 1
+        print(f"Structured prompt cases are current: {len(payload['cases'])}")
+        return 0
     write_yaml(args.output, payload)
     print(f"Wrote {args.output} with {len(payload['cases'])} structured cases")
     return 0

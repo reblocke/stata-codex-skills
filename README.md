@@ -36,6 +36,22 @@ Generated skills are written to `build/generated/` and published into:
 - `~/.codex/skills/stata-packages`
 - `~/.codex/skills/stata-c-plugins`
 
+If `CODEX_HOME` is set, the default publication root is
+`$CODEX_HOME/skills/`. Custom publication roots must resolve outside this
+repository, its Git metadata, and `build/generated/`. The final destination
+must be owned by the effective user and must not be group- or other-writable;
+writable ancestors are rejected unless the ancestor is sticky and the next
+existing child is owned by the effective user.
+Publication holds a kernel advisory lock on that destination directory and
+keeps `.stata-codex-skills-publish.lock` as a protocol sentinel. Unresolved
+`.stata-codex-skills-publish-*` recovery directories block later publication
+until they are reviewed and removed. A clean transaction failure restores the
+accepted prior skill directories. If rollback or cleanup cannot prove that a
+directory still contains only transaction-owned bytes, the command preserves
+the complete recovery directory and reports its path instead of deleting
+uncertain state. Verify the installed skills and retained backup or staged
+content before manually removing a reported recovery directory.
+
 ## Design principles
 
 - Treat the YAML files under `content/` as the source of truth.
@@ -70,26 +86,23 @@ Also note:
 
 ## Requirements
 
-- macOS with a local Stata install in `/Applications/Stata`
-- A working Python 3.11+ with `PyYAML` and `Jinja2`
-- Network access for:
-  - cloning or refreshing the upstream GitHub repo
-  - downloading plugin SDK sample files from `stata.com`
-  - installing community packages during validation
+- `uv` 0.11.11 (enforced by `pyproject.toml` and pinned in CI)
+- Python 3.11 or newer, installed or managed by `uv`
+- Git
 
-The checked-in `Makefile` currently defaults to:
+`make build` and `make check` do not require Stata, the upstream checkout, or
+package-network access after `make bootstrap` has installed the frozen Python
+environment. The build gate first checks `pyproject.toml` against `uv.lock`
+offline, so dependency edits without a reviewed lock update fail.
 
-```bash
-/opt/anaconda3/bin/python3
-```
+The default licensed validation additionally requires:
 
-That path is machine-specific. On any machine where it does not exist, or where you want to use a different interpreter, override `PYTHON` explicitly:
+- macOS with Stata under `/Applications/Stata`
+- network access for isolated community-package installation
+- `clang` and network access to the checksum-pinned plugin SDK sources
 
-```bash
-make PYTHON=$(which python3) check
-```
-
-If you change the checked-in `Makefile`, keep it consistent with your local Python setup.
+Upstream comparison refreshes require GitHub access. Plugin execution is an
+optional local integration test.
 
 ## Quick start
 
@@ -97,43 +110,72 @@ Render the reviewed content and run the offline checks:
 
 ```bash
 cd ~/src/stata-codex-skills
-PYTHON=$(which python3)
-make PYTHON="$PYTHON" render check
+make bootstrap
+make doctor
+make check
 ```
 
 Run licensed/network integration validation before publishing:
 
 ```bash
-make PYTHON="$PYTHON" validate
-make PYTHON="$PYTHON" publish
+make validate
+make publish
 ```
+
+`make validate` invalidates any prior receipt before running `make check`, then
+writes a new digest-bound receipt only after the complete default gate
+succeeds. Receipt invalidation and publication use no-replace filesystem
+operations. A prior receipt or an unpublished temporary receipt is retained
+under the exact hidden backup or temporary path printed by the validator; a
+same-name receipt that appears later is left untouched. To invalidate a
+receipt without running the complete gate, use:
+
+```bash
+uv run --frozen python scripts/validate_skill_pack.py --invalidate-receipt
+```
+
+`make publish` requires the current receipt to be less than one hour old,
+rejects both nonignored untracked files and ignored executable inputs, and
+requires the tracked source paths and bytes and exact staged tree to remain
+unchanged. Schema 3 receipts also require the deterministic publication modes
+used by the renderer and publisher: `0755` for generated skill directories and
+`0644` for generated skill files. A generated-tree permission change requires
+a fresh render and validation before publication. Existing installed skill
+trees with other modes must be corrected to this policy, or moved aside after
+review, before a later publication can replace them.
 
 Useful targeted validation commands:
 
 ```bash
-make PYTHON="$PYTHON" check
-make PYTHON="$PYTHON" validate-core
-make PYTHON="$PYTHON" validate-packages
-make PYTHON="$PYTHON" validate-packages PACKAGES="reghdfe rdrobust"
-make PYTHON="$PYTHON" validate-plugin-compile
-make PYTHON="$PYTHON" validate-plugin-runtime
+make check
+make validate-core
+make validate-packages
+make validate-packages PACKAGES="reghdfe rdrobust"
+make validate-plugin-compile
+make validate-plugin-runtime
 ```
 
 The validator CLI accepts repeatable suites and package selections:
 
 ```bash
-$PYTHON scripts/validate_skill_pack.py --suite static --suite core
-$PYTHON scripts/validate_skill_pack.py --suite packages \
+uv run --frozen python scripts/validate_skill_pack.py \
+  --suite static --suite core
+uv run --frozen python scripts/validate_skill_pack.py --suite packages \
   --package reghdfe --package rdrobust
-$PYTHON scripts/validate_skill_pack.py --suite plugin-runtime --keep-workdir
+uv run --frozen python scripts/validate_skill_pack.py \
+  --suite plugin-runtime --keep-workdir
 ```
 
 `--suite default` is used when no suite is supplied. It runs static checks, the
 core smoke test, every package smoke test, and plugin compilation. It does not
-execute the plugin. `--keep-workdir` preserves a failed run's temporary
-workspace for debugging; successful workspaces are always removed.
+execute the plugin. Every run uses a private `stata-codex-validate-*`
+transaction, retains that transaction root after the run, and prints both its
+exact cleanup path and the inner `work` path for inspection. On a failed run,
+`--keep-workdir` is accepted for compatibility but no longer changes this
+retain-after-every-run behavior. See **Retained transaction cleanup** below.
 
-If this is the first time you have installed the skills on a machine, restart Codex after `make ... publish`.
+If this is the first installation on a machine, restart Codex after
+`make publish`.
 
 ## Deploying on other machines and repositories
 
@@ -181,21 +223,22 @@ Option 2: clone this repo and publish the skills locally:
 ```bash
 git clone https://github.com/reblocke/stata-codex-skills.git ~/src/stata-codex-skills
 cd ~/src/stata-codex-skills
-PYTHON=$(which python3)
-make PYTHON="$PYTHON" render check
-make PYTHON="$PYTHON" validate
-make PYTHON="$PYTHON" publish
+make bootstrap
+make check
+make validate
+make publish
 ```
 
 After `make publish`, the skill folders should exist under `~/.codex/skills/` unless you published to a custom destination. Restart Codex if the skills were not already installed on that machine.
 
 ### Publishing to a non-default Codex home
 
-If the machine uses a custom `CODEX_HOME`, publish there explicitly:
+If the machine uses a custom `CODEX_HOME`, `make publish` honors it
+automatically:
 
 ```bash
-PYTHON=$(which python3)
-$PYTHON scripts/publish_local.py --dest "$CODEX_HOME/skills"
+export CODEX_HOME=/path/to/codex-home
+make publish
 ```
 
 If `CODEX_HOME` is unset, the default location is:
@@ -204,6 +247,9 @@ If `CODEX_HOME` is unset, the default location is:
 ~/.codex/skills
 ```
 
+The resolved Codex home must be outside the repository. This keeps publication
+staging from changing the source digest covered by the validation receipt.
+
 ### Refreshing an existing installation
 
 If the skills are already installed on a machine and you want to update them after pulling new changes:
@@ -211,10 +257,10 @@ If the skills are already installed on a machine and you want to update them aft
 ```bash
 cd ~/src/stata-codex-skills
 git pull
-PYTHON=$(which python3)
-make PYTHON="$PYTHON" render check
-make PYTHON="$PYTHON" validate
-make PYTHON="$PYTHON" publish
+make bootstrap
+make check
+make validate
+make publish
 ```
 
 Licensed Stata and network access are required for `make validate`.
@@ -237,7 +283,7 @@ Not repository-specific:
 If collaborators will use these skills, the minimum setup note to give them is:
 
 1. Clone `stata-codex-skills`.
-2. Run `make PYTHON=$(which python3) render check`, `make PYTHON=$(which python3) validate`, and `make PYTHON=$(which python3) publish`.
+2. Run `make bootstrap`, `make check`, `make validate`, and `make publish`.
 3. Confirm the skill folders exist in `~/.codex/skills/` or `$CODEX_HOME/skills/`.
 4. In the analysis repository, add `AGENTS.md` guidance that names the Stata skills explicitly.
 
@@ -248,32 +294,119 @@ Without step 2, an `AGENTS.md` file can mention the skills but Codex will not be
 When you update the repo, the normal order is:
 
 1. Edit the reviewed YAML files in `content/`.
-2. Regenerate structured cases with `scripts/render_prompt_cases.py`.
-3. `make render`
-4. `make check`
-5. `make validate`
-6. `make publish`
+2. Regenerate structured cases with
+   `uv run --frozen python scripts/render_prompt_cases.py`.
+3. Run `make check`.
+4. Run `make validate`.
+5. Run `make publish`.
+
+`make build` stages and validates the complete three-skill tree beside
+`build/generated/`, then swaps it as one filesystem transaction. A render or
+staged-tree failure leaves the prior generated tree untouched when rollback
+completes. The build refuses tracked entries under canonical
+`build/generated/`, runs a no-follow repository scan before linting or
+rendering, and rejects any overlap between the output root and configuration,
+content, template, or lock inputs. The scan binds tracked, untracked, and
+ignored gate inputs to one stable Git-index snapshot; executable inputs must be
+tracked. Path containment checks use filesystem identities so case aliases on
+case-insensitive filesystems cannot bypass them. The renderer does not
+recursively delete a hidden stage or prior-tree backup after a transaction.
+Instead, it verifies the retained tree and reports its exact path for explicit
+cleanup. This avoids deleting content that appears or changes between
+verification and deletion checkpoints. These render and publication transactions
+restore or preserve state after handled Python exceptions and catchable process
+interruptions; they do not promise durability across sudden power loss, forced
+termination, or storage-device failure. Complete-tree preservation extends
+through the final public-name and private-quarantine checks. `make all` remains
+a compatibility alias for `make check`. Direct `--output-root` renders accept
+absent or empty external directories; an existing target must already have the
+dedicated three-skill generated-tree layout.
+
+### Retained transaction cleanup
+
+Repeated `make build`, `make check`, and validation commands can accumulate
+reported backup, stage, deterministic-render, generated-drift, or
+validation-workspace directories, plus hidden validation-receipt backup or
+temporary files. The deterministic and generated-drift callers retain their
+outer workspace even after success so a late or partial render is not erased
+by an enclosing temporary-directory finalizer. Validation receipt state is
+also retained whenever its ownership or publication cannot be confirmed.
+Removal is an explicit human step:
+
+1. Copy the exact path printed by the command; do not use a wildcard or prefix
+   scan.
+2. Confirm that no build, render, or validation command is still running.
+3. Inspect the reported directory and confirm that no content needs to be
+   recovered.
+4. Remove only the exact backup, stage, caller workspace, validation
+   transaction, or validation-receipt path marked for cleanup, using the
+   operating system's file manager or an exact-path removal command. The
+   separately reported validation `work` path is for inspection; its
+   `stata-codex-validate-*` parent is the cleanup unit.
+
+Filesystem state changes after a command has fully returned are outside that
+completed operation; the explicit quiet-period check above is the deletion
+boundary.
 
 Fetching upstream material, harvesting help, scaffolding candidates, and
 refreshing locks are explicit maintenance operations. Review their ignored
 candidate reports before promoting any source or lock change.
 
+To compare one exact upstream revision:
+
+```bash
+make refresh UPSTREAM_REF=33a7efc85e92cd30edc7b907f1deb9d7038397bc
+```
+
+The refresh first validates the complete reviewed upstream lock, including an
+exact match to the configured repository URL. It clears inherited Git helper
+and configuration variables and checks the dedicated checkout's complete
+`.git` tree before every Git launch: metadata must stay on the checkout device,
+redirecting or special entries are rejected, and mutable files must be singly
+linked. It then checks out the full commit in detached-head state and
+atomically writes only `raw/candidates/upstream-comparison.yaml`; it never
+changes curated content or locks. A verified prior report is moved to a
+uniquely named ignored `.stale` quarantine before refresh, so failed runs
+cannot leave stale evidence at the canonical path. Recovery diagnostics name
+only an identity-verified path, or explicitly state that a displaced
+descriptor-held directory has no verified current pathname. Reports created
+before ownership metadata was added must be reviewed and then moved or deleted
+explicitly before the next refresh. Failed atomic publications retain their
+uniquely named ignored `.tmp` candidate for inspection rather than risk
+deleting a concurrent replacement.
+
 ## What each script does
 
-- `scripts/fetch_upstream.py`: refreshes the ignored upstream checkout and records its exact resulting commit in a review candidate without changing curated content
+- `scripts/fetch_upstream.py`: fetches and detaches at one required full commit, then writes an ignored comparison without changing curated content or locks
 - `scripts/harvest_stata_help.py`: resolves only exact help names or declared globs and writes a reviewable candidate report
 - `scripts/scaffold_content.py`: reports missing or empty curated fields and never rewrites content
-- `scripts/render_skills.py`: renders the three generated skill folders from the YAML content and Jinja templates
+- `scripts/render_skills.py`: renders, validates, and atomically replaces the complete three-skill tree
 - `scripts/render_prompt_cases.py`: deterministically generates structured routing fixtures from every canonical reference plus boundary cases
 - `scripts/refresh_locks.py`: writes ignored lock candidates for explicit review; it never promotes them
 - `scripts/verify_locks.py`: verifies checked provenance locks, with optional live local/network checks
-- `scripts/lint_skill_pack.py`: validates schema quality, exact provenance, locks, prompt cases, generated routing, and metadata
-- `scripts/publish_local.py`: copies generated skill folders into `~/.codex/skills`
-- `scripts/validate_skill_pack.py`: runs static lint, Stata smoke tests, package install tests, and plugin compilation tests
+- `scripts/lint_skill_pack.py`: validates schema quality, exact provenance, locks, prompt cases, generated routing, and metadata; its generated-drift render workspace is retained and reported
+- `scripts/check_determinism.py`: renders twice in clean retained roots, compares byte-level tree digests, and reports the outer workspace for explicit cleanup
+- `scripts/scan_repository.py`: scans tracked and unignored files for generated artifacts, third-party code, and high-confidence secret patterns
+- `scripts/doctor.py`: verifies the pinned uv version and reports offline build and optional licensed-validation prerequisites
+- `scripts/validate_skill_pack.py`: runs static and licensed integration suites and writes the publication receipt after complete default success
+- `scripts/publish_local.py`: stages all three validated skills under the destination filesystem and swaps them with full rollback
 
 ## Validation model
 
-`make check` runs repository lint and Python unit tests without invoking Stata.
+Validation is intentionally divided into four evidence levels:
+
+- Automated static routing and build checks: `make check` runs atomic rendering,
+  schema/lock/generated-drift lint, structured prompt-fixture lint, unit tests,
+  deterministic double rendering, and secret/artifact scanning. It does not
+  invoke Stata or package/upstream networks.
+- Manual fresh-agent forward tests: prompts are given to clean agents and
+  compared with `tests/prompts/cases.yaml`. These tests assess actual routing
+  behavior and are reported separately from static fixture lint.
+- Licensed Stata integration: `make validate` runs all built-in and package
+  smokes plus plugin compilation and records a publication receipt.
+- Optional plugin execution: `make validate-plugin-runtime` explicitly attempts
+  the local loader/runtime path and is excluded from the default gate.
+
 Runtime validation is split into independently selectable suites:
 
 - `static`: YAML, provenance, generated-file, and routing lint
@@ -293,7 +426,11 @@ the validator and corresponding Make target exit nonzero.
 The validator uses bounded network, compiler, subprocess, and Stata timeouts
 and terminates lingering Stata processes. Failed runs print bounded diagnostics
 with repository, home-directory, temporary-path, and Stata license metadata
-sanitized. The workspace is then deleted unless `--keep-workdir` was supplied.
+sanitized. The workspace is verified and retained after every run, and its exact
+path is printed for the explicit cleanup workflow above. If retention
+verification fails, the gate fails without issuing a receipt and reports the
+best descriptor-derived path for inspection. On a failed run, `--keep-workdir`
+is accepted for compatibility and has no additional effect.
 Package tests use isolated temporary `PLUS` and `PERSONAL` paths, and stochastic
 smoke tests use a fixed seed.
 
@@ -303,14 +440,20 @@ before compilation. Plugin execution remains an explicit integration test
 because the official sample currently hangs at the plugin call on this local
 Stata/macOS loader boundary.
 
+GitHub Actions pins the same uv version, performs `uv sync --frozen`, checks
+lock freshness offline, and then runs the same deterministic offline
+`make check` gate. Licensed Stata, package installation, and plugin runtime
+tests remain documented local integrations because CI has no Stata license.
+
 ## Current status as of July 24, 2026
 
 ### Static and core validation
 
 - Static schema, provenance, lock, prompt-case, and generated-drift lint: pass
-- Python unit tests: 38 passed
+- Python unit suite: pass (see the current CI run for the discovered test count)
 - Structured routing cases: 76 (63 canonical plus 13 boundary cases)
 - Fresh-agent forward routing: 76/76 selected the expected route and no forbidden route
+- Deterministic clean double render and repository secret/artifact scan: pass
 - `stata-core`: all 38 content-defined smoke tests passed
 - `stata-core` validator path handling: pass when the repo lives in a path with spaces
 
@@ -378,17 +521,16 @@ Manual plugin repro files used during debugging were written under `tests/tmp/pl
 ## Known caveats
 
 - The repo currently targets a macOS Stata install under `/Applications/Stata`.
-- The checked-in `Makefile` default for `PYTHON` is machine-specific and may need an override on fresh machines.
 - Package install sources change over time, so validation metadata will still need occasional refreshes.
 - Plugin execution under local batch-mode `StataBE` is not yet reliable on this machine.
+- Publication receipts expire after one hour even when the source and generated
+  digests are unchanged; rerun `make validate` before a later publish.
 
-## Next recommended fixes
+## Remaining investigation
 
-The highest-value follow-up changes are:
-
-1. Investigate the plugin runtime hang at the macOS loader boundary before relying on `stata-c-plugins` runtime validation.
-2. Decide whether to make the default `PYTHON` in `Makefile` more portable across machines.
-3. Decide whether to fold package install URLs and dependency policy into a small reference page so future maintenance is more obvious.
+Investigate the plugin runtime hang at the macOS loader boundary before
+relying on `stata-c-plugins` runtime execution. Compilation remains part of the
+default gate, and execution remains explicit.
 
 ## Generated outputs to inspect
 

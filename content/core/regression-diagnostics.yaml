@@ -52,7 +52,8 @@ provenance:
   - ado/base/r/regress_postestimation.sthlp
   - ado/base/r/regress_postestimation_plots.sthlp
   - ado/base/l/linktest.sthlp
-  upstream_files: []
+  upstream_files:
+  - plugins/stata/skills/stata/packages/diagnostics.md
   upstream_only: false
   package_only: false
   reviewed: true

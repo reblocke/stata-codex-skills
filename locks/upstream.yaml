@@ -22,6 +22,8 @@ files:
     sha256: f5d4a312aa59082a5b4da29c15db23841e5f299b78960350859625dafb1fd44b
   plugins/stata/skills/stata/packages/data-manipulation.md:
     sha256: cd68af118b7d72e28e59e2c9b1b12c6ecab58d02cc0ab050e373a3d1d3a445b1
+  plugins/stata/skills/stata/packages/diagnostics.md:
+    sha256: c4417bdaf971cf6dea07f3c14f8dd328dfb8c146d50fb57f6157e8e6b86b0e40
   plugins/stata/skills/stata/packages/did.md:
     sha256: cba87ad7bd411e2632a94660e61b6092bd68e93fee62421d89d6103546c3c11a
   plugins/stata/skills/stata/packages/estout.md:
