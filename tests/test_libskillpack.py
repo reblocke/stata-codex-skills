@@ -753,7 +753,7 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
             if process.returncode is None:
                 libskillpack._force_cleanup_process(process)
 
-    def test_exited_anchored_leader_without_descendants_is_clean(self) -> None:
+    def test_exited_anchored_leader_without_descendants_is_safe(self) -> None:
         with allow_detached_process():
             process = subprocess.Popen(
                 ["/usr/bin/true"],
@@ -777,11 +777,17 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
 
             stopped = libskillpack._stop_process_group(process)
 
-            self.assertFalse(stopped.cleanup_confirmed)
-            self.assertTrue(
-                stopped.permission_denied_after_anchored_exit,
-                stopped.diagnostic,
-            )
+            if sys.platform == "darwin":
+                self.assertFalse(stopped.cleanup_confirmed)
+                self.assertTrue(
+                    stopped.permission_denied_after_anchored_exit,
+                    stopped.diagnostic,
+                )
+            else:
+                self.assertTrue(stopped.cleanup_confirmed, stopped.diagnostic)
+                self.assertFalse(
+                    stopped.permission_denied_after_anchored_exit
+                )
             self.assertFalse(stopped.leader_kill_sent)
             self.assertEqual(0, process.returncode)
         finally:
