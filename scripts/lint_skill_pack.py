@@ -24,6 +24,7 @@ from libskillpack import (
     PROMPT_CASES_PATH,
     REPO_ROOT,
     UPSTREAM_REPO_URL,
+    is_safe_slug,
     iter_content_entries,
     load_skill_config,
     read_text,
@@ -1175,9 +1176,7 @@ def lint_entry(
         return errors
 
     slug = entry.get("slug")
-    if not is_nonempty_string(slug) or not re.fullmatch(
-        r"[a-z0-9]+(?:[-_][a-z0-9]+)*", slug
-    ):
+    if not is_safe_slug(slug):
         errors.append(f"{source_label}: invalid slug")
     elif path.stem != slug:
         errors.append(f"{source_label}: filename must match slug {slug}")
@@ -1862,8 +1861,25 @@ def lint_distribution_locks(
 
     sdk_path = LOCK_ROOT / "plugin-sdk.yaml"
     lock = read_yaml(sdk_path)
+    errors.extend(lint_plugin_sdk_lock_payload(sdk_path, lock))
+    return errors
+
+
+def lint_plugin_sdk_lock_payload(
+    sdk_path: Path,
+    lock: object,
+) -> list[str]:
+    """Validate every SDK download field before it can become a path or URL."""
+
+    errors: list[str] = []
+    if not isinstance(lock, dict):
+        return [f"{sdk_path}: invalid or missing plugin SDK lock schema"]
     sources = lock.get("sources")
-    if lock.get("schema_version") != 1 or not isinstance(sources, list) or not sources:
+    if (
+        lock.get("schema_version") != 1
+        or not isinstance(sources, list)
+        or not sources
+    ):
         errors.append(f"{sdk_path}: invalid or missing plugin SDK lock schema")
     else:
         names: set[str] = set()
@@ -1874,6 +1890,10 @@ def lint_distribution_locks(
             name = source.get("filename")
             if (
                 not is_nonempty_string(name)
+                or name in {".", ".."}
+                or "\x00" in name
+                or Path(name).is_absolute()
+                or Path(name).parts != (name,)
                 or Path(str(name)).name != name
                 or name in names
             ):

@@ -27,20 +27,27 @@ gotchas:
 - Shell quoting differs across operating systems, and untrusted interpolated text can become command injection.
 - A successful process launch does not prove the external command produced complete or valid output.
 - Python or Java state can persist within a session and make reruns depend on earlier imports or objects.
+- python query returns r(111) when Stata has no Python installation configured; treat that as an environment preflight result, not proof that Python integration works.
 - Licensed validation denies child-process creation at launch, so shell and external-executable calls require a separate, explicitly authorized integration test.
 workflows:
 - Query the runtime and versions, test a minimal no-data call, then add explicit paths, arguments, timeouts, and return-code checks.
 - Exchange only required data through temporary files or documented APIs, validate the returned schema, and clean temporary artifacts.
 validation_case: >-
-  Query Stata's configured Python integration without starting an external child process, and require an error-free isolated log.
+  Query Stata's Python integration without starting an external child process,
+  accept only configured metadata or the documented unconfigured-runtime result,
+  and require an error-free isolated log.
 validation_mode: stata
 related_refs: [workflow-best-practices, advanced-programming]
 install_commands: []
 smoke_test: |-
   clear all
-  python query
-  assert inlist(r(initialized), 0, 1)
-  assert "`r(execpath)'" != ""
+  capture quietly python query
+  local python_query_rc = _rc
+  assert inlist(`python_query_rc', 0, 111)
+  if `python_query_rc' == 0 {
+      assert inlist(r(initialized), 0, 1)
+      assert "`r(execpath)'" != ""
+  }
 provenance:
   local_help_topics: [pystata_intro, pystata_integration, shell, java_plugin, javacall]
   local_help_globs: []

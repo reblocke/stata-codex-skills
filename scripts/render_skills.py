@@ -1179,7 +1179,7 @@ def _retained_workspace_scope(
     workspace: Path,
     label: str,
 ) -> Iterator[None]:
-    """Retain and report a caller-owned workspace through open descriptors."""
+    """Remove a clean private workspace; retain and report uncertain state."""
 
     parent: RenderParentHandle | None = None
     anchor_descriptor: int | None = None
@@ -1187,6 +1187,8 @@ def _retained_workspace_scope(
     workspace_identity: tuple[int, int] | None = None
     primary_error: BaseException | None = None
     primary_traceback = None
+    body_succeeded = False
+    workspace_removed = False
     finalization_errors: list[BaseException] = []
     try:
         anchor = _anchor_render_parent(workspace)
@@ -1234,29 +1236,78 @@ def _retained_workspace_scope(
                 f"{label} workspace changed before first use: {workspace}"
             )
         yield
+        body_succeeded = True
     except BaseException as error:
         primary_error = error
         primary_traceback = error.__traceback__
 
-    try:
-        location = (
-            _retained_child_location(
-                parent,
-                workspace_identity,
+    if primary_error is None:
+        try:
+            if (
+                parent is None
+                or workspace_descriptor is None
+                or workspace_identity is None
+            ):
+                raise RenderTransactionError(
+                    f"{label} workspace cleanup lacks a retained identity"
+                )
+            expected_entries = _capture_directory_descriptor_tree(
                 workspace_descriptor,
+                workspace,
             )
-            if parent is not None
-            else (
-                "unknown pathname "
-                "(workspace parent identity was not retained)"
+            _assert_render_parent_current(parent)
+            _remove_owned_directory(
+                workspace,
+                workspace_identity[0],
+                workspace_identity[1],
+                expected_entries,
+                expected_mode=0o700,
+                parent_descriptor=parent.descriptor,
             )
-        )
-        print(
-            f"NOTICE: {label} workspace retained for explicit cleanup at: "
-            f"{location}"
-        )
-    except BaseException as reporting_error:
-        finalization_errors.append(reporting_error)
+            workspace_removed = True
+            _assert_render_parent_current(parent)
+        except BaseException as error:
+            primary_error = error
+            primary_traceback = error.__traceback__
+
+    if primary_error is not None:
+        try:
+            location = (
+                _retained_child_location(
+                    parent,
+                    workspace_identity,
+                    workspace_descriptor,
+                )
+                if parent is not None
+                else (
+                    "unknown pathname "
+                    "(workspace parent identity was not retained)"
+                )
+            )
+            if workspace_removed:
+                print(
+                    f"WARNING: {label} workspace was verified and removed, "
+                    "but its parent path changed during final verification; "
+                    "no recovery workspace remains"
+                )
+            elif body_succeeded and location.startswith("unknown pathname"):
+                print(
+                    f"WARNING: {label} workspace cleanup failed and no "
+                    "verified surviving workspace path was found; cleanup or "
+                    f"durability is uncertain: {location}"
+                )
+            else:
+                print(
+                    f"NOTICE: {label} workspace retained for explicit cleanup "
+                    f"at: {location}"
+                )
+        except BaseException as reporting_error:
+            finalization_errors.append(reporting_error)
+    finalization_context = (
+        f"{label} workspace cleanup"
+        if body_succeeded
+        else f"{label} workspace retention"
+    )
     finalization_errors.extend(
         _close_descriptor_list(
             [
@@ -1268,14 +1319,14 @@ def _retained_workspace_scope(
                 )
                 if descriptor is not None
             ],
-            f"{label} workspace retention",
+            finalization_context,
         )
     )
     _raise_after_descriptor_finalization(
         primary_error,
         primary_traceback,
         tuple(finalization_errors),
-        f"{label} workspace retention",
+        finalization_context,
     )
 
 
@@ -2043,7 +2094,6 @@ def prepare_catalog(
             entry.setdefault("smoke_test", None)
             entry["route_path"] = canonical_route(skill, slug)
             entry["skill_name"] = skill["name"]
-            entry["provenance_index_path"] = "../PROVENANCE.md"
             by_slug[slug] = (skill_key, entry)
 
     legacy_targets = {
@@ -3539,16 +3589,17 @@ def _clear_directory_descriptor(
     os.fsync(descriptor)
 
 
-def _retain_verified_backup(
+def _remove_verified_backup(
     backup_root: Path,
     expected: RenderOutputState,
     parent: RenderParentHandle | None = None,
-) -> Path:
-    """Retain an exact prior tree for explicit, quiescent cleanup."""
+) -> None:
+    """Remove an exact prior tree after the replacement is fully accepted."""
 
     if parent is None:
         _verify_moved_output_state(backup_root, expected)
     else:
+        _assert_render_parent_current(parent)
         _verify_output_state_at(
             parent,
             backup_root.name,
@@ -3559,7 +3610,7 @@ def _retain_verified_backup(
         raise RenderTransactionError(
             f"render backup has no accepted identity: {backup_root}"
         )
-    retained = _retain_owned_directory(
+    _remove_owned_directory(
         backup_root,
         expected.device,
         expected.inode,
@@ -3569,9 +3620,6 @@ def _retain_verified_backup(
             parent.descriptor if parent is not None else None
         ),
     )
-    if parent is not None:
-        _assert_render_parent_current(parent)
-    return retained
 
 
 def _retain_owned_directory(
@@ -3671,9 +3719,9 @@ def _remove_owned_directory(
 ) -> None:
     """Delete an owned tree only under explicit, caller-proven quiescence.
 
-    Render replacement retains prior trees for recovery. Validation may use
-    this helper only for its own run-private workspace when retention was not
-    requested.
+    Successful rendering and validation use this only after accepting the
+    replacement and while retaining the exact directory identity and manifest.
+    Any mismatch aborts cleanup and preserves the uncertain state.
     """
 
     if parent_descriptor is None:
@@ -4176,8 +4224,8 @@ def _replace_rendered_tree(
     expected_staged_state: RenderOutputState,
     validate_staged_state: Callable[[RenderOutputState], None],
     verify_current_inputs: Callable[[], None],
-) -> None:
-    """Replace output_root and restore its prior state if the swap fails."""
+) -> Path | None:
+    """Replace output_root, restoring failure or returning its prior backup."""
 
     _assert_render_parent_current(parent)
     verify_output_root_state(output_root, expected_output_state)
@@ -4461,42 +4509,15 @@ def _replace_rendered_tree(
             except BaseException:
                 pass
         raise
-    else:
-        if backup_root is not None:
-            try:
-                _retain_verified_backup(
-                    backup_root,
-                    expected_output_state,
-                    parent,
-                )
-                print(
-                    "NOTICE: prior rendered tree retained for explicit cleanup "
-                    "at: "
-                    f"{_retained_child_location(parent, prior_identity)}"
-                )
-            except BaseException as cleanup_error:
-                try:
-                    print(
-                        "WARNING: rendered tree was committed, but the "
-                        "prior-tree backup could not be verified for retention: "
-                        f"{_retained_child_location(parent, prior_identity)}: "
-                        f"{cleanup_error}"
-                    )
-                except BaseException:
-                    pass
-                if not isinstance(
-                    cleanup_error,
-                    (OSError, RenderTransactionError),
-                ):
-                    raise
-        _assert_render_parent_current(parent)
+    _assert_render_parent_current(parent)
+    return backup_root
 
 
 def render_all(
     output_root: Path = BUILD_ROOT,
     content_root: Path = CONTENT_ROOT,
     config_path: Path | None = None,
-) -> None:
+) -> Path:
     """Render, validate, and transactionally replace a complete skill tree."""
 
     output_root = _resolved_output_root(output_root)
@@ -4552,6 +4573,7 @@ def render_all(
                 staged_metadata.st_ino,
             )
             expected_staged_state: RenderOutputState | None = None
+            committed_backup_root: Path | None = None
             primary_error: BaseException | None = None
             primary_traceback = None
             try:
@@ -4618,7 +4640,7 @@ def render_all(
                         aliases_by_skill,
                     )
 
-                _replace_rendered_tree(
+                committed_backup_root = _replace_rendered_tree(
                     parent,
                     staged_root,
                     output_root,
@@ -4671,9 +4693,54 @@ def render_all(
             if retention_error is not None:
                 raise retention_error
             _assert_render_parent_current(parent)
+            if committed_backup_root is not None:
+                prior_identity = _state_root_identity(expected_output_state)
+                backup_removed = False
+                try:
+                    _remove_verified_backup(
+                        committed_backup_root,
+                        expected_output_state,
+                        parent,
+                    )
+                    backup_removed = True
+                    _assert_render_parent_current(parent)
+                except BaseException as cleanup_error:
+                    retained_location = _retained_child_location(
+                        parent,
+                        prior_identity,
+                    )
+                    if backup_removed:
+                        detail = (
+                            "rendered tree was committed and the accepted "
+                            "prior tree was verified and removed, but the "
+                            "render parent changed during final verification; "
+                            f"committed output location is uncertain: "
+                            f"{cleanup_error}"
+                        )
+                    elif retained_location.startswith("unknown pathname"):
+                        detail = (
+                            "rendered tree was committed, but verified cleanup "
+                            "of the accepted prior tree failed and no verified "
+                            "surviving prior-tree path was found; cleanup or "
+                            f"durability is uncertain: {retained_location}: "
+                            f"{cleanup_error}"
+                        )
+                    else:
+                        detail = (
+                            "rendered tree was committed, but verified cleanup "
+                            "of the accepted prior tree failed; verified "
+                            "surviving prior-tree location: "
+                            f"{retained_location}: {cleanup_error}"
+                        )
+                    if isinstance(cleanup_error, Exception):
+                        raise RenderTransactionError(detail) from cleanup_error
+                    try:
+                        cleanup_error.add_note(detail)
+                    except BaseException:
+                        pass
+                    raise
 
-    for skill in config["skills"].values():
-        print(f"Rendered {output_root / skill['folder']}")
+    return output_root
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -4688,7 +4755,8 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
-    render_all(output_root=args.output_root)
+    output_root = render_all(output_root=args.output_root)
+    print(f"Rendered {len(REQUIRED_SKILLS)} Stata skills to {output_root}")
     return 0
 
 

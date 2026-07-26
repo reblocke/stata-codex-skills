@@ -7,12 +7,15 @@ from enum import Enum
 from functools import lru_cache
 import hashlib
 import io
+import math
 import os
 from pathlib import Path
 import re
 import signal
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 import yaml
@@ -20,6 +23,7 @@ from yaml.constructor import ConstructorError
 from yaml.nodes import MappingNode
 from yaml.resolver import BaseResolver
 
+from process_guard.authorization import allow_detached_process
 from runtime_guard import (
     REQUIRED_PYTHON,
     REQUIRED_UNICODE_VERSION,
@@ -44,6 +48,7 @@ UPSTREAM_REPO_DIR = RAW_ROOT / "upstream" / "stata-skill"
 STATA_ROOT = Path("/Applications/Stata")
 STATA_ADO_BASE = STATA_ROOT / "ado" / "base"
 STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS = 5
+PROCESS_SIGNAL_EXIT_RACE_TIMEOUT_SECONDS = 0.25
 MACOS_SANDBOX_EXEC = Path("/usr/bin/sandbox-exec")
 STATA_SANDBOX_PROFILE = (
     "(version 1)"
@@ -53,6 +58,23 @@ STATA_SANDBOX_PROFILE = (
     "(deny appleevent-send)"
 )
 STATA_SANDBOX_PROBE_TIMEOUT_SECONDS = 5
+SAFE_SLUG_RE = re.compile(r"^[a-z0-9]+(?:[-_][a-z0-9]+)*$")
+BINARY_DOWNLOAD_CHUNK_BYTES = 64 * 1024
+DEFAULT_BINARY_DOWNLOAD_MAX_BYTES = 1024 * 1024
+STATA_HELP_READ_CHUNK_BYTES = 64 * 1024
+DEFAULT_STATA_HELP_MAX_BYTES = 64 * 1024 * 1024
+STATA_HELP_DIRECTORY_OPEN_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_DIRECTORY", 0)
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+)
+STATA_HELP_FILE_OPEN_FLAGS = (
+    os.O_RDONLY
+    | getattr(os, "O_CLOEXEC", 0)
+    | getattr(os, "O_NOFOLLOW", 0)
+    | getattr(os, "O_NONBLOCK", 0)
+)
 
 
 @dataclass(frozen=True)
@@ -62,12 +84,14 @@ class _ProcessStopResult:
     diagnostic: str
     cleanup_confirmed: bool
     leader_kill_sent: bool
+    permission_denied_after_anchored_exit: bool = False
 
 
 @dataclass(frozen=True)
 class _ProcessGroupSignalResult:
     cleanup_confirmed: bool
     live_leader_signaled: bool
+    permission_denied_after_anchored_exit: bool = False
 
 
 class _ProcessLeaderState(Enum):
@@ -155,11 +179,19 @@ def parse_yaml(data: str | bytes, *, source: str | Path) -> object:
     return yaml.load(stream, Loader=_UniqueKeySafeLoader)
 
 
+def is_safe_slug(value: object) -> bool:
+    """Return whether a value is an authorized canonical slug component."""
+
+    return isinstance(value, str) and SAFE_SLUG_RE.fullmatch(value) is not None
+
+
 def atomic_rename_at_no_replace(
     source_descriptor: int,
     source_name: str,
     destination_descriptor: int,
     destination_name: str,
+    *,
+    sync_directories: bool = True,
 ) -> None:
     """Atomically move one descriptor-relative entry only when target is absent."""
 
@@ -218,9 +250,81 @@ def atomic_rename_at_no_replace(
             os.strerror(error_number),
             destination_name,
         )
-    os.fsync(destination_descriptor)
-    if source_descriptor != destination_descriptor:
-        os.fsync(source_descriptor)
+    if sync_directories:
+        os.fsync(destination_descriptor)
+        if source_descriptor != destination_descriptor:
+            os.fsync(source_descriptor)
+
+
+def atomic_exchange_at(
+    source_descriptor: int,
+    source_name: str,
+    destination_descriptor: int,
+    destination_name: str,
+    *,
+    sync_directories: bool = True,
+) -> None:
+    """Atomically exchange two descriptor-relative entries."""
+
+    for label, name in (
+        ("source", source_name),
+        ("destination", destination_name),
+    ):
+        if not name or name in {".", ".."} or Path(name).name != name:
+            raise ValueError(
+                f"atomic exchange {label} must be one path component"
+            )
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "darwin":
+        try:
+            rename_exchange = libc.renameatx_np
+        except AttributeError as error:
+            raise RuntimeError(
+                "This macOS runtime lacks descriptor-relative atomic "
+                "exchange support"
+            ) from error
+        flag = 0x00000002  # RENAME_SWAP from <sys/stdio.h>
+    elif sys.platform.startswith("linux"):
+        try:
+            rename_exchange = libc.renameat2
+        except AttributeError as error:
+            raise RuntimeError(
+                "This Linux runtime lacks descriptor-relative atomic "
+                "exchange support"
+            ) from error
+        flag = 2  # RENAME_EXCHANGE from <linux/fs.h>
+    else:
+        raise RuntimeError(
+            "Descriptor-relative atomic exchange is supported only on "
+            "macOS and Linux"
+        )
+    rename_exchange.argtypes = [
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_int,
+        ctypes.c_char_p,
+        ctypes.c_uint,
+    ]
+    rename_exchange.restype = ctypes.c_int
+    result = rename_exchange(
+        source_descriptor,
+        os.fsencode(source_name),
+        destination_descriptor,
+        os.fsencode(destination_name),
+        flag,
+    )
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(
+            error_number,
+            os.strerror(error_number),
+            destination_name,
+        )
+    if sync_directories:
+        os.fsync(destination_descriptor)
+        if source_descriptor != destination_descriptor:
+            os.fsync(source_descriptor)
 
 
 def ensure_dir(path: Path) -> Path:
@@ -250,6 +354,244 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _stata_help_source_state(
+    metadata: os.stat_result,
+    relative: Path,
+    *,
+    max_bytes: int,
+) -> tuple[int, int, int, int, int, int, int, int, int]:
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or metadata.st_nlink != 1
+        or metadata.st_size < 0
+        or metadata.st_size > max_bytes
+    ):
+        raise RuntimeError(
+            f"Stata help source {relative} must be one bounded regular file "
+            "with no hard links"
+        )
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mode,
+        metadata.st_nlink,
+        metadata.st_uid,
+        metadata.st_gid,
+        metadata.st_size,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
+
+
+def _open_stata_help_source_at(
+    root_descriptor: int,
+    relative: Path,
+    *,
+    max_bytes: int,
+) -> tuple[int, tuple[int, int, int, int, int, int, int, int, int]]:
+    current_descriptor = root_descriptor
+    close_current = False
+    try:
+        for part in relative.parts[:-1]:
+            next_descriptor = os.open(
+                part,
+                STATA_HELP_DIRECTORY_OPEN_FLAGS,
+                dir_fd=current_descriptor,
+            )
+            try:
+                metadata = os.fstat(next_descriptor)
+                if not stat.S_ISDIR(metadata.st_mode):
+                    raise RuntimeError(
+                        f"Stata help source parent for {relative} is not a "
+                        "real directory"
+                    )
+            except BaseException:
+                os.close(next_descriptor)
+                raise
+            if close_current:
+                try:
+                    os.close(current_descriptor)
+                except BaseException:
+                    os.close(next_descriptor)
+                    raise
+            current_descriptor = next_descriptor
+            close_current = True
+
+        name = relative.name
+        named_state = _stata_help_source_state(
+            os.stat(
+                name,
+                dir_fd=current_descriptor,
+                follow_symlinks=False,
+            ),
+            relative,
+            max_bytes=max_bytes,
+        )
+        descriptor = os.open(
+            name,
+            STATA_HELP_FILE_OPEN_FLAGS,
+            dir_fd=current_descriptor,
+        )
+        try:
+            descriptor_state = _stata_help_source_state(
+                os.fstat(descriptor),
+                relative,
+                max_bytes=max_bytes,
+            )
+        except BaseException:
+            os.close(descriptor)
+            raise
+        if descriptor_state != named_state:
+            os.close(descriptor)
+            raise RuntimeError(
+                f"Stata help source {relative} changed while being opened"
+            )
+        return descriptor, descriptor_state
+    finally:
+        if close_current:
+            os.close(current_descriptor)
+
+
+def _verify_stata_help_source_at(
+    root_descriptor: int,
+    relative: Path,
+    owner_descriptor: int,
+    expected: tuple[int, int, int, int, int, int, int, int, int],
+    *,
+    max_bytes: int,
+) -> None:
+    observed_descriptor, observed_state = _open_stata_help_source_at(
+        root_descriptor,
+        relative,
+        max_bytes=max_bytes,
+    )
+    try:
+        owner_state = _stata_help_source_state(
+            os.fstat(owner_descriptor),
+            relative,
+            max_bytes=max_bytes,
+        )
+    finally:
+        os.close(observed_descriptor)
+    if owner_state != expected or observed_state != expected:
+        raise RuntimeError(f"Stata help source {relative} changed while being read")
+
+
+def sha256_stata_help_source(
+    source: Path,
+    *,
+    help_root: Path | None = None,
+    max_bytes: int = DEFAULT_STATA_HELP_MAX_BYTES,
+) -> str:
+    """Hash one stable real help file without following source path links."""
+
+    if max_bytes <= 0:
+        raise ValueError("Stata help source byte limit must be positive")
+    if help_root is None:
+        help_root = STATA_ADO_BASE
+    absolute_root = Path(os.path.abspath(os.fspath(help_root)))
+    absolute_source = Path(os.path.abspath(os.fspath(source)))
+    try:
+        relative = absolute_source.relative_to(absolute_root)
+    except ValueError as error:
+        raise RuntimeError(
+            "Stata help source is outside the configured help root"
+        ) from error
+    if (
+        not relative.parts
+        or any(part in {"", ".", ".."} for part in relative.parts)
+        or relative.suffix.lower() != ".sthlp"
+    ):
+        raise RuntimeError("Unsafe Stata help source path")
+
+    root_descriptor: int | None = None
+    source_descriptor: int | None = None
+    observed_root_descriptor: int | None = None
+    try:
+        root_descriptor = os.open(
+            absolute_root,
+            STATA_HELP_DIRECTORY_OPEN_FLAGS,
+        )
+        root_metadata = os.fstat(root_descriptor)
+        if not stat.S_ISDIR(root_metadata.st_mode):
+            raise RuntimeError("Configured Stata help root is not a real directory")
+        root_identity = (root_metadata.st_dev, root_metadata.st_ino)
+
+        source_descriptor, expected = _open_stata_help_source_at(
+            root_descriptor,
+            relative,
+            max_bytes=max_bytes,
+        )
+        _verify_stata_help_source_at(
+            root_descriptor,
+            relative,
+            source_descriptor,
+            expected,
+            max_bytes=max_bytes,
+        )
+
+        digest = hashlib.sha256()
+        remaining = expected[6]
+        while remaining:
+            chunk = os.read(
+                source_descriptor,
+                min(STATA_HELP_READ_CHUNK_BYTES, remaining),
+            )
+            if not chunk:
+                raise RuntimeError(
+                    f"Stata help source {relative} changed while being read"
+                )
+            digest.update(chunk)
+            remaining -= len(chunk)
+
+        if (
+            _stata_help_source_state(
+                os.fstat(source_descriptor),
+                relative,
+                max_bytes=max_bytes,
+            )
+            != expected
+        ):
+            raise RuntimeError(
+                f"Stata help source {relative} changed while being read"
+            )
+        observed_root_descriptor = os.open(
+            absolute_root,
+            STATA_HELP_DIRECTORY_OPEN_FLAGS,
+        )
+        observed_root = os.fstat(observed_root_descriptor)
+        if (
+            not stat.S_ISDIR(observed_root.st_mode)
+            or (observed_root.st_dev, observed_root.st_ino) != root_identity
+        ):
+            raise RuntimeError(
+                "Configured Stata help root changed while a source was read"
+            )
+        _verify_stata_help_source_at(
+            observed_root_descriptor,
+            relative,
+            source_descriptor,
+            expected,
+            max_bytes=max_bytes,
+        )
+        return digest.hexdigest()
+    except OSError as error:
+        raise RuntimeError(
+            f"Could not safely read Stata help source {relative}"
+        ) from error
+    finally:
+        for descriptor in (
+            observed_root_descriptor,
+            source_descriptor,
+            root_descriptor,
+        ):
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
 
 
 def load_skill_config(path: Path = SKILL_CONFIG_PATH) -> dict:
@@ -494,31 +836,53 @@ def extract_warning_lines(text: str, limit: int = 4) -> list[str]:
 def run_command(
     args: list[str],
     cwd: Path | None = None,
-    timeout_seconds: int = 120,
+    timeout_seconds: float = 120,
 ) -> subprocess.CompletedProcess[str]:
-    try:
-        return subprocess.run(
+    with allow_detached_process():
+        process = subprocess.Popen(
             args,
             cwd=str(cwd) if cwd else None,
-            check=False,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout_seconds,
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired as error:
-        stdout = (
-            error.stdout.decode("utf-8", "ignore")
-            if isinstance(error.stdout, bytes)
-            else (error.stdout or "")
+    try:
+        stdout, stderr = process.communicate(timeout=timeout_seconds)
+    except subprocess.TimeoutExpired:
+        stop_result = _stop_process_group(process)
+        timeout_message = (
+            f"Command timed out after {timeout_seconds:g} seconds."
         )
-        stderr = (
-            error.stderr.decode("utf-8", "ignore")
-            if isinstance(error.stderr, bytes)
-            else (error.stderr or "")
+        cleanup_diagnostic = stop_result.diagnostic
+        if not stop_result.cleanup_confirmed and not cleanup_diagnostic:
+            cleanup_diagnostic = (
+                "Process-group cleanup could not be confirmed."
+            )
+        effective_stderr = "\n".join(
+            part
+            for part in (
+                stop_result.stderr,
+                timeout_message,
+                cleanup_diagnostic,
+            )
+            if part
+        ).strip()
+        return subprocess.CompletedProcess(
+            process.args,
+            124,
+            stop_result.stdout,
+            effective_stderr,
         )
-        timeout_message = f"Command timed out after {timeout_seconds} seconds."
-        stderr = f"{stderr}\n{timeout_message}".strip()
-        return subprocess.CompletedProcess(args, 124, stdout, stderr)
+    except BaseException:
+        _force_cleanup_process(process)
+        raise
+    return subprocess.CompletedProcess(
+        process.args,
+        process.returncode or 0,
+        stdout,
+        stderr,
+    )
 
 
 def detect_stata_binary() -> Path | None:
@@ -537,6 +901,8 @@ def detect_stata_binary() -> Path | None:
 def _signal_process_group(
     process: subprocess.Popen[str],
     process_signal: signal.Signals,
+    *,
+    fork_denial_guarantees_no_descendants: bool = False,
 ) -> _ProcessGroupSignalResult:
     # Confirm immediately before signaling that this Popen still owns a
     # waitable leader.  A reaped leader no longer reserves its PID, so its
@@ -544,18 +910,45 @@ def _signal_process_group(
     leader_state = _process_leader_state(process)
     if leader_state is _ProcessLeaderState.UNANCHORED:
         return _ProcessGroupSignalResult(False, False)
+
+    def observe_anchored_exit() -> bool:
+        deadline = (
+            time.monotonic() + PROCESS_SIGNAL_EXIT_RACE_TIMEOUT_SECONDS
+        )
+        while True:
+            observed_state = _process_leader_state(process)
+            if observed_state is not _ProcessLeaderState.LIVE_ANCHORED:
+                return observed_state is _ProcessLeaderState.EXITED_ANCHORED
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return False
+            time.sleep(min(0.01, remaining))
+
     try:
         os.killpg(process.pid, process_signal)
-    except (ProcessLookupError, PermissionError):
-        # macOS reports EPERM for a group containing only an exited, waitable
-        # leader.  ESRCH has the same safe interpretation.  Refresh the state
-        # to cover exit races; a live member would keep the owned group
-        # signalable, while lost ownership remains a closed failure.
-        cleanup_confirmed = (
-            _process_leader_state(process)
-            is _ProcessLeaderState.EXITED_ANCHORED
+    except ProcessLookupError:
+        # ESRCH can race with a natural leader exit between the anchored state
+        # observation and killpg().  Keep the waitable leader as the PID
+        # anchor, never retry the signal, and briefly observe whether it reaches
+        # the exited-but-unreaped state that proves the group disappeared.
+        return _ProcessGroupSignalResult(
+            observe_anchored_exit(),
+            False,
         )
-        return _ProcessGroupSignalResult(cleanup_confirmed, False)
+    except PermissionError:
+        # EPERM does not prove that the group is empty: an exited leader can
+        # leave unsignalable descendants behind.  Only the fixed Stata sandbox
+        # may opt into the natural-exit observation because its successfully
+        # probed profile denies process-fork before launch.
+        anchored_exit = observe_anchored_exit()
+        return _ProcessGroupSignalResult(
+            (
+                anchored_exit
+                and fork_denial_guarantees_no_descendants
+            ),
+            False,
+            permission_denied_after_anchored_exit=anchored_exit,
+        )
     return _ProcessGroupSignalResult(
         cleanup_confirmed=True,
         live_leader_signaled=(
@@ -698,12 +1091,15 @@ def _force_cleanup_process(process: subprocess.Popen[str]) -> None:
 
 def _stop_process_group(
     process: subprocess.Popen[str],
+    *,
+    fork_denial_guarantees_no_descendants: bool = False,
 ) -> _ProcessStopResult:
     """Signal one anchored group before reaping its leader and collect output."""
 
     try:
         cleanup_confirmed = False
         leader_kill_sent = False
+        permission_denied_after_anchored_exit = False
         diagnostic = ""
         if (
             _process_leader_state(process)
@@ -720,9 +1116,15 @@ def _stop_process_group(
             signal_result = _signal_process_group(
                 process,
                 signal.SIGKILL,
+                fork_denial_guarantees_no_descendants=(
+                    fork_denial_guarantees_no_descendants
+                ),
             )
             cleanup_confirmed = signal_result.cleanup_confirmed
             leader_kill_sent = signal_result.live_leader_signaled
+            permission_denied_after_anchored_exit = (
+                signal_result.permission_denied_after_anchored_exit
+            )
             if not cleanup_confirmed:
                 diagnostic = "Could not confirm process-group termination."
         try:
@@ -759,6 +1161,9 @@ def _stop_process_group(
             diagnostic=diagnostic,
             cleanup_confirmed=cleanup_confirmed,
             leader_kill_sent=leader_kill_sent,
+            permission_denied_after_anchored_exit=(
+                permission_denied_after_anchored_exit
+            ),
         )
     except BaseException:
         _force_cleanup_process(process)
@@ -836,15 +1241,16 @@ def run_stata_do(
 
     child_do_file = Path(os.path.relpath(do_file, start=cwd))
     deadline = time.monotonic() + timeout_seconds
-    process = subprocess.Popen(
-        _stata_launch_command(stata_binary, child_do_file),
-        cwd=str(cwd),
-        env={**os.environ, "PWD": str(cwd)},
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
+    with allow_detached_process():
+        process = subprocess.Popen(
+            _stata_launch_command(stata_binary, child_do_file),
+            cwd=str(cwd),
+            env={**os.environ, "PWD": str(cwd)},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
     marker_found = False
     timed_out = False
     try:
@@ -880,7 +1286,10 @@ def run_stata_do(
         _force_cleanup_process(process)
         raise
 
-    stop_result = _stop_process_group(process)
+    stop_result = _stop_process_group(
+        process,
+        fork_denial_guarantees_no_descendants=True,
+    )
 
     log_text = read_text(log_path) if log_path.exists() else ""
     marker_found = any(line.strip() == completion_marker for line in log_text.splitlines())
@@ -929,28 +1338,156 @@ def has_stata_error(log_text: str) -> bool:
     return bool(re.search(r"(?m)^\s*r\([0-9]+\);", log_text))
 
 
-def download_text(url: str, timeout_seconds: int = 30) -> str:
-    request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        return response.read().decode("utf-8", "ignore")
+def _set_response_read_timeout(response: object, timeout_seconds: float) -> None:
+    """Bound the next urllib read by the remaining total deadline."""
+
+    candidates = [response]
+    visited: set[int] = set()
+    for _ in range(6):
+        if not candidates:
+            break
+        candidate = candidates.pop(0)
+        if id(candidate) in visited:
+            continue
+        visited.add(id(candidate))
+        settimeout = getattr(candidate, "settimeout", None)
+        if callable(settimeout):
+            settimeout(timeout_seconds)
+            return
+        for attribute in ("fp", "raw", "_sock", "sock"):
+            nested = getattr(candidate, attribute, None)
+            if nested is not None:
+                candidates.append(nested)
+    raise RuntimeError(
+        "Download response does not expose a bounded socket timeout"
+    )
+
+
+def _remaining_download_time(
+    deadline: float,
+    timeout_seconds: float,
+    url: str,
+) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError(
+            f"Download timed out after {timeout_seconds:g} seconds: {url}"
+        )
+    return remaining
+
+
+def _read_response_once(response: object, size: int) -> bytes:
+    """Read at most one buffered/raw receive before rechecking the deadline."""
+
+    read_once = getattr(response, "read1", None)
+    if callable(read_once):
+        return read_once(size)
+    read = getattr(response, "read", None)
+    if not callable(read):
+        raise TypeError("Download response does not expose a read method")
+    # A one-byte fallback prevents a generic buffered read from internally
+    # resetting the socket inactivity timeout while filling a large request.
+    return read(1)
 
 
 def download_binary(
     url: str,
     dest: Path,
-    timeout_seconds: int = 30,
+    timeout_seconds: float = 30,
     expected_sha256: str | None = None,
+    *,
+    max_bytes: int = DEFAULT_BINARY_DOWNLOAD_MAX_BYTES,
 ) -> str:
+    if (
+        not isinstance(max_bytes, int)
+        or isinstance(max_bytes, bool)
+        or max_bytes < 1
+    ):
+        raise ValueError("max_bytes must be a positive integer")
+    if (
+        not isinstance(timeout_seconds, (int, float))
+        or isinstance(timeout_seconds, bool)
+        or not math.isfinite(timeout_seconds)
+        or timeout_seconds <= 0
+    ):
+        raise ValueError("timeout_seconds must be a finite positive number")
+
     request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-        data = response.read()
-
-    actual_sha256 = hashlib.sha256(data).hexdigest()
-    if expected_sha256 and actual_sha256.lower() != expected_sha256.lower():
-        raise ValueError(
-            f"SHA-256 mismatch for {url}: expected {expected_sha256}, got {actual_sha256}"
-        )
-
+    deadline = time.monotonic() + timeout_seconds
+    digest = hashlib.sha256()
+    bytes_received = 0
     ensure_dir(dest.parent)
-    dest.write_bytes(data)
-    return actual_sha256
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=dest.parent,
+        prefix=f".{dest.name}.",
+        suffix=".tmp",
+    )
+    temporary_path = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            with urllib.request.urlopen(
+                request,
+                timeout=_remaining_download_time(
+                    deadline,
+                    timeout_seconds,
+                    url,
+                ),
+            ) as response:
+                while True:
+                    remaining = _remaining_download_time(
+                        deadline,
+                        timeout_seconds,
+                        url,
+                    )
+                    _set_response_read_timeout(response, remaining)
+                    try:
+                        chunk = _read_response_once(
+                            response,
+                            min(
+                                BINARY_DOWNLOAD_CHUNK_BYTES,
+                                max_bytes - bytes_received + 1,
+                            )
+                        )
+                    except TimeoutError as error:
+                        raise TimeoutError(
+                            f"Download timed out after "
+                            f"{timeout_seconds:g} seconds: {url}"
+                        ) from error
+                    _remaining_download_time(
+                        deadline,
+                        timeout_seconds,
+                        url,
+                    )
+                    if not chunk:
+                        break
+                    if not isinstance(chunk, bytes):
+                        raise TypeError(
+                            f"Binary download returned non-bytes data: {url}"
+                        )
+                    bytes_received += len(chunk)
+                    if bytes_received > max_bytes:
+                        raise ValueError(
+                            f"Download exceeds {max_bytes} byte limit: {url}"
+                        )
+                    digest.update(chunk)
+                    output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
+
+        actual_sha256 = digest.hexdigest()
+        if (
+            expected_sha256
+            and actual_sha256.lower() != expected_sha256.lower()
+        ):
+            raise ValueError(
+                f"SHA-256 mismatch for {url}: expected "
+                f"{expected_sha256}, got {actual_sha256}"
+            )
+
+        os.replace(temporary_path, dest)
+        return actual_sha256
+    finally:
+        try:
+            temporary_path.unlink()
+        except FileNotFoundError:
+            pass

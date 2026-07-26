@@ -29,6 +29,7 @@ from libskillpack import (
     parse_yaml,
     read_yaml,
 )
+from process_guard.authorization import allow_detached_process
 
 
 UPSTREAM_ROOTS = {
@@ -1060,16 +1061,17 @@ def run_anchored_git(
 
     environment = sanitized_git_environment()
     try:
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            pass_fds=inherited_fds,
-            preexec_fn=enter_working_directory,
-            env=environment,
-            start_new_session=True,
-        )
+        with allow_detached_process():
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                pass_fds=inherited_fds,
+                preexec_fn=enter_working_directory,
+                env=environment,
+                start_new_session=True,
+            )
     except (OSError, subprocess.SubprocessError) as error:
         raise RuntimeError(
             f"Could not start descriptor-bound Git command: {error}"
@@ -1166,15 +1168,16 @@ def run_anchored_git_bytes(
 
     environment = sanitized_git_environment()
     try:
-        process = subprocess.Popen(
-            command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            pass_fds=inherited_fds,
-            preexec_fn=enter_working_directory,
-            env=environment,
-            start_new_session=True,
-        )
+        with allow_detached_process():
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                pass_fds=inherited_fds,
+                preexec_fn=enter_working_directory,
+                env=environment,
+                start_new_session=True,
+            )
     except (OSError, subprocess.SubprocessError) as error:
         raise RuntimeError(
             f"Could not start descriptor-bound Git command: {error}"

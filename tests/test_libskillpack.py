@@ -1,15 +1,18 @@
 from __future__ import annotations
 
 from contextlib import chdir
+import http.client
 import json
 import os
 from pathlib import Path
 import shutil
 import signal
+import socket
 import subprocess
 from subprocess import CompletedProcess, TimeoutExpired
 from tempfile import TemporaryDirectory
 import sys
+import threading
 import time
 import unittest
 from unittest.mock import call, patch
@@ -19,11 +22,14 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import libskillpack  # noqa: E402
+from process_guard.authorization import allow_detached_process  # noqa: E402
 
 
 class FakeResponse:
     def __init__(self, data: bytes) -> None:
         self.data = data
+        self.offset = 0
+        self.timeouts: list[float] = []
 
     def __enter__(self) -> FakeResponse:
         return self
@@ -31,8 +37,20 @@ class FakeResponse:
     def __exit__(self, *args: object) -> None:
         del args
 
-    def read(self) -> bytes:
-        return self.data
+    def settimeout(self, timeout_seconds: float) -> None:
+        self.timeouts.append(timeout_seconds)
+
+    def read(self, size: int = -1) -> bytes:
+        if self.offset >= len(self.data):
+            return b""
+        if size < 0:
+            size = len(self.data) - self.offset
+        chunk = self.data[self.offset : self.offset + size]
+        self.offset += len(chunk)
+        return chunk
+
+    def read1(self, size: int = -1) -> bytes:
+        return self.read(size)
 
 
 class ImmediateProcess:
@@ -577,6 +595,113 @@ class RunStataDoTests(unittest.TestCase):
             self.killpg.assert_called_once_with(process.pid, signal.SIGKILL)
 
 
+class ProcessGroupSignalTests(unittest.TestCase):
+    def test_process_lookup_exit_race_confirms_anchored_natural_exit(
+        self,
+    ) -> None:
+        process = MarkerThenNonexitProcess()
+        states = [
+            libskillpack._ProcessLeaderState.LIVE_ANCHORED,
+            libskillpack._ProcessLeaderState.LIVE_ANCHORED,
+            libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+        ]
+
+        with patch.object(
+            libskillpack,
+            "_process_leader_state",
+            side_effect=states,
+        ) as observe, patch.object(
+            libskillpack.os,
+            "killpg",
+            side_effect=ProcessLookupError,
+        ) as killpg, patch.object(
+            libskillpack.time,
+            "sleep",
+        ) as sleep:
+            result = libskillpack._signal_process_group(
+                process,
+                signal.SIGKILL,
+            )
+
+        self.assertTrue(result.cleanup_confirmed)
+        self.assertFalse(result.live_leader_signaled)
+        self.assertEqual(3, observe.call_count)
+        killpg.assert_called_once_with(
+            process.pid,
+            signal.SIGKILL,
+        )
+        sleep.assert_called_once()
+
+    def test_permission_error_exit_race_requires_fork_denial(self) -> None:
+        process = MarkerThenNonexitProcess()
+        with patch.object(
+            libskillpack,
+            "_process_leader_state",
+            return_value=libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+        ) as observe, patch.object(
+            libskillpack.os,
+            "killpg",
+            side_effect=PermissionError,
+        ):
+            generic_result = libskillpack._signal_process_group(
+                process,
+                signal.SIGKILL,
+            )
+
+        self.assertFalse(generic_result.cleanup_confirmed)
+        self.assertFalse(generic_result.live_leader_signaled)
+        self.assertEqual(2, observe.call_count)
+
+        with patch.object(
+            libskillpack,
+            "_process_leader_state",
+            return_value=libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+        ), patch.object(
+            libskillpack.os,
+            "killpg",
+            side_effect=PermissionError,
+        ):
+            contained_result = libskillpack._signal_process_group(
+                process,
+                signal.SIGKILL,
+                fork_denial_guarantees_no_descendants=True,
+            )
+
+        self.assertTrue(contained_result.cleanup_confirmed)
+        self.assertFalse(contained_result.live_leader_signaled)
+
+    def test_signal_error_live_leader_remains_cleanup_failure(self) -> None:
+        for signal_error in (ProcessLookupError, PermissionError):
+            with self.subTest(signal_error=signal_error.__name__):
+                process = MarkerThenNonexitProcess()
+
+                with patch.object(
+                    libskillpack,
+                    "_process_leader_state",
+                    return_value=(
+                        libskillpack._ProcessLeaderState.LIVE_ANCHORED
+                    ),
+                ), patch.object(
+                    libskillpack.os,
+                    "killpg",
+                    side_effect=signal_error,
+                ), patch.object(
+                    libskillpack,
+                    "PROCESS_SIGNAL_EXIT_RACE_TIMEOUT_SECONDS",
+                    0,
+                ):
+                    result = libskillpack._signal_process_group(
+                        process,
+                        signal.SIGKILL,
+                        fork_denial_guarantees_no_descendants=(
+                            signal_error is PermissionError
+                        ),
+                    )
+
+                self.assertFalse(result.cleanup_confirmed)
+                self.assertFalse(result.live_leader_signaled)
+
+
 @unittest.skipUnless(
     hasattr(os, "fork")
     and (hasattr(os, "waitid") or sys.platform == "darwin"),
@@ -588,13 +713,14 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
         "Darwin ctypes waitid fallback is macOS-specific",
     )
     def test_darwin_ctypes_waitid_fallback_preserves_anchor(self) -> None:
-        process = subprocess.Popen(
-            ["/usr/bin/true"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
+        with allow_detached_process():
+            process = subprocess.Popen(
+                ["/usr/bin/true"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
         try:
             with patch.object(
                 libskillpack.os,
@@ -616,21 +742,26 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
 
                 stopped = libskillpack._stop_process_group(process)
 
-            self.assertTrue(stopped.cleanup_confirmed, stopped.diagnostic)
+            self.assertFalse(stopped.cleanup_confirmed)
+            self.assertTrue(
+                stopped.permission_denied_after_anchored_exit,
+                stopped.diagnostic,
+            )
             self.assertFalse(stopped.leader_kill_sent)
             self.assertEqual(0, process.returncode)
         finally:
             if process.returncode is None:
                 libskillpack._force_cleanup_process(process)
 
-    def test_exited_anchored_leader_without_descendants_is_clean(self) -> None:
-        process = subprocess.Popen(
-            ["/usr/bin/true"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
+    def test_exited_anchored_leader_without_descendants_is_safe(self) -> None:
+        with allow_detached_process():
+            process = subprocess.Popen(
+                ["/usr/bin/true"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
         try:
             deadline = time.monotonic() + 3
             while (
@@ -646,7 +777,17 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
 
             stopped = libskillpack._stop_process_group(process)
 
-            self.assertTrue(stopped.cleanup_confirmed, stopped.diagnostic)
+            if sys.platform == "darwin":
+                self.assertFalse(stopped.cleanup_confirmed)
+                self.assertTrue(
+                    stopped.permission_denied_after_anchored_exit,
+                    stopped.diagnostic,
+                )
+            else:
+                self.assertTrue(stopped.cleanup_confirmed, stopped.diagnostic)
+                self.assertFalse(
+                    stopped.permission_denied_after_anchored_exit
+                )
             self.assertFalse(stopped.leader_kill_sent)
             self.assertEqual(0, process.returncode)
         finally:
@@ -663,21 +804,27 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
                 "child = os.fork()\n"
                 "if child == 0:\n"
                 "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-                f"    open({str(child_pid_path)!r}, 'w').write(str(os.getpid()))\n"
+                f"    pid_path = {str(child_pid_path)!r}\n"
+                "    with open(pid_path + '.tmp', 'w') as stream:\n"
+                "        stream.write(str(os.getpid()))\n"
+                "        stream.flush()\n"
+                "        os.fsync(stream.fileno())\n"
+                "    os.replace(pid_path + '.tmp', pid_path)\n"
                 "    os.close(1)\n"
                 "    os.close(2)\n"
                 "    while True:\n"
                 "        time.sleep(1)\n"
                 "os._exit(0)\n"
             )
-            process = subprocess.Popen(
-                [sys.executable, "-c", source],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
-                pass_fds=(write_fd,),
-            )
+            with allow_detached_process():
+                process = subprocess.Popen(
+                    [sys.executable, "-c", source],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    start_new_session=True,
+                    pass_fds=(write_fd,),
+                )
             os.close(write_fd)
             child_pid: int | None = None
             reached_eof = False
@@ -730,14 +877,110 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
                     except ProcessLookupError:
                         pass
 
+    def test_permission_error_with_same_group_descendant_fails_closed(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="stata-group-eperm-") as temp_root:
+            child_pid_path = Path(temp_root) / "child.pid"
+            read_fd, write_fd = os.pipe()
+            os.set_blocking(read_fd, False)
+            source = (
+                "import os, signal, time\n"
+                "child = os.fork()\n"
+                "if child == 0:\n"
+                f"    pid_path = {str(child_pid_path)!r}\n"
+                "    with open(pid_path + '.tmp', 'w') as stream:\n"
+                "        stream.write(str(os.getpid()))\n"
+                "        stream.flush()\n"
+                "        os.fsync(stream.fileno())\n"
+                "    os.replace(pid_path + '.tmp', pid_path)\n"
+                "    os.close(1)\n"
+                "    os.close(2)\n"
+                "    while True:\n"
+                "        time.sleep(1)\n"
+                "os._exit(0)\n"
+            )
+            with allow_detached_process():
+                process = subprocess.Popen(
+                    [sys.executable, "-c", source],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    start_new_session=True,
+                    pass_fds=(write_fd,),
+                )
+            os.close(write_fd)
+            child_pid: int | None = None
+            reached_eof = False
+            try:
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    if child_pid_path.exists():
+                        child_pid = int(
+                            child_pid_path.read_text(encoding="utf-8")
+                        )
+                    if (
+                        child_pid is not None
+                        and libskillpack._process_leader_state(process)
+                        is libskillpack._ProcessLeaderState.EXITED_ANCHORED
+                    ):
+                        break
+                    time.sleep(0.02)
+                self.assertIsNotNone(child_pid)
+                self.assertIs(
+                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+                    libskillpack._process_leader_state(process),
+                )
+                self.assertEqual(process.pid, os.getpgid(child_pid))
+
+                with patch.object(
+                    libskillpack.os,
+                    "killpg",
+                    side_effect=PermissionError,
+                ):
+                    stopped = libskillpack._stop_process_group(process)
+
+                self.assertFalse(stopped.cleanup_confirmed)
+                self.assertIn(
+                    "Could not confirm process-group termination",
+                    stopped.diagnostic,
+                )
+                os.kill(child_pid, 0)
+            finally:
+                if process.returncode is None:
+                    libskillpack._force_cleanup_process(process)
+                if child_pid is not None:
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
+                        try:
+                            reached_eof = os.read(read_fd, 1) == b""
+                        except BlockingIOError:
+                            reached_eof = False
+                        if reached_eof:
+                            break
+                        time.sleep(0.02)
+                    self.assertTrue(
+                        reached_eof,
+                        "same-group descendant did not exit after test cleanup",
+                    )
+                try:
+                    os.close(read_fd)
+                except OSError:
+                    pass
+
     def test_lost_waitable_child_prevents_stale_group_signal(self) -> None:
-        process = subprocess.Popen(
-            ["/usr/bin/true"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
+        with allow_detached_process():
+            process = subprocess.Popen(
+                ["/usr/bin/true"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
         os.waitpid(process.pid, 0)
         self.assertIsNone(process.returncode)
         try:
@@ -1200,13 +1443,34 @@ class ErrorDetectionTests(unittest.TestCase):
 
 class TimeoutAndChecksumTests(unittest.TestCase):
     def test_run_command_converts_timeout_to_return_code_124(self) -> None:
-        timeout = TimeoutExpired(
-            ["fake-command"],
-            7,
-            output=b"partial stdout",
-            stderr=b"partial stderr",
+        class TimedOutProcess:
+            args = ["fake-command"]
+            pid = 999_999_995
+            returncode = None
+
+            def communicate(
+                self,
+                timeout: int | float | None = None,
+            ) -> tuple[str, str]:
+                raise TimeoutExpired(self.args, timeout)
+
+        stopped = libskillpack._ProcessStopResult(
+            stdout="partial stdout",
+            stderr="partial stderr",
+            diagnostic="process-group cleanup uncertain",
+            cleanup_confirmed=False,
+            leader_kill_sent=False,
         )
-        with patch.object(libskillpack.subprocess, "run", side_effect=timeout):
+        process = TimedOutProcess()
+        with patch.object(
+            libskillpack.subprocess,
+            "Popen",
+            return_value=process,
+        ) as popen, patch.object(
+            libskillpack,
+            "_stop_process_group",
+            return_value=stopped,
+        ) as stop_process_group:
             result = libskillpack.run_command(
                 ["fake-command"],
                 cwd=Path("/tmp"),
@@ -1218,6 +1482,80 @@ class TimeoutAndChecksumTests(unittest.TestCase):
         self.assertEqual("partial stdout", result.stdout)
         self.assertIn("partial stderr", result.stderr)
         self.assertIn("timed out after 7 seconds", result.stderr)
+        self.assertIn("cleanup uncertain", result.stderr)
+        stop_process_group.assert_called_once_with(process)
+        self.assertTrue(popen.call_args.kwargs["start_new_session"])
+
+    def test_run_command_interrupt_forces_cleanup_before_reraising(self) -> None:
+        original = KeyboardInterrupt("stop")
+
+        class InterruptedProcess:
+            args = ["fake-command"]
+            pid = 999_999_996
+            returncode = None
+
+            def communicate(
+                self,
+                timeout: int | float | None = None,
+            ) -> tuple[str, str]:
+                del timeout
+                raise original
+
+        process = InterruptedProcess()
+        with patch.object(
+            libskillpack.subprocess,
+            "Popen",
+            return_value=process,
+        ), patch.object(
+            libskillpack,
+            "_force_cleanup_process",
+        ) as force_cleanup:
+            with self.assertRaises(KeyboardInterrupt) as caught:
+                libskillpack.run_command(["fake-command"])
+
+        self.assertIs(original, caught.exception)
+        force_cleanup.assert_called_once_with(process)
+
+    @unittest.skipUnless(
+        os.name == "posix",
+        "POSIX process-group cleanup",
+    )
+    def test_run_command_timeout_terminates_descendants(self) -> None:
+        with TemporaryDirectory(prefix="command-timeout-") as temp_root:
+            pid_path = Path(temp_root) / "pids.txt"
+            source = (
+                "from pathlib import Path\n"
+                "import os, subprocess, sys, time\n"
+                "child = subprocess.Popen("
+                "[sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+                f"Path({str(pid_path)!r}).write_text("
+                "f'{os.getpid()} {child.pid}\\n', encoding='utf-8')\n"
+                "time.sleep(60)\n"
+            )
+
+            result = libskillpack.run_command(
+                [sys.executable, "-c", source],
+                timeout_seconds=0.5,
+            )
+
+            self.assertEqual(124, result.returncode)
+            self.assertIn("timed out after 0.5 seconds", result.stderr)
+            parent_pid, child_pid = (
+                int(value)
+                for value in pid_path.read_text(encoding="utf-8").split()
+            )
+            for process_id in (parent_pid, child_pid):
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    try:
+                        os.kill(process_id, 0)
+                    except ProcessLookupError:
+                        break
+                    time.sleep(0.01)
+                else:
+                    self.fail(
+                        f"timed-out command process {process_id} still exists"
+                    )
 
     def test_download_binary_rejects_checksum_mismatch_without_writing(self) -> None:
         with TemporaryDirectory(prefix="download-test-") as temp_root:
@@ -1252,8 +1590,192 @@ class TimeoutAndChecksumTests(unittest.TestCase):
                         timeout_seconds=11,
                     )
 
-            self.assertEqual(11, urlopen.call_args.kwargs["timeout"])
+            self.assertGreater(urlopen.call_args.kwargs["timeout"], 0)
+            self.assertLessEqual(urlopen.call_args.kwargs["timeout"], 11)
             self.assertFalse(destination.exists())
+
+    def test_download_binary_rejects_oversized_stream_and_removes_temp(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="download-test-") as temp_root:
+            root = Path(temp_root)
+            destination = root / "sdk.c"
+            with patch.object(
+                libskillpack.urllib.request,
+                "urlopen",
+                return_value=FakeResponse(b"12345"),
+            ):
+                with self.assertRaisesRegex(ValueError, "4 byte limit"):
+                    libskillpack.download_binary(
+                        "https://example.invalid/sdk.c",
+                        destination,
+                        max_bytes=4,
+                    )
+
+            self.assertFalse(destination.exists())
+            self.assertEqual([], list(root.glob(".sdk.c.*.tmp")))
+
+    def test_download_binary_total_deadline_stops_trickle_stream(
+        self,
+    ) -> None:
+        class TrickleResponse(FakeResponse):
+            def read(self, size: int = -1) -> bytes:
+                time.sleep(0.03)
+                return b"x"
+
+        with TemporaryDirectory(prefix="download-test-") as temp_root:
+            root = Path(temp_root)
+            destination = root / "sdk.c"
+            started = time.monotonic()
+            with patch.object(
+                libskillpack.urllib.request,
+                "urlopen",
+                return_value=TrickleResponse(b""),
+            ):
+                with self.assertRaisesRegex(
+                    TimeoutError,
+                    "timed out after 0.05 seconds",
+                ):
+                    libskillpack.download_binary(
+                        "https://example.invalid/sdk.c",
+                        destination,
+                        timeout_seconds=0.05,
+                    )
+
+            self.assertLess(time.monotonic() - started, 0.5)
+            self.assertFalse(destination.exists())
+            self.assertEqual([], list(root.glob(".sdk.c.*.tmp")))
+
+    @unittest.skipUnless(
+        hasattr(socket, "socketpair"),
+        "requires a local socket pair",
+    )
+    def test_download_binary_deadline_bounds_real_trickling_socket(
+        self,
+    ) -> None:
+        client, server = socket.socketpair()
+        body_start = threading.Event()
+
+        def serve_trickle() -> None:
+            try:
+                server.sendall(
+                    b"HTTP/1.1 200 OK\r\n"
+                    b"Content-Length: 100\r\n"
+                    b"Connection: close\r\n\r\n"
+                )
+                body_start.wait(timeout=1)
+                for _ in range(100):
+                    time.sleep(0.01)
+                    server.sendall(b"x")
+            except OSError:
+                pass
+            finally:
+                server.close()
+
+        writer = threading.Thread(target=serve_trickle)
+        writer.start()
+        response = http.client.HTTPResponse(client)
+        response.begin()
+
+        class StartedResponse:
+            def __enter__(self) -> http.client.HTTPResponse:
+                body_start.set()
+                return response
+
+            def __exit__(self, *args: object) -> None:
+                del args
+                response.close()
+
+        try:
+            with TemporaryDirectory(prefix="download-test-") as temp_root:
+                root = Path(temp_root)
+                destination = root / "sdk.c"
+                started = time.monotonic()
+                with patch.object(
+                    libskillpack.urllib.request,
+                    "urlopen",
+                    return_value=StartedResponse(),
+                ):
+                    with self.assertRaisesRegex(
+                        TimeoutError,
+                        "timed out after 0.05 seconds",
+                    ):
+                        libskillpack.download_binary(
+                            "https://example.invalid/trickle",
+                            destination,
+                            timeout_seconds=0.05,
+                            max_bytes=256,
+                        )
+
+                self.assertLess(time.monotonic() - started, 0.25)
+                self.assertFalse(destination.exists())
+                self.assertEqual([], list(root.glob(".sdk.c.*.tmp")))
+        finally:
+            body_start.set()
+            response.close()
+            client.close()
+            writer.join(timeout=2)
+        self.assertFalse(writer.is_alive())
+
+    def test_download_binary_partial_failure_preserves_destination(
+        self,
+    ) -> None:
+        class PartialResponse(FakeResponse):
+            def __init__(self) -> None:
+                super().__init__(b"")
+                self.read_count = 0
+
+            def read(self, size: int = -1) -> bytes:
+                del size
+                self.read_count += 1
+                if self.read_count == 1:
+                    return b"partial"
+                raise OSError("connection reset")
+
+        with TemporaryDirectory(prefix="download-test-") as temp_root:
+            root = Path(temp_root)
+            destination = root / "sdk.c"
+            destination.write_bytes(b"reviewed")
+            with patch.object(
+                libskillpack.urllib.request,
+                "urlopen",
+                return_value=PartialResponse(),
+            ):
+                with self.assertRaisesRegex(OSError, "connection reset"):
+                    libskillpack.download_binary(
+                        "https://example.invalid/sdk.c",
+                        destination,
+                    )
+
+            self.assertEqual(b"reviewed", destination.read_bytes())
+            self.assertEqual([], list(root.glob(".sdk.c.*.tmp")))
+
+    def test_download_binary_streams_hash_then_atomically_replaces(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="download-test-") as temp_root:
+            root = Path(temp_root)
+            destination = root / "sdk.c"
+            destination.write_bytes(b"old")
+            payload = b"reviewed SDK bytes"
+            expected = libskillpack.hashlib.sha256(payload).hexdigest()
+            response = FakeResponse(payload)
+            with patch.object(
+                libskillpack.urllib.request,
+                "urlopen",
+                return_value=response,
+            ):
+                actual = libskillpack.download_binary(
+                    "https://example.invalid/sdk.c",
+                    destination,
+                    expected_sha256=expected,
+                    max_bytes=len(payload),
+                )
+
+            self.assertEqual(expected, actual)
+            self.assertEqual(payload, destination.read_bytes())
+            self.assertTrue(response.timeouts)
+            self.assertEqual([], list(root.glob(".sdk.c.*.tmp")))
 
 
 if __name__ == "__main__":

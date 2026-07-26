@@ -24,6 +24,20 @@ import lint_skill_pack  # noqa: E402
 import render_skills  # noqa: E402
 
 
+def repository_test_tmp_root() -> Path:
+    """Return an ignored scratch root on the repository filesystem."""
+
+    root = REPO_ROOT / "tests" / "tmp"
+    root.mkdir(parents=True, exist_ok=True)
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError(f"unsafe repository test scratch root: {root}")
+    if root.stat().st_dev != REPO_ROOT.stat().st_dev:
+        raise RuntimeError(
+            f"repository test scratch root is on another filesystem: {root}"
+        )
+    return root
+
+
 class AtomicRenderTests(unittest.TestCase):
     @staticmethod
     def snapshot(root: Path) -> dict[str, bytes]:
@@ -67,7 +81,9 @@ class AtomicRenderTests(unittest.TestCase):
         )
         return target
 
-    def test_success_replaces_complete_tree_and_retains_prior_tree(self) -> None:
+    def test_success_replaces_complete_tree_without_transaction_artifacts(
+        self,
+    ) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
             target = self.seeded_target(parent)
@@ -84,18 +100,13 @@ class AtomicRenderTests(unittest.TestCase):
                 {"stata-core", "stata-packages", "stata-c-plugins"},
                 {path.name for path in target.iterdir() if path.is_dir()},
             )
-            artifacts = self.transaction_artifacts(parent, target.name)
-            self.assertEqual(1, len(artifacts))
-            self.assertIn(".backup-", artifacts[0].name)
             self.assertEqual(
-                b"# Prior generated tree\n",
-                (
-                    artifacts[0] / "stata-core" / "SKILL.md"
-                ).read_bytes(),
+                [],
+                self.transaction_artifacts(parent, target.name),
             )
-            self.assertIn(
-                "prior rendered tree retained for explicit cleanup",
-                output.getvalue(),
+            self.assertNotIn(
+                "retained for explicit cleanup",
+                output.getvalue().lower(),
             )
 
     def test_clean_success_does_not_label_output_as_retained_stage(self) -> None:
@@ -1253,7 +1264,7 @@ class AtomicRenderTests(unittest.TestCase):
             )
             self.assertNotIn("the prior tree remains at", message)
 
-    def test_backup_cleanup_failure_reports_warning_after_successful_commit(
+    def test_backup_cleanup_failure_fails_after_successful_commit(
         self,
     ) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
@@ -1268,15 +1279,16 @@ class AtomicRenderTests(unittest.TestCase):
             ) -> None:
                 raise PermissionError("forced backup cleanup failure")
 
-            output = io.StringIO()
             with patch.object(
                 render_skills,
-                "_retain_verified_backup",
+                "_remove_verified_backup",
                 side_effect=fail_backup_cleanup,
-            ), redirect_stdout(output):
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "rendered tree was committed.*forced backup cleanup failure",
+            ):
                 render_skills.render_all(output_root=target)
 
-            self.assertIn("rendered tree was committed", output.getvalue())
             backups = [
                 path
                 for path in self.transaction_artifacts(parent, target.name)
@@ -1284,6 +1296,49 @@ class AtomicRenderTests(unittest.TestCase):
             ]
             self.assertEqual(1, len(backups))
             self.assertEqual(before, self.snapshot(backups[0]))
+            self.assertNotEqual(before, self.snapshot(target))
+
+    def test_post_removal_cleanup_error_reports_no_verified_survivor(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            real_remove = render_skills._remove_verified_backup
+
+            def remove_then_fail(
+                *args: object,
+                **kwargs: object,
+            ) -> None:
+                real_remove(*args, **kwargs)
+                raise OSError("forced post-removal durability failure")
+
+            with patch.object(
+                render_skills,
+                "_remove_verified_backup",
+                side_effect=remove_then_fail,
+            ), self.assertRaises(
+                render_skills.RenderTransactionError,
+            ) as raised:
+                render_skills.render_all(output_root=target)
+
+            message = str(raised.exception)
+            self.assertIn(
+                "no verified surviving prior-tree path was found",
+                message,
+            )
+            self.assertIn(
+                "forced post-removal durability failure",
+                message,
+            )
+            self.assertNotIn(
+                "verified surviving prior-tree location",
+                message,
+            )
+            self.assertEqual(
+                [],
+                self.transaction_artifacts(parent, target.name),
+            )
 
     def test_backup_substitution_during_cleanup_is_not_deleted(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
@@ -1295,7 +1350,7 @@ class AtomicRenderTests(unittest.TestCase):
             sentinel = concurrent / "valuable.txt"
             sentinel.write_text("preserve concurrent bytes\n", encoding="utf-8")
             prior = self.snapshot(target)
-            real_remove = render_skills._retain_verified_backup
+            real_remove = render_skills._remove_verified_backup
             substituted = False
 
             def substitute_before_cleanup(
@@ -1309,19 +1364,18 @@ class AtomicRenderTests(unittest.TestCase):
                 concurrent.rename(backup)
                 real_remove(backup, expected, parent_handle)
 
-            output = io.StringIO()
             with patch.object(
                 render_skills,
-                "_retain_verified_backup",
+                "_remove_verified_backup",
                 side_effect=substitute_before_cleanup,
-            ), redirect_stdout(output):
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "verified surviving prior-tree location",
+            ) as raised:
                 render_skills.render_all(output_root=target)
 
             self.assertTrue(substituted)
-            self.assertIn(
-                "backup could not be verified for retention",
-                output.getvalue(),
-            )
+            self.assertIn(str(accepted_backup), str(raised.exception))
             self.assertEqual(prior, self.snapshot(accepted_backup))
             backups = [
                 path
@@ -1377,19 +1431,17 @@ class AtomicRenderTests(unittest.TestCase):
                     finally:
                         os.close(file_descriptor)
 
-            output = io.StringIO()
             with patch.object(
                 render_skills,
                 "_verify_directory_descriptor_tree",
                 side_effect=add_entry_after_backup_verification,
-            ), redirect_stdout(output):
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "verified cleanup of the accepted prior tree failed",
+            ):
                 render_skills.render_all(output_root=target)
 
             self.assertTrue(injected)
-            self.assertIn(
-                "backup could not be verified for retention",
-                output.getvalue(),
-            )
             backups = [
                 path
                 for path in self.transaction_artifacts(parent, target.name)
@@ -2835,7 +2887,7 @@ class AtomicRenderTests(unittest.TestCase):
     def test_case_insensitive_source_alias_overlap_is_rejected(self) -> None:
         with TemporaryDirectory(
             prefix=".atomic-render-case-",
-            dir=REPO_ROOT,
+            dir=repository_test_tmp_root(),
         ) as temp_root:
             parent = Path(temp_root)
             repository = parent / "repo"
@@ -2899,7 +2951,7 @@ class AtomicRenderTests(unittest.TestCase):
     def test_case_insensitive_tracked_canonical_alias_is_rejected(self) -> None:
         with TemporaryDirectory(
             prefix=".atomic-render-case-",
-            dir=REPO_ROOT,
+            dir=repository_test_tmp_root(),
         ) as temp_root:
             repository = Path(temp_root) / "repo"
             repository.mkdir()
@@ -3506,22 +3558,22 @@ class AtomicRenderTests(unittest.TestCase):
             ]
             self.assertEqual(1, len(recoveries))
 
-    def test_parent_change_after_success_cleanup_is_reported(self) -> None:
+    def test_parent_change_before_success_cleanup_is_reported(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             root = Path(temp_root)
             approved_parent = root / "approved-parent"
             approved_parent.mkdir()
             target = self.seeded_target(approved_parent)
             displaced_parent = root / "displaced-parent"
-            real_cleanup = render_skills._retain_verified_backup
+            prior = self.snapshot(target)
+            real_cleanup = render_skills._remove_verified_backup
             changed = False
 
-            def cleanup_then_change_parent(
+            def change_parent_then_cleanup(
                 *args: object,
                 **kwargs: object,
-            ) -> Path:
+            ) -> None:
                 nonlocal changed
-                retained = real_cleanup(*args, **kwargs)
                 approved_parent.rename(displaced_parent)
                 approved_parent.mkdir()
                 (approved_parent / "sentinel.txt").write_text(
@@ -3529,12 +3581,12 @@ class AtomicRenderTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 changed = True
-                return retained
+                real_cleanup(*args, **kwargs)
 
             with patch.object(
                 render_skills,
-                "_retain_verified_backup",
-                side_effect=cleanup_then_change_parent,
+                "_remove_verified_backup",
+                side_effect=change_parent_then_cleanup,
             ), self.assertRaisesRegex(
                 render_skills.RenderTransactionError,
                 f"survives at {re.escape(str(displaced_parent.resolve()))}",
@@ -3548,6 +3600,64 @@ class AtomicRenderTests(unittest.TestCase):
             )
             self.assertTrue((displaced_parent / target.name).is_dir())
             self.assertFalse(target.exists())
+            backups = [
+                path
+                for path in displaced_parent.iterdir()
+                if ".backup-" in path.name
+            ]
+            self.assertEqual(1, len(backups))
+            self.assertEqual(prior, self.snapshot(backups[0]))
+
+    def test_parent_change_after_success_cleanup_cannot_report_success(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            root = Path(temp_root)
+            approved_parent = root / "approved-parent"
+            approved_parent.mkdir()
+            target = self.seeded_target(approved_parent)
+            displaced_parent = root / "displaced-parent"
+            real_cleanup = render_skills._remove_verified_backup
+            changed = False
+
+            def cleanup_then_change_parent(
+                *args: object,
+                **kwargs: object,
+            ) -> None:
+                nonlocal changed
+                real_cleanup(*args, **kwargs)
+                approved_parent.rename(displaced_parent)
+                approved_parent.mkdir()
+                (approved_parent / "sentinel.txt").write_text(
+                    "replacement parent bytes\n",
+                    encoding="utf-8",
+                )
+                changed = True
+
+            with patch.object(
+                render_skills,
+                "_remove_verified_backup",
+                side_effect=cleanup_then_change_parent,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "prior tree was verified and removed.*parent changed",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(changed)
+            self.assertEqual(
+                "replacement parent bytes\n",
+                (approved_parent / "sentinel.txt").read_text(encoding="utf-8"),
+            )
+            self.assertTrue((displaced_parent / target.name).is_dir())
+            self.assertFalse(target.exists())
+            self.assertEqual(
+                [],
+                self.transaction_artifacts(
+                    displaced_parent,
+                    target.name,
+                ),
+            )
 
     def test_prior_tree_mode_change_at_backup_is_preserved(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
@@ -3598,7 +3708,7 @@ class AtomicRenderTests(unittest.TestCase):
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             prior = self.snapshot(target)
-            real_retain = render_skills._retain_owned_directory
+            real_remove = render_skills._remove_owned_directory
             changed_mode: int | None = None
 
             def change_root_mode_before_cleanup(
@@ -3617,7 +3727,7 @@ class AtomicRenderTests(unittest.TestCase):
                     0o700 if expected_mode != 0o700 else 0o755
                 )
                 directory.chmod(changed_mode)
-                real_retain(
+                real_remove(
                     directory,
                     expected_device,
                     expected_inode,
@@ -3626,19 +3736,17 @@ class AtomicRenderTests(unittest.TestCase):
                     parent_descriptor=parent_descriptor,
                 )
 
-            output = io.StringIO()
             with patch.object(
                 render_skills,
-                "_retain_owned_directory",
+                "_remove_owned_directory",
                 side_effect=change_root_mode_before_cleanup,
-            ), redirect_stdout(output):
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "verified cleanup of the accepted prior tree failed",
+            ):
                 render_skills.render_all(output_root=target)
 
             self.assertIsNotNone(changed_mode)
-            self.assertIn(
-                "backup could not be verified for retention",
-                output.getvalue(),
-            )
             backups = [
                 path
                 for path in self.transaction_artifacts(parent, target.name)
@@ -3721,35 +3829,36 @@ class AtomicRenderTests(unittest.TestCase):
                 str(raised.exception),
             )
 
-    def test_moved_retained_backup_is_rescanned_for_notice(self) -> None:
+    def test_moved_backup_is_rescanned_for_cleanup_failure(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             prior = self.snapshot(target)
             relocated_backup = parent / ".relocated-prior-tree"
             original_backup: Path | None = None
-            real_retain = render_skills._retain_verified_backup
-            output = io.StringIO()
+            real_remove = render_skills._remove_verified_backup
 
-            def retain_then_relocate(
+            def relocate_then_remove(
                 backup_root: Path,
                 expected: render_skills.RenderOutputState,
                 parent_handle: render_skills.RenderParentHandle | None = None,
-            ) -> Path:
+            ) -> None:
                 nonlocal original_backup
-                original_backup = real_retain(
+                original_backup = backup_root
+                original_backup.rename(relocated_backup)
+                real_remove(
                     backup_root,
                     expected,
                     parent_handle,
                 )
-                original_backup.rename(relocated_backup)
-                return original_backup
 
             with patch.object(
                 render_skills,
-                "_retain_verified_backup",
-                side_effect=retain_then_relocate,
-            ), redirect_stdout(output):
+                "_remove_verified_backup",
+                side_effect=relocate_then_remove,
+            ), self.assertRaises(
+                render_skills.RenderTransactionError,
+            ) as raised:
                 render_skills.render_all(output_root=target)
 
             self.assertIsNotNone(original_backup)
@@ -3757,13 +3866,11 @@ class AtomicRenderTests(unittest.TestCase):
             self.assertFalse(original_backup.exists())
             self.assertTrue(relocated_backup.is_dir())
             self.assertEqual(prior, self.snapshot(relocated_backup))
-            notice = next(
-                line
-                for line in output.getvalue().splitlines()
-                if "prior rendered tree retained for explicit cleanup" in line
+            self.assertIn(
+                str(relocated_backup.resolve()),
+                str(raised.exception),
             )
-            self.assertIn(str(relocated_backup.resolve()), notice)
-            self.assertNotIn(str(original_backup), notice)
+            self.assertNotIn(str(original_backup), str(raised.exception))
 
     def test_staged_write_close_interruption_preserves_primary_and_closes_all(
         self,
@@ -4022,6 +4129,232 @@ class CallerWorkspacePreservationTests(unittest.TestCase):
             for path in sorted(root.rglob("*"))
             if path.is_file()
         }
+
+    def test_successful_private_workspace_is_removed(self) -> None:
+        with TemporaryDirectory(prefix="caller-workspace-success-") as temp_root:
+            parent = Path(temp_root)
+            workspace = parent / "workspace"
+            workspace.mkdir(mode=0o700)
+            output = io.StringIO()
+
+            with redirect_stdout(output), render_skills._retained_workspace_scope(
+                workspace,
+                "success",
+            ):
+                (workspace / "sentinel.txt").write_text(
+                    "temporary bytes\n",
+                    encoding="utf-8",
+                )
+
+            self.assertFalse(workspace.exists())
+            self.assertEqual([], list(parent.glob(".render-cleanup-*")))
+            self.assertNotIn("retained", output.getvalue().lower())
+
+    def test_workspace_parent_change_before_cleanup_preserves_workspace(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="caller-workspace-parent-") as temp_root:
+            root = Path(temp_root)
+            approved_parent = root / "approved-parent"
+            approved_parent.mkdir()
+            workspace = approved_parent / "workspace"
+            workspace.mkdir(mode=0o700)
+            displaced_parent = root / "displaced-parent"
+            real_capture = render_skills._capture_directory_descriptor_tree
+            output = io.StringIO()
+
+            def capture_then_change_parent(
+                *args: object,
+                **kwargs: object,
+            ) -> tuple[render_skills.RenderTreeEntry, ...]:
+                captured = real_capture(*args, **kwargs)
+                approved_parent.rename(displaced_parent)
+                approved_parent.mkdir()
+                (approved_parent / "sentinel.txt").write_text(
+                    "replacement parent bytes\n",
+                    encoding="utf-8",
+                )
+                return captured
+
+            with patch.object(
+                render_skills,
+                "_capture_directory_descriptor_tree",
+                side_effect=capture_then_change_parent,
+            ), redirect_stdout(output), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "render output parent changed",
+            ):
+                with render_skills._retained_workspace_scope(
+                    workspace,
+                    "success",
+                ):
+                    (workspace / "temporary.txt").write_text(
+                        "temporary bytes\n",
+                        encoding="utf-8",
+                    )
+
+            retained = displaced_parent / "workspace"
+            self.assertTrue(retained.is_dir())
+            self.assertEqual(
+                "temporary bytes\n",
+                (retained / "temporary.txt").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                "replacement parent bytes\n",
+                (approved_parent / "sentinel.txt").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                (
+                    "workspace retained for explicit cleanup at: "
+                    f"{retained.resolve()}"
+                ),
+                output.getvalue(),
+            )
+
+    def test_workspace_parent_change_after_cleanup_cannot_report_success(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="caller-workspace-parent-") as temp_root:
+            root = Path(temp_root)
+            approved_parent = root / "approved-parent"
+            approved_parent.mkdir()
+            workspace = approved_parent / "workspace"
+            workspace.mkdir(mode=0o700)
+            displaced_parent = root / "displaced-parent"
+            real_remove = render_skills._remove_owned_directory
+            output = io.StringIO()
+
+            def cleanup_then_change_parent(
+                *args: object,
+                **kwargs: object,
+            ) -> None:
+                real_remove(*args, **kwargs)
+                approved_parent.rename(displaced_parent)
+                approved_parent.mkdir()
+                (approved_parent / "sentinel.txt").write_text(
+                    "replacement parent bytes\n",
+                    encoding="utf-8",
+                )
+
+            with patch.object(
+                render_skills,
+                "_remove_owned_directory",
+                side_effect=cleanup_then_change_parent,
+            ), redirect_stdout(output), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "render output parent changed",
+            ):
+                with render_skills._retained_workspace_scope(
+                    workspace,
+                    "success",
+                ):
+                    (workspace / "temporary.txt").write_text(
+                        "temporary bytes\n",
+                        encoding="utf-8",
+                    )
+
+            self.assertFalse((displaced_parent / "workspace").exists())
+            self.assertEqual(
+                "replacement parent bytes\n",
+                (approved_parent / "sentinel.txt").read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "workspace was verified and removed",
+                output.getvalue(),
+            )
+            self.assertNotIn(
+                "workspace retained for explicit cleanup",
+                output.getvalue(),
+            )
+
+    def test_post_removal_workspace_error_reports_no_verified_survivor(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="caller-workspace-cleanup-") as temp_root:
+            parent = Path(temp_root)
+            workspace = parent / "workspace"
+            workspace.mkdir(mode=0o700)
+            real_remove = render_skills._remove_owned_directory
+            output = io.StringIO()
+
+            def remove_then_fail(
+                *args: object,
+                **kwargs: object,
+            ) -> None:
+                real_remove(*args, **kwargs)
+                raise OSError("forced post-removal workspace failure")
+
+            with patch.object(
+                render_skills,
+                "_remove_owned_directory",
+                side_effect=remove_then_fail,
+            ), redirect_stdout(output), self.assertRaisesRegex(
+                OSError,
+                "forced post-removal workspace failure",
+            ):
+                with render_skills._retained_workspace_scope(
+                    workspace,
+                    "success",
+                ):
+                    (workspace / "temporary.txt").write_text(
+                        "temporary bytes\n",
+                        encoding="utf-8",
+                    )
+
+            self.assertFalse(workspace.exists())
+            self.assertIn(
+                "no verified surviving workspace path was found",
+                output.getvalue(),
+            )
+            self.assertNotIn(
+                "workspace retained for explicit cleanup",
+                output.getvalue(),
+            )
+
+    def test_successful_determinism_check_removes_workspace(self) -> None:
+        with TemporaryDirectory(prefix="determinism-success-test-") as temp_root:
+            workspace = Path(temp_root) / "workspace"
+            workspace.mkdir(mode=0o700)
+            output = io.StringIO()
+
+            with patch.object(
+                check_determinism.tempfile,
+                "mkdtemp",
+                return_value=str(workspace),
+            ), redirect_stdout(output):
+                result = check_determinism.main()
+
+            self.assertEqual(0, result)
+            self.assertFalse(workspace.exists())
+            self.assertIn(
+                "Deterministic double render passed",
+                output.getvalue(),
+            )
+            self.assertNotIn("retained", output.getvalue().lower())
+
+    def test_successful_generated_drift_check_removes_workspace(self) -> None:
+        with TemporaryDirectory(prefix="drift-success-test-") as temp_root:
+            fixture_root = Path(temp_root)
+            build_root = fixture_root / "current-generated"
+            render_skills.render_all(output_root=build_root)
+            workspace = fixture_root / "workspace"
+            workspace.mkdir(mode=0o700)
+            output = io.StringIO()
+
+            with patch.object(
+                lint_skill_pack,
+                "BUILD_ROOT",
+                build_root,
+            ), patch.object(
+                lint_skill_pack.tempfile,
+                "mkdtemp",
+                return_value=str(workspace),
+            ), redirect_stdout(output):
+                errors = lint_skill_pack.lint_generated_drift()
+
+            self.assertEqual([], errors)
+            self.assertFalse(workspace.exists())
+            self.assertNotIn("retained", output.getvalue().lower())
 
     def assert_stage_initialization_interruption(
         self,

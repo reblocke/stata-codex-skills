@@ -6,14 +6,20 @@ CORES ?=
 UPSTREAM_REF ?=
 DEST ?=
 KEEP_WORKDIR ?=
+TEST_JOBS ?= 4
+TEST_TIMEOUT ?= 300
+TEST_GLOBAL_TIMEOUT ?= 360
 
 PACKAGE_ARGS = $(foreach package,$(PACKAGES),--package $(package))
 CORE_ARGS = $(foreach core,$(CORES),--core $(core))
 KEEP_WORKDIR_ARG = $(if $(strip $(KEEP_WORKDIR)),--keep-workdir,)
 DEST_ARG = $(if $(strip $(DEST)),--dest "$(DEST)",)
+TEST_RUN = TEST_JOBS="$(TEST_JOBS)" TEST_TIMEOUT="$(TEST_TIMEOUT)" \
+	TEST_GLOBAL_TIMEOUT="$(TEST_GLOBAL_TIMEOUT)" \
+	$(UV_RUN) python scripts/run_tests.py
 
-.PHONY: lock-check bootstrap doctor refresh fetch harvest scaffold build render \
-	prompt-check lint test deterministic-check scan check publish validate \
+.PHONY: lock-check bootstrap doctor refresh fetch harvest build render \
+	lint test deterministic-check scan check publish validate \
 	validate-core validate-packages validate-plugin-compile \
 	validate-plugin-runtime all
 
@@ -37,9 +43,6 @@ fetch: refresh
 harvest:
 	$(UV_RUN) python scripts/harvest_stata_help.py
 
-scaffold:
-	$(UV_RUN) python scripts/scaffold_content.py
-
 build: lock-check
 	$(UV_RUN) python scripts/scan_repository.py
 	$(UV_RUN) python scripts/lint_skill_pack.py --no-generated-check
@@ -47,14 +50,11 @@ build: lock-check
 
 render: build
 
-prompt-check:
-	$(UV_RUN) python scripts/lint_skill_pack.py --no-generated-check
-
 lint: build
 	$(UV_RUN) python scripts/lint_skill_pack.py
 
 test:
-	$(UV_RUN) python -m unittest discover -s tests -v
+	$(TEST_RUN)
 
 deterministic-check:
 	$(UV_RUN) python scripts/check_determinism.py
@@ -64,7 +64,7 @@ scan:
 
 check: build
 	$(UV_RUN) python scripts/lint_skill_pack.py
-	$(UV_RUN) python -m unittest discover -s tests -v
+	$(TEST_RUN)
 	$(UV_RUN) python scripts/check_determinism.py
 	$(UV_RUN) python scripts/scan_repository.py
 

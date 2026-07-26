@@ -20,6 +20,7 @@ from libskillpack import (
     REPO_ROOT,
     atomic_rename_at_no_replace,
 )
+from process_guard.authorization import allow_detached_process
 
 
 VALIDATION_RECEIPT_PATH = BUILD_ROOT.parent / "validation-receipt.json"
@@ -1022,15 +1023,16 @@ def _run_private_inventory(
             pass_fds = (repository_fd,)
         try:
             try:
-                return subprocess.run(
-                    command,
-                    check=False,
-                    capture_output=True,
-                    timeout=GIT_INVENTORY_TIMEOUT_SECONDS,
-                    pass_fds=pass_fds,
-                    preexec_fn=enter_anchored_directory,
-                    env=environment,
-                )
+                with allow_detached_process():
+                    return subprocess.run(
+                        command,
+                        check=False,
+                        capture_output=True,
+                        timeout=GIT_INVENTORY_TIMEOUT_SECONDS,
+                        pass_fds=pass_fds,
+                        preexec_fn=enter_anchored_directory,
+                        env=environment,
+                    )
             except (OSError, subprocess.TimeoutExpired) as error:
                 raise ValueError(
                     f"Could not inventory tracked source files: {error}"

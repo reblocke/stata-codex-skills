@@ -10,26 +10,17 @@ require_supported_runtime()
 
 from libskillpack import (
     CONTENT_ROOT,
-    RAW_ROOT,
     STATA_ADO_BASE,
     find_help_files_exact,
     iter_content_entries,
     load_skill_config,
-    read_text,
     relative_to_stata,
-    sha256_file,
-    strip_smcl_markup,
-    write_text,
-    write_yaml,
+    sha256_stata_help_source,
 )
+from refresh_locks import candidate_relative_path, publish_lock_candidate
 
 
-CANDIDATE_REPORT = RAW_ROOT / "candidates" / "stata-help-candidates.yaml"
-
-
-def normalized_destination(source: Path) -> Path:
-    relative = source.relative_to(STATA_ADO_BASE)
-    return RAW_ROOT / "stata-help" / "normalized" / relative.with_suffix(".md")
+CANDIDATE_TARGET = "stata-help-harvest"
 
 
 def harvest_entry(skill_key: str, path: Path, entry: dict) -> tuple[dict, list[str]]:
@@ -53,20 +44,15 @@ def harvest_entry(skill_key: str, path: Path, entry: dict) -> tuple[dict, list[s
             f"{path}: curated local_help_files differ from exact/glob resolution"
         )
 
-    harvested: list[dict] = []
+    resolved_sources: list[dict] = []
     for source in resolved:
-        destination = normalized_destination(source)
-        cleaned = strip_smcl_markup(read_text(source))
-        header = (
-            f"# {source.stem}\n\n"
-            f"Source: `{relative_to_stata(source)}`\n\n"
-        )
-        write_text(destination, header + cleaned + "\n")
-        harvested.append(
+        resolved_sources.append(
             {
                 "path": relative_to_stata(source),
-                "sha256": sha256_file(source),
-                "normalized_file": str(destination.relative_to(RAW_ROOT.parent)),
+                "sha256": sha256_stata_help_source(
+                    source,
+                    help_root=STATA_ADO_BASE,
+                ),
             }
         )
 
@@ -79,7 +65,7 @@ def harvest_entry(skill_key: str, path: Path, entry: dict) -> tuple[dict, list[s
         "declared_files": declared_files,
         "resolved_files": resolved_files,
         "missing_selectors": missing_selectors,
-        "harvested": harvested,
+        "resolved_sources": resolved_sources,
         "review_required": bool(errors),
     }
     return report, errors
@@ -106,23 +92,25 @@ def build_candidate_report() -> tuple[dict, list[str]]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=(
-            "Resolve exact reviewed Stata help selectors, write normalized raw "
-            "candidates, and never rewrite curated content YAML."
+            "Resolve exact reviewed Stata help selectors, write one fixed "
+            "paths-and-hashes candidate report, and never rewrite curated "
+            "content YAML."
         )
     )
-    parser.add_argument(
-        "--report",
-        type=Path,
-        default=CANDIDATE_REPORT,
-        help="Reviewable candidate report path.",
-    )
-    args = parser.parse_args(argv)
+    parser.parse_args(argv)
     if not STATA_ADO_BASE.exists():
         print(f"ERROR: Stata help root not found: {STATA_ADO_BASE}")
         return 1
-    report, errors = build_candidate_report()
-    write_yaml(args.report, report)
-    print(f"Wrote candidate report {args.report}")
+    try:
+        report, errors = build_candidate_report()
+        destination = publish_lock_candidate(
+            candidate_relative_path(CANDIDATE_TARGET),
+            report,
+        )
+    except Exception as error:
+        print(f"ERROR: {type(error).__name__}: {error}")
+        return 1
+    print(f"Wrote candidate report {destination}")
     for error in errors:
         print(f"ERROR: {error}")
     return 1 if errors else 0

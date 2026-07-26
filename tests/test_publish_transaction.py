@@ -23,6 +23,20 @@ import publish_local  # noqa: E402
 import release_state  # noqa: E402
 
 
+def repository_test_tmp_root() -> Path:
+    """Return an ignored scratch root on the repository filesystem."""
+
+    root = REPO_ROOT / "tests" / "tmp"
+    root.mkdir(parents=True, exist_ok=True)
+    if root.is_symlink() or not root.is_dir():
+        raise RuntimeError(f"unsafe repository test scratch root: {root}")
+    if root.stat().st_dev != REPO_ROOT.stat().st_dev:
+        raise RuntimeError(
+            f"repository test scratch root is on another filesystem: {root}"
+        )
+    return root
+
+
 def write_skill_tree(root: Path, label: str) -> None:
     for folder in release_state.SKILL_FOLDERS:
         skill_root = root / folder
@@ -706,7 +720,7 @@ class PublishTransactionTests(unittest.TestCase):
     ) -> None:
         with TemporaryDirectory(
             prefix=".publish-case-test-",
-            dir=REPO_ROOT,
+            dir=repository_test_tmp_root(),
         ) as temporary:
             root = Path(temporary)
             generated = root / "Generated"
@@ -738,7 +752,7 @@ class PublishTransactionTests(unittest.TestCase):
     ) -> None:
         with TemporaryDirectory(
             prefix=".publish-case-test-",
-            dir=REPO_ROOT,
+            dir=repository_test_tmp_root(),
         ) as temporary:
             root = Path(temporary)
             fake_repo = root / "Repository"
@@ -770,7 +784,7 @@ class PublishTransactionTests(unittest.TestCase):
     ) -> None:
         with TemporaryDirectory(
             prefix=".publish-case-test-",
-            dir=REPO_ROOT,
+            dir=repository_test_tmp_root(),
         ) as temporary:
             root = Path(temporary)
             generated = root / "Generated"
@@ -804,7 +818,7 @@ class PublishTransactionTests(unittest.TestCase):
     ) -> None:
         with TemporaryDirectory(
             prefix=".publish-case-test-",
-            dir=REPO_ROOT,
+            dir=repository_test_tmp_root(),
         ) as temporary:
             root = Path(temporary)
             container = root / "Container"
