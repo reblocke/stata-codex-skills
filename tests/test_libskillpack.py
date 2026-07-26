@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from contextlib import chdir
+import os
 from pathlib import Path
+import signal
 from subprocess import CompletedProcess, TimeoutExpired
 from tempfile import TemporaryDirectory
 import sys
+import time
 import unittest
 from unittest.mock import patch
 
@@ -32,6 +35,7 @@ class FakeResponse:
 class ImmediateProcess:
     def __init__(self, returncode: int = 0) -> None:
         self.args = ["stata"]
+        self.pid = 999_999_991
         self.returncode = returncode
         self.terminate_called = False
 
@@ -49,6 +53,7 @@ class ImmediateProcess:
 class HangingProcess:
     def __init__(self) -> None:
         self.args = ["stata"]
+        self.pid = 999_999_992
         self.returncode: int | None = None
         self.terminate_called = False
         self.kill_called = False
@@ -74,6 +79,7 @@ class HangingProcess:
 class MarkerThenNonexitProcess:
     def __init__(self) -> None:
         self.args = ["stata"]
+        self.pid = 999_999_993
         self.returncode: int | None = None
         self.terminate_called = False
         self.kill_called = False
@@ -97,6 +103,15 @@ class MarkerThenNonexitProcess:
 
 
 class RunStataDoTests(unittest.TestCase):
+    def setUp(self) -> None:
+        killpg_patcher = patch.object(
+            libskillpack.os,
+            "killpg",
+            side_effect=ProcessLookupError,
+        )
+        self.killpg = killpg_patcher.start()
+        self.addCleanup(killpg_patcher.stop)
+
     def _make_do_file(self, root: Path, name: str = "smoke.do") -> Path:
         root.mkdir(parents=True, exist_ok=True)
         do_file = root / name
@@ -137,6 +152,7 @@ class RunStataDoTests(unittest.TestCase):
                 del args
                 self.assertEqual(str(cwd), kwargs["cwd"])
                 self.assertEqual(str(cwd), kwargs["env"]["PWD"])
+                self.assertTrue(kwargs["start_new_session"])
                 (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
                 return ImmediateProcess()
 
@@ -294,6 +310,15 @@ class RunStataDoTests(unittest.TestCase):
                 (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
                 return process
 
+            def signal_group(_pid: int, sent_signal: int) -> None:
+                if sent_signal == signal.SIGTERM:
+                    process.terminate()
+                elif process.returncode is None:
+                    process.kill()
+                else:
+                    raise ProcessLookupError
+
+            self.killpg.side_effect = signal_group
             with patch.object(libskillpack.subprocess, "Popen", side_effect=fake_popen):
                 result, _ = libskillpack.run_stata_do(
                     Path("/fake/stata"),
@@ -336,6 +361,11 @@ class RunStataDoTests(unittest.TestCase):
             do_file = self._make_do_file(cwd)
             process = HangingProcess()
 
+            self.killpg.side_effect = (
+                lambda _pid, sent_signal: process.terminate()
+                if sent_signal == signal.SIGTERM
+                else process.kill()
+            )
             with patch.object(libskillpack.subprocess, "Popen", return_value=process):
                 result, log_path = libskillpack.run_stata_do(
                     Path("/fake/stata"),
@@ -350,6 +380,95 @@ class RunStataDoTests(unittest.TestCase):
             self.assertTrue(process.kill_called)
             self.assertEqual(2, process.communicate_calls)
             self.assertEqual(cwd / "smoke.log", log_path)
+
+
+class RunStataDescendantCleanupTests(unittest.TestCase):
+    def _assert_process_gone(self, pid: int) -> None:
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            time.sleep(0.02)
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        self.fail(f"descendant process {pid} survived Stata cleanup")
+
+    def _run_stub(self, *, write_marker: bool, timeout_seconds: float) -> int:
+        with TemporaryDirectory(prefix="stata-descendant-") as temp_root:
+            cwd = Path(temp_root) / "work"
+            cwd.mkdir()
+            do_file = cwd / "smoke.do"
+            do_file.write_text("clear all\n", encoding="utf-8")
+            marker = "VALIDATION COMPLETE: descendant-cleanup"
+            marker_command = (
+                f"printf '%s\\n' '{marker}' > \"$log_file\"\n"
+                if write_marker
+                else ""
+            )
+            stub = Path(temp_root) / "stata-stub"
+            stub.write_text(
+                "#!/bin/sh\n"
+                'do_file="$3"\n'
+                'log_file="${do_file%.do}.log"\n'
+                "(trap '' TERM; exec sleep 30) >/dev/null 2>&1 &\n"
+                "child_pid=$!\n"
+                "printf '%s\\n' \"$child_pid\" > child.pid\n"
+                f"{marker_command}"
+                'wait "$child_pid"\n',
+                encoding="utf-8",
+            )
+            stub.chmod(0o755)
+            result, _ = libskillpack.run_stata_do(
+                stub,
+                do_file,
+                cwd,
+                completion_marker=marker,
+                timeout_seconds=timeout_seconds,
+            )
+            child_pid = int((cwd / "child.pid").read_text(encoding="utf-8"))
+            self._assert_process_gone(child_pid)
+            return result.returncode
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
+    def test_marker_completion_removes_descendants(self) -> None:
+        self.assertEqual(0, self._run_stub(write_marker=True, timeout_seconds=2))
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
+    def test_timeout_removes_descendants(self) -> None:
+        self.assertEqual(124, self._run_stub(write_marker=False, timeout_seconds=1))
+
+
+class StrictYamlTests(unittest.TestCase):
+    def test_read_yaml_rejects_duplicate_top_level_key_with_source_lines(self) -> None:
+        with TemporaryDirectory(prefix="strict-yaml-") as temp_root:
+            path = Path(temp_root) / "duplicate.yaml"
+            path.write_text("slug: first\nslug: second\n", encoding="utf-8")
+
+            with self.assertRaises(libskillpack.yaml.YAMLError) as caught:
+                libskillpack.read_yaml(path)
+
+            message = str(caught.exception)
+            self.assertIn(str(path), message)
+            self.assertIn("duplicate key 'slug'", message)
+            self.assertIn("first occurrence was at line 1, column 1", message)
+            self.assertIn("line 2, column 1", message)
+
+    def test_parse_yaml_rejects_nested_duplicate_key_from_bytes(self) -> None:
+        source = Path("/reviewed/content.yaml")
+        payload = b"outer:\n  nested:\n    value: first\n    value: second\n"
+
+        with self.assertRaises(libskillpack.yaml.YAMLError) as caught:
+            libskillpack.parse_yaml(payload, source=source)
+
+        message = str(caught.exception)
+        self.assertIn(str(source), message)
+        self.assertIn("duplicate key 'value'", message)
+        self.assertIn("first occurrence was at line 3, column 5", message)
+        self.assertIn("line 4, column 5", message)
 
 
 class ErrorDetectionTests(unittest.TestCase):

@@ -21,6 +21,7 @@ from libskillpack import (
     REPO_ROOT,
     UPSTREAM_REPO_DIR,
     UPSTREAM_REPO_URL,
+    parse_yaml,
     read_yaml,
 )
 
@@ -1816,7 +1817,7 @@ def remove_stale_report(target: ReportTarget) -> PreservedReport | None:
         if len(payload) > MAX_REPORT_BYTES:
             raise RuntimeError("Existing comparison report is too large to be owned")
         try:
-            parsed = yaml.safe_load(payload.decode("utf-8"))
+            parsed = parse_yaml(payload, source=target.path)
         except (UnicodeDecodeError, yaml.YAMLError) as error:
             raise RuntimeError(
                 "Existing comparison report is foreign; preserving it"

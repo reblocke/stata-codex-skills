@@ -116,6 +116,34 @@ class RepositoryScanTests(unittest.TestCase):
                     )
                 )
 
+    def test_forbidden_artifact_content_is_never_opened_or_scanned(self) -> None:
+        with TemporaryDirectory(prefix="repo-scan-forbidden-no-read-") as temp_root:
+            root = Path(temp_root)
+            forbidden = root / "build" / "generated" / "SKILL.md"
+            forbidden.parent.mkdir(parents=True)
+            forbidden.write_text(
+                "-----BEGIN " + "ENCRYPTED PRIVATE KEY-----\n",
+                encoding="utf-8",
+            )
+            with patch.object(
+                scan_repository,
+                "_read_reviewable_file",
+                side_effect=AssertionError("forbidden content must not be opened"),
+            ) as reader:
+                errors = scan_repository.scan_paths(
+                    root,
+                    [Path("build/generated/SKILL.md")],
+                )
+
+        reader.assert_not_called()
+        self.assertEqual(
+            [
+                "build/generated/SKILL.md: "
+                "forbidden generated or third-party artifact"
+            ],
+            errors,
+        )
+
     def test_high_confidence_secret_patterns_are_reported(self) -> None:
         with TemporaryDirectory(prefix="repo-scan-") as temp_root:
             root = Path(temp_root)
@@ -137,6 +165,86 @@ class RepositoryScanTests(unittest.TestCase):
         self.assertTrue(any("AWS access key" in error for error in errors))
         self.assertTrue(any("GitHub token" in error for error in errors))
         self.assertTrue(any("OpenAI API key" in error for error in errors))
+
+    def test_secret_crossing_a_read_boundary_is_reported(self) -> None:
+        with TemporaryDirectory(prefix="repo-scan-boundary-secret-") as temp_root:
+            root = Path(temp_root)
+            secret = b"github_" + b"pat_" + b"A" * 40
+            prefix_size = scan_repository.READ_CHUNK_BYTES - len(secret) // 2
+            (root / "config.md").write_bytes(b"x" * prefix_size + b"\n" + secret)
+
+            errors = scan_repository.scan_paths(root, [Path("config.md")])
+
+        self.assertTrue(any("GitHub token" in error for error in errors))
+
+    def test_oversized_source_is_rejected_before_content_read(self) -> None:
+        with TemporaryDirectory(prefix="repo-scan-oversized-") as temp_root:
+            root = Path(temp_root)
+            source = root / "source.md"
+            with source.open("wb") as handle:
+                handle.truncate(scan_repository.MAX_REVIEWABLE_FILE_BYTES + 1)
+
+            with patch.object(
+                scan_repository.os,
+                "read",
+                side_effect=AssertionError("oversized source must not be read"),
+            ) as reader:
+                errors = scan_repository.scan_paths(root, [Path("source.md")])
+
+        reader.assert_not_called()
+        self.assertEqual(1, len(errors))
+        self.assertIn("exceeds 4194304-byte scan limit", errors[0])
+
+    def test_allowed_source_is_read_in_bounded_chunks(self) -> None:
+        with TemporaryDirectory(prefix="repo-scan-bounded-read-") as temp_root:
+            root = Path(temp_root)
+            source = root / "source.md"
+            source.write_bytes(b"x" * (scan_repository.READ_CHUNK_BYTES + 1))
+            requested_sizes: list[int] = []
+            original_read = os.read
+
+            def recording_read(file_descriptor: int, size: int) -> bytes:
+                requested_sizes.append(size)
+                return original_read(file_descriptor, size)
+
+            with patch.object(scan_repository.os, "read", side_effect=recording_read):
+                errors = scan_repository.scan_paths(root, [Path("source.md")])
+
+        self.assertEqual([], errors)
+        self.assertGreaterEqual(len(requested_sizes), 2)
+        self.assertTrue(
+            all(
+                requested_size <= scan_repository.READ_CHUNK_BYTES
+                for requested_size in requested_sizes
+            )
+        )
+
+    def test_source_mutation_during_read_fails_closed(self) -> None:
+        with TemporaryDirectory(prefix="repo-scan-read-race-") as temp_root:
+            root = Path(temp_root)
+            source = root / "source.md"
+            source.write_bytes(b"x" * (scan_repository.READ_CHUNK_BYTES + 1))
+            original_read = os.read
+            mutated = False
+
+            def mutating_read(file_descriptor: int, size: int) -> bytes:
+                nonlocal mutated
+                chunk = original_read(file_descriptor, size)
+                if chunk and not mutated:
+                    mutated = True
+                    source.write_bytes(b"changed during scan\n")
+                return chunk
+
+            with patch.object(scan_repository.os, "read", side_effect=mutating_read):
+                errors = scan_repository.scan_paths(root, [Path("source.md")])
+
+        self.assertTrue(mutated)
+        self.assertTrue(
+            any(
+                "source file changed while reading" in error
+                for error in errors
+            )
+        )
 
     def test_benign_extensions_under_generated_roots_are_reported(self) -> None:
         with TemporaryDirectory(prefix="repo-scan-") as temp_root:

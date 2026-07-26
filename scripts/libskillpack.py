@@ -3,14 +3,19 @@ from __future__ import annotations
 import ctypes
 from functools import lru_cache
 import hashlib
+import io
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import time
 import urllib.request
 import yaml
+from yaml.constructor import ConstructorError
+from yaml.nodes import MappingNode
+from yaml.resolver import BaseResolver
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -28,6 +33,68 @@ UPSTREAM_REPO_URL = "https://github.com/dylantmoore/stata-skill.git"
 UPSTREAM_REPO_DIR = RAW_ROOT / "upstream" / "stata-skill"
 STATA_ROOT = Path("/Applications/Stata")
 STATA_ADO_BASE = STATA_ROOT / "ado" / "base"
+
+
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    """Safe YAML loader that refuses ambiguous mapping keys."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeySafeLoader,
+    node: MappingNode,
+    deep: bool = False,
+) -> dict:
+    if not isinstance(node, MappingNode):
+        raise ConstructorError(
+            None,
+            None,
+            f"expected a mapping node, but found {node.id}",
+            node.start_mark,
+        )
+    loader.flatten_mapping(node)
+    mapping: dict = {}
+    key_marks: dict = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as error:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                "found an unhashable key",
+                key_node.start_mark,
+            ) from error
+        if duplicate:
+            first_mark = key_marks[key]
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                (
+                    f"found duplicate key {key!r}; first occurrence was at "
+                    f"line {first_mark.line + 1}, column {first_mark.column + 1}"
+                ),
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+        key_marks[key] = key_node.start_mark
+    return mapping
+
+
+_UniqueKeySafeLoader.add_constructor(
+    BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
+
+
+def parse_yaml(data: str | bytes, *, source: str | Path) -> object:
+    """Parse safe YAML while rejecting duplicate keys at every nesting level."""
+
+    if isinstance(data, bytes):
+        data = data.decode("utf-8")
+    stream = io.StringIO(data)
+    stream.name = os.fspath(source)
+    return yaml.load(stream, Loader=_UniqueKeySafeLoader)
 
 
 def atomic_rename_at_no_replace(
@@ -115,7 +182,7 @@ def write_text(path: Path, text: str) -> None:
 def read_yaml(path: Path) -> dict:
     if not path.exists():
         return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = parse_yaml(path.read_text(encoding="utf-8"), source=path)
     return data or {}
 
 
@@ -409,6 +476,16 @@ def detect_stata_binary() -> Path | None:
     return None
 
 
+def _signal_process_group(
+    process: subprocess.Popen[str],
+    process_signal: signal.Signals,
+) -> None:
+    try:
+        os.killpg(process.pid, process_signal)
+    except ProcessLookupError:
+        pass
+
+
 def run_stata_do(
     stata_binary: Path,
     do_file: Path,
@@ -436,6 +513,7 @@ def run_stata_do(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        start_new_session=True,
     )
     marker_found = False
     timed_out = False
@@ -457,16 +535,20 @@ def run_stata_do(
             break
         time.sleep(min(0.1, remaining))
 
-    if process.poll() is None:
-        stopped_after_marker = marker_found
-        process.terminate()
-        try:
-            stdout, stderr = process.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            stdout, stderr = process.communicate(timeout=5)
+    stopped_after_marker = marker_found and process.poll() is None
+    _signal_process_group(process, signal.SIGTERM)
+    try:
+        stdout, stderr = process.communicate(timeout=5)
+    except subprocess.TimeoutExpired:
+        _signal_process_group(process, signal.SIGKILL)
+        stdout, stderr = process.communicate(timeout=5)
+    except BaseException:
+        _signal_process_group(process, signal.SIGKILL)
+        raise
     else:
-        stdout, stderr = process.communicate()
+        # A descendant can ignore SIGTERM and close inherited pipes, allowing
+        # communicate() to return after only the group leader exits.
+        _signal_process_group(process, signal.SIGKILL)
 
     log_text = read_text(log_path) if log_path.exists() else ""
     marker_found = any(line.strip() == completion_marker for line in log_text.splitlines())

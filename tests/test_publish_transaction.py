@@ -111,6 +111,26 @@ class PublishTransactionTests(unittest.TestCase):
             )
         return payload
 
+    def test_missing_atomic_rename_primitive_is_a_publish_error(self) -> None:
+        with patch.object(
+            publish_local.sys,
+            "platform",
+            "darwin",
+        ), patch.object(
+            publish_local.ctypes,
+            "CDLL",
+            return_value=object(),
+        ), self.assertRaisesRegex(
+            publish_local.PublishError,
+            "lacks atomic no-replace rename support",
+        ):
+            publish_local._atomic_rename_no_replace(
+                "source",
+                "destination",
+                src_dir_fd=1,
+                dst_dir_fd=2,
+            )
+
     def test_missing_receipt_makes_no_destination_changes(self) -> None:
         with TemporaryDirectory(prefix="publish-test-") as temporary:
             root = Path(temporary)

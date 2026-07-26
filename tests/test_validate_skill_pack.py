@@ -372,43 +372,130 @@ class CliValidationTests(unittest.TestCase):
             self.assertEqual(1, exit_code)
             runtime_validator.assert_not_called()
 
-    def test_keep_workdir_preserves_failed_run(self) -> None:
+    def test_keep_workdir_preserves_failed_owned_run(self) -> None:
         with TemporaryDirectory(prefix="validation-parent-") as parent:
-            work_root = Path(parent) / "failed"
-            work_root.mkdir()
-            with patch.object(validate_skill_pack, "lint_repo", return_value=[]), patch.object(
+            temp_parent = Path(parent)
+            with patch.object(
+                validate_skill_pack.tempfile,
+                "gettempdir",
+                return_value=parent,
+            ), patch.object(validate_skill_pack, "lint_repo", return_value=[]), patch.object(
                 validate_skill_pack, "detect_stata_binary", return_value=Path("/fake/stata")
             ), patch.object(
                 validate_skill_pack,
                 "validate_core",
                 return_value=[("sample", False, "failed")],
-            ), supplied_validation_workspace(work_root):
+            ):
                 exit_code = validate_skill_pack.main(
                     ["--suite", "core", "--keep-workdir"]
                 )
 
             self.assertEqual(1, exit_code)
-            self.assertTrue(work_root.is_dir())
+            retained = list(temp_parent.iterdir())
+            self.assertEqual(1, len(retained))
+            self.assertTrue(
+                retained[0].name.startswith(
+                    validate_skill_pack.VALIDATION_TRANSACTION_PREFIX
+                )
+            )
+            self.assertTrue(
+                (
+                    retained[0]
+                    / validate_skill_pack.VALIDATION_WORKDIR_NAME
+                ).is_dir()
+            )
 
-    def test_successful_run_is_retained_for_explicit_cleanup(self) -> None:
+    def test_keep_workdir_preserves_successful_owned_run(self) -> None:
         with TemporaryDirectory(prefix="validation-parent-") as parent:
-            work_root = Path(parent) / "successful"
-            work_root.mkdir()
-            with patch.object(validate_skill_pack, "lint_repo", return_value=[]), patch.object(
+            temp_parent = Path(parent)
+            with patch.object(
+                validate_skill_pack.tempfile,
+                "gettempdir",
+                return_value=parent,
+            ), patch.object(validate_skill_pack, "lint_repo", return_value=[]), patch.object(
                 validate_skill_pack, "detect_stata_binary", return_value=Path("/fake/stata")
             ), patch.object(
                 validate_skill_pack,
                 "validate_core",
                 return_value=[("sample", True, "")],
-            ), supplied_validation_workspace(work_root):
+            ):
                 exit_code = validate_skill_pack.main(
                     ["--suite", "core", "--keep-workdir"]
                 )
 
             self.assertEqual(0, exit_code)
-            self.assertTrue(work_root.is_dir())
+            retained = list(temp_parent.iterdir())
+            self.assertEqual(1, len(retained))
+            self.assertTrue(
+                (
+                    retained[0]
+                    / validate_skill_pack.VALIDATION_WORKDIR_NAME
+                ).is_dir()
+            )
 
-    def test_failed_run_is_retained_without_keep_workdir(self) -> None:
+    def test_successful_owned_run_is_removed_without_keep_workdir(self) -> None:
+        with TemporaryDirectory(prefix="validation-parent-") as parent:
+            temp_parent = Path(parent)
+
+            def validate_with_artifact(
+                _stata_binary: Path,
+                work_root: Path,
+                _selected_slugs: list[str] | None,
+            ) -> list[tuple[str, bool, str]]:
+                artifact = work_root / "core" / "sample" / "result.log"
+                artifact.parent.mkdir(parents=True)
+                artifact.write_text("validation output\n", encoding="utf-8")
+                return [("sample", True, "")]
+
+            with patch.object(
+                validate_skill_pack.tempfile,
+                "gettempdir",
+                return_value=parent,
+            ), patch.object(validate_skill_pack, "lint_repo", return_value=[]), patch.object(
+                validate_skill_pack, "detect_stata_binary", return_value=Path("/fake/stata")
+            ), patch.object(
+                validate_skill_pack,
+                "validate_core",
+                side_effect=validate_with_artifact,
+            ):
+                exit_code = validate_skill_pack.main(["--suite", "core"])
+
+            self.assertEqual(0, exit_code)
+            self.assertEqual([], list(temp_parent.iterdir()))
+
+    def test_failed_owned_run_is_removed_without_keep_workdir(self) -> None:
+        with TemporaryDirectory(prefix="validation-parent-") as parent:
+            temp_parent = Path(parent)
+
+            def fail_with_artifact(
+                _stata_binary: Path,
+                work_root: Path,
+                _selected_slugs: list[str] | None,
+            ) -> list[tuple[str, bool, str]]:
+                artifact = work_root / "core" / "sample" / "failure.log"
+                artifact.parent.mkdir(parents=True)
+                artifact.write_text("failed output\n", encoding="utf-8")
+                return [("sample", False, "failed")]
+
+            with patch.object(
+                validate_skill_pack.tempfile,
+                "gettempdir",
+                return_value=parent,
+            ), patch.object(validate_skill_pack, "lint_repo", return_value=[]), patch.object(
+                validate_skill_pack, "detect_stata_binary", return_value=Path("/fake/stata")
+            ), patch.object(
+                validate_skill_pack,
+                "validate_core",
+                side_effect=fail_with_artifact,
+            ):
+                exit_code = validate_skill_pack.main(["--suite", "core"])
+
+            self.assertEqual(1, exit_code)
+            self.assertEqual([], list(temp_parent.iterdir()))
+
+    def test_nonowned_failed_fixture_is_retained_without_keep_workdir(
+        self,
+    ) -> None:
         with TemporaryDirectory(prefix="validation-parent-") as parent:
             work_root = Path(parent) / "failed"
             work_root.mkdir()
@@ -423,6 +510,20 @@ class CliValidationTests(unittest.TestCase):
 
             self.assertEqual(1, exit_code)
             self.assertTrue(work_root.is_dir())
+
+    def test_keep_workdir_help_describes_opt_in_retention(self) -> None:
+        help_text = " ".join(
+            validate_skill_pack.build_parser().format_help().split()
+        )
+
+        self.assertIn(
+            "Retain the run-private validation transaction",
+            help_text,
+        )
+        self.assertIn(
+            "ordinary completed runs remove their verified workspace",
+            help_text,
+        )
 
 
 class DiagnosticSanitizationTests(unittest.TestCase):

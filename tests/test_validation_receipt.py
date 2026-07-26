@@ -112,6 +112,10 @@ class ValidationReceiptCliTests(unittest.TestCase):
                 )
 
         self.assertEqual(0, result)
+        self.assertEqual(
+            [],
+            list(Path(self.validation_temp.name).iterdir()),
+        )
         write_receipt.assert_called_once_with(
             build_root=build_root,
             receipt_path=receipt,
@@ -312,8 +316,6 @@ class ValidationReceiptCliTests(unittest.TestCase):
             build_root = Path(temp_root) / "build" / "generated"
             build_root.parent.mkdir(parents=True)
             receipt = build_root.parent / "validation-receipt.json"
-            work_root = Path(temp_root) / "validation-work"
-            work_root.mkdir()
             contexts = self.default_patches()
             output = io.StringIO()
             with contexts[0], contexts[1], contexts[2], contexts[3], contexts[4], patch.object(
@@ -330,9 +332,9 @@ class ValidationReceiptCliTests(unittest.TestCase):
                 validate_skill_pack,
                 "BUILD_ROOT",
                 build_root,
-            ), supplied_validation_workspace(work_root), patch.object(
+            ), patch.object(
                 validate_skill_pack,
-                "_retain_validation_workdir",
+                "_remove_owned_validation_workspace",
                 side_effect=OSError("forced cleanup failure"),
             ), redirect_stdout(output):
                 result = validate_skill_pack.main(
@@ -347,15 +349,21 @@ class ValidationReceiptCliTests(unittest.TestCase):
         self.assertFalse(receipt.exists())
         write_receipt.assert_not_called()
         self.assertIn(
-            "validation workspace retention verification: FAIL",
+            "validation workspace cleanup: FAIL",
             output.getvalue(),
         )
         self.assertIn(
-            "validation workdir retention verification failed; inspect the "
+            "validation workdir cleanup failed closed; inspect the "
             "preservation details",
             output.getvalue(),
         )
-        self.assertIn(str(work_root), output.getvalue())
+        retained = list(
+            Path(self.validation_temp.name).glob(
+                f"{validate_skill_pack.VALIDATION_TRANSACTION_PREFIX}*"
+            )
+        )
+        self.assertEqual(1, len(retained))
+        self.assertIn(str(retained[0]), output.getvalue())
 
     def test_keep_workdir_preserves_incomplete_workspace_on_base_exception(
         self,
@@ -438,8 +446,6 @@ class ValidationReceiptCliTests(unittest.TestCase):
             build_root = Path(temp_root) / "build" / "generated"
             build_root.parent.mkdir(parents=True)
             receipt = build_root.parent / "validation-receipt.json"
-            work_root = Path(temp_root) / "validation-work"
-            work_root.mkdir()
             interruption = KeyboardInterrupt("forced keyboard interrupt")
 
             with patch.object(
@@ -460,8 +466,6 @@ class ValidationReceiptCliTests(unittest.TestCase):
                 validate_skill_pack,
                 "BUILD_ROOT",
                 build_root,
-            ), supplied_validation_workspace(
-                work_root
             ), self.assertRaises(KeyboardInterrupt) as raised:
                 validate_skill_pack.main(
                     [
@@ -472,7 +476,18 @@ class ValidationReceiptCliTests(unittest.TestCase):
                 )
 
             self.assertIs(interruption, raised.exception)
-            self.assertTrue(work_root.is_dir())
+            retained = list(
+                Path(self.validation_temp.name).glob(
+                    f"{validate_skill_pack.VALIDATION_TRANSACTION_PREFIX}*"
+                )
+            )
+            self.assertEqual(1, len(retained))
+            self.assertTrue(
+                (
+                    retained[0]
+                    / validate_skill_pack.VALIDATION_WORKDIR_NAME
+                ).is_dir()
+            )
             self.assertFalse(receipt.exists())
             write_receipt.assert_not_called()
 
@@ -1301,7 +1316,7 @@ class ValidationReceiptCliTests(unittest.TestCase):
             side_effect=write_validation_probe,
         ), redirect_stdout(output):
             result = validate_skill_pack.main(
-                ["--suite", "plugin-compile"]
+                ["--suite", "plugin-compile", "--keep-workdir"]
             )
 
         self.assertEqual(0, result)
@@ -1663,27 +1678,9 @@ class ValidationReceiptCliTests(unittest.TestCase):
                 result = validate_skill_pack.main(["--suite", "static"])
 
             self.assertEqual(0, result)
-            retained = list(real_temp_parent.iterdir())
-            self.assertEqual(1, len(retained))
-            self.assertTrue(
-                retained[0].name.startswith(
-                    validate_skill_pack.VALIDATION_TRANSACTION_PREFIX
-                )
-            )
-            self.assertTrue(
-                (
-                    retained[0]
-                    / validate_skill_pack.VALIDATION_WORKDIR_NAME
-                ).is_dir()
-            )
-            self.assertIn(
-                "validation transaction retained for explicit cleanup at: "
-                f"{retained[0].resolve()}",
-                output.getvalue(),
-            )
-            self.assertIn(
-                "validation workdir retained for inspection at: "
-                f"{(retained[0] / validate_skill_pack.VALIDATION_WORKDIR_NAME).resolve()}",
+            self.assertEqual([], list(real_temp_parent.iterdir()))
+            self.assertNotIn(
+                "retained for explicit cleanup",
                 output.getvalue(),
             )
 
@@ -1712,12 +1709,7 @@ class ValidationReceiptCliTests(unittest.TestCase):
                 for path in temp_parent.iterdir()
                 if path != unrelated
             ]
-            self.assertEqual(1, len(retained))
-            self.assertTrue(
-                retained[0].name.startswith(
-                    validate_skill_pack.VALIDATION_TRANSACTION_PREFIX
-                )
-            )
+            self.assertEqual([], retained)
             self.assertTrue(unrelated.is_dir())
 
     def test_parent_move_reports_descriptor_derived_preservation_path(
@@ -1747,7 +1739,9 @@ class ValidationReceiptCliTests(unittest.TestCase):
                 "lint_repo",
                 side_effect=move_temp_parent,
             ), redirect_stdout(output):
-                result = validate_skill_pack.main(["--suite", "static"])
+                result = validate_skill_pack.main(
+                    ["--suite", "static", "--keep-workdir"]
+                )
 
             self.assertTrue(moved)
             self.assertEqual(0, result)

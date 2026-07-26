@@ -29,6 +29,7 @@ from libskillpack import (
     SKILL_CONFIG_PATH,
     TEMPLATES_ROOT,
     atomic_rename_at_no_replace as _shared_atomic_rename_at_no_replace,
+    parse_yaml,
     read_yaml,
 )
 from release_state import (
@@ -345,8 +346,8 @@ def _capture_render_input_file(path: Path) -> RenderInputFile:
 
 def _parse_yaml_input(source: RenderInputFile) -> object:
     try:
-        return yaml.safe_load(source.data)
-    except yaml.YAMLError as error:
+        return parse_yaml(source.data, source=source.path)
+    except (UnicodeError, yaml.YAMLError) as error:
         raise ValueError(f"{source.path}: invalid YAML: {error}") from error
 
 
@@ -2543,8 +2544,11 @@ def validate_rendered_state(
             )
             continue
         try:
-            metadata = yaml.safe_load(entry.captured_data)
-        except yaml.YAMLError as error:
+            metadata = parse_yaml(
+                entry.captured_data,
+                source=relative_metadata_path,
+            )
+        except (UnicodeError, yaml.YAMLError) as error:
             errors.append(f"{relative_metadata_path}: invalid YAML: {error}")
             continue
         if (
@@ -3547,8 +3551,9 @@ def _remove_owned_directory(
 ) -> None:
     """Delete an owned tree only under explicit, caller-proven quiescence.
 
-    Automatic render and validation workflows must use
-    :func:`_retain_owned_directory` instead.
+    Render replacement retains prior trees for recovery. Validation may use
+    this helper only for its own run-private workspace when retention was not
+    requested.
     """
 
     if parent_descriptor is None:

@@ -51,6 +51,13 @@ FORBIDDEN_ROOTS = (
     Path("tests/tmp"),
 )
 ALLOWED_TEXT_PATHS = {Path("llms.txt")}
+# Repository review inputs larger than 4 MiB require explicit handling rather
+# than silently expanding this public-repository secret scan.
+MAX_REVIEWABLE_FILE_BYTES = 4 * 1024 * 1024
+READ_CHUNK_BYTES = 64 * 1024
+# This exceeds the longest expected credential form above. Keeping a bounded
+# overlap lets token-shaped matches span reads without retaining whole files.
+SECRET_SCAN_OVERLAP_BYTES = 512
 SECRET_PATTERNS = (
     (
         "private key",
@@ -172,7 +179,8 @@ def _metadata_fingerprint(metadata: os.stat_result) -> tuple[int, ...]:
     )
 
 
-def _read_reviewable_file(repo_root: Path, relative: Path) -> bytes:
+def _read_reviewable_file(repo_root: Path, relative: Path) -> tuple[str, ...]:
+    """Return secret labels found by a bounded, descriptor-safe file scan."""
     if relative.is_absolute() or any(
         part in {"", ".", ".."} for part in relative.parts
     ):
@@ -226,12 +234,45 @@ def _read_reviewable_file(repo_root: Path, relative: Path) -> bytes:
             or _metadata_fingerprint(opened) != _metadata_fingerprint(metadata)
         ):
             raise ValueError("source file changed while opening")
-        chunks: list[bytes] = []
+        if opened.st_size > MAX_REVIEWABLE_FILE_BYTES:
+            raise ValueError(
+                "source file exceeds "
+                f"{MAX_REVIEWABLE_FILE_BYTES}-byte scan limit"
+            )
+
+        labels: set[str] = set()
+        overlap = b""
+        bytes_read = 0
         while True:
-            chunk = os.read(file_fd, 1024 * 1024)
+            remaining_with_probe = MAX_REVIEWABLE_FILE_BYTES - bytes_read + 1
+            chunk = os.read(
+                file_fd,
+                min(READ_CHUNK_BYTES, remaining_with_probe),
+            )
             if not chunk:
                 break
-            chunks.append(chunk)
+            bytes_read += len(chunk)
+            if bytes_read > MAX_REVIEWABLE_FILE_BYTES:
+                raise ValueError(
+                    "source file exceeds "
+                    f"{MAX_REVIEWABLE_FILE_BYTES}-byte scan limit"
+                )
+            window = overlap + chunk
+            for label, pattern in SECRET_PATTERNS:
+                if label in labels:
+                    continue
+                for match in pattern.finditer(window):
+                    # A match ending exactly at a non-final chunk boundary may
+                    # depend on the artificial end-of-buffer word boundary.
+                    # Defer it until the overlap is joined to the next chunk.
+                    if match.end() < len(window):
+                        labels.add(label)
+                        break
+            overlap = window[-SECRET_SCAN_OVERLAP_BYTES:]
+
+        for label, pattern in SECRET_PATTERNS:
+            if label not in labels and pattern.search(overlap):
+                labels.add(label)
         after = os.fstat(file_fd)
         named_after = os.stat(
             relative.name,
@@ -244,7 +285,7 @@ def _read_reviewable_file(repo_root: Path, relative: Path) -> bytes:
             != _metadata_fingerprint(opened)
         ):
             raise ValueError("source file changed while reading")
-        return b"".join(chunks)
+        return tuple(label for label, _pattern in SECRET_PATTERNS if label in labels)
     finally:
         if file_fd is not None:
             os.close(file_fd)
@@ -267,14 +308,16 @@ def scan_paths(repo_root: Path, relative_paths: list[Path]) -> list[str]:
         )
         if forbidden_artifact:
             errors.append(f"{relative}: forbidden generated or third-party artifact")
+            continue
         try:
-            payload = _read_reviewable_file(repo_root, relative)
+            secret_labels = _read_reviewable_file(repo_root, relative)
         except (OSError, ValueError) as error:
             errors.append(f"{relative}: unsafe or missing source file: {error}")
             continue
-        for label, pattern in SECRET_PATTERNS:
-            if pattern.search(payload):
-                errors.append(f"{relative}: possible {label}")
+        errors.extend(
+            f"{relative}: possible {label}"
+            for label in secret_labels
+        )
     return errors
 
 
