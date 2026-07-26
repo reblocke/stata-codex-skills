@@ -1,29 +1,65 @@
 slug: plugin-sdk-basics
 skill: plugins
 section: SDK and Entry Points
-title: Plugin SDK Basics
-trigger: Use when the task needs plugin sdk basics for a Stata plugin project.
+order: 10
+title: Stata C Plugin SDK Basics
+trigger: Use when the task involves the Stata C plugin SDK, stplugin.h/stplugin.c, stata_call, SF_* data APIs, compiling a minimal plugin, loading a .plugin binary, or deciding whether native code is appropriate.
+aliases:
+- Stata plugin SDK
+- stplugin.h
+- stplugin.c
+- stata_call
+- SF_vdata
+- SF_vstore
+- SF_nobs
+- SF_nvar
+- SF_error
+- program plugin
+- native plugin
 commands:
 - program ..., plugin
-- plugin
+- stata_call
+- SF_nobs
+- SF_nvar
+- SF_vdata
+- SF_vstore
+- SF_error
 source_topics:
 - plugin
-syntax_patterns: []
+syntax_patterns:
+- 'program handle, plugin using("path/to/binary.plugin")'
+- "STDLL stata_call(int argc, char *argv[])"
+- "if (SF_vdata(var_index, obs_index, &value)) return 459;"
+- "if (SF_vstore(var_index, obs_index, value)) return 459;"
+- clang -bundle -DSYSTEM=APPLEMAC stplugin.c plugin.c -o plugin.plugin
+assumptions:
+- The plugin SDK files are pinned and verified, the target Stata release and architecture are known, and a pure ado/Mata implementation is insufficient for the workload.
+- The ado wrapper has already validated syntax, variable types, if/in sample, output storage, and argument count before invoking native code.
 gotchas:
-- A plugin crash terminates the Stata session, so treat every memory access and return code as high risk.
+- A plugin crash terminates the Stata process; every pointer, allocation, observation/variable index, and SDK return code is a session-safety boundary.
+- SDK observation and variable indices are 1-based, while C arrays are 0-based. Make every conversion explicit.
+- Stata numeric missing values require SDK-aware handling; ordinary NaN or sentinel assumptions can silently corrupt results.
+- Return 0 only after all writes succeed. Report an explanatory SF_error() message and nonzero Stata-compatible code on failure.
 workflows:
-- Plan the interface and the validation path before writing plugin code or wrapper ado-files.
-- Use batch-mode Stata logs and compiler output together when debugging plugin failures.
-validation_case: Compile a minimal plugin and load it with program ..., plugin using(path/to/plugin).
+- Pin stplugin.h/stplugin.c by URL and SHA-256, compile the official minimal example for the current target, and retain compiler diagnostics.
+- Keep stata_call thin; parse/validate in the ado wrapper, read only the marked sample, call a tested computational routine, then check every write.
+- Run compilation in the default gate and execute the plugin only in an explicit batch integration test because loader failures can hang or crash Stata.
+validation_case: Compile the pinned official hello plugin for the host architecture, verify the expected binary exists, and separately load/call it in an explicitly selected batch runtime test requiring an exact completion marker.
+validation_mode: compilation
 related_refs:
 - cpp_plugins
 - packaging_and_help
+- testing_strategy
+preflight_commands: []
 install_commands: []
 smoke_test: null
 provenance:
+  reviewed: true
   local_help_topics:
   - plugin
+  local_help_globs: []
   local_help_files:
   - ado/base/p/plugin.sthlp
   upstream_files: []
+  package_only: false
   upstream_only: false

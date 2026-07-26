@@ -1,36 +1,61 @@
 slug: coefplot
 skill: packages
 section: Graphics and Diagnostics
-title: 'Coefplot: Visualizing Regression Coefficients'
-trigger: Use when the user asks about coefplot or a related community-package workflow.
+order: 210
+title: "coefplot: Coefficient and Marginal-Effect Plots"
+trigger: Use when the user asks for coefplot, a forest-style coefficient plot, comparison of stored models, confidence-interval plotting, standardized coefficients, plotted margins, or direct labeling of regression estimates.
+aliases:
+- coefplot
+- coefficient plot
+- forest plot
+- model-comparison plot
+- margins plot
 commands:
 - coefplot
 source_topics:
 - coefplot
-syntax_patterns: []
+syntax_patterns:
+- coefplot model1 model2, keep(varlist) drop(_cons) xline(0)
+- coefplot (model1, label(Base)) (model2, label(Adjusted)), levels(95)
+- "margins, dydx(*) post"
+- coefplot, vertical recast(scatter) ciopts(recast(rcap))
+assumptions:
+- The plotted estimates are comparable because they target the same outcome/scale or are explicitly separated and labeled when they do not.
+- Stored model names and coefficient names have been inspected before keep(), drop(), order(), or rename() rules are applied.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- coefplot is a community command distinct from Stata's built-in estat coefplot; do not use estat_coefplot.sthlp as its provenance or assume identical syntax.
+- The active or named estimates determine what is plotted. Stale estimates and margins results can silently produce the wrong figure.
+- Visual comparability can be misleading when models use different samples, scales, reference categories, or confidence levels.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises coefplot and inspect the resulting log.
+- Preflight with which coefplot and ado describe coefplot, and request authorization before installation or update.
+- Fit and store clearly named models, inspect coefficient names and samples, then specify the comparison, ordering, labels, reference line, and confidence level.
+- Export at final manuscript dimensions and verify labels, uncertainty, grayscale readability, and consistency with the corresponding table.
+validation_case: Store two regressions from auto.dta, plot the mpg and weight coefficients with a zero reference line, and require an error-free log without relying on built-in estat coefplot help.
+validation_mode: stata
 related_refs:
 - graphics
 - linear-regression
+- estout
+preflight_commands:
+- which coefplot
+- ado describe coefplot
 install_commands:
-- ssc install coefplot, replace
-smoke_test: 'sysuse auto, clear
-
-  reg price mpg weight
-
-  coefplot'
+- ssc install coefplot
+smoke_test: |
+  sysuse auto, clear
+  quietly regress price mpg
+  estimates store base
+  quietly regress price mpg weight
+  estimates store adjusted
+  coefplot base adjusted, keep(mpg weight) xline(0)
+  estimates drop base adjusted
 provenance:
+  reviewed: true
   local_help_topics:
   - coefplot
-  local_help_files:
-  - ado/base/e/estat_coefplot.sthlp
+  local_help_globs: []
+  local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/coefplot.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

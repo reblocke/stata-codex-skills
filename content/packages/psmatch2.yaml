@@ -1,35 +1,63 @@
 slug: psmatch2
 skill: packages
 section: Estimation Packages
-title: 'psmatch2: Propensity Score Matching'
-trigger: Use when the user asks about psmatch2 or a related community-package workflow.
+order: 150
+title: "psmatch2 and pstest: Propensity-Score Matching"
+trigger: Use when the user asks for psmatch2, pstest, nearest-neighbor, caliper, radius, kernel, local-linear, or Mahalanobis matching, common-support diagnostics, matched-sample weights, ATT/ATE/ATU, or balance assessment after matching.
+aliases:
+- psmatch2
+- pstest
+- propensity-score matching
+- nearest-neighbor matching
+- common support
 commands:
 - psmatch2
+- pstest
 source_topics:
 - psmatch2
-syntax_patterns: []
+- pstest
+syntax_patterns:
+- psmatch2 treatment covariates, outcome(outcome) neighbor(1) common
+- psmatch2 treatment, pscore(scorevar) outcome(outcome) caliper(0.05)
+- pstest covariates, both graph
+- psmatch2 treatment covariates, outcome(outcome) kernel ate
+assumptions:
+- Conditional exchangeability is scientifically plausible after conditioning on prespecified pre-treatment covariates.
+- Treatment positivity and common support are sufficient for the requested ATT, ATE, or ATU population.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- Matching addresses measured covariate imbalance, not unmeasured confounding; define the causal contrast and covariate time ordering before fitting the score.
+- psmatch2 creates _treated, _support, _pscore, _weight, and neighbor variables that can overwrite prior matching results.
+- Analytic standard errors do not automatically account for every score-estimation and matching step; bootstrap validity depends on the matching estimator and design.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises psmatch2 and inspect the resulting log.
+- Preflight psmatch2 and pstest with which and ado describe; obtain authorization before installing or updating the package.
+- Check treatment coding, missingness, overlap, and score distributions; match; then assess balance and effective sample size before estimating effects.
+- Save the original observation identifier and preserve the unmatched data so matched-pair and weight diagnostics remain auditable.
+validation_case: In cattaneo2, estimate a propensity score, perform one-neighbor matching for birthweight, verify matched-support variables exist, and require an error-free log.
+validation_mode: stata
 related_refs:
 - matching-methods
 - treatment-effects
+preflight_commands:
+- which psmatch2
+- which pstest
+- ado describe psmatch2
 install_commands:
-- ssc install psmatch2, replace
-smoke_test: 'sysuse auto, clear
-
-  gen treat = foreign
-
-  psmatch2 treat mpg weight, outcome(price) neighbor(1)'
+- ssc install psmatch2
+smoke_test: |
+  webuse cattaneo2, clear
+  logit mbsmoke mmarried c.mage##c.mage fbaby medu
+  predict double pscore, pr
+  psmatch2 mbsmoke, outcome(bweight) pscore(pscore) neighbor(1) common
+  confirm variable _support
+  assert inlist(_support, 0, 1)
 provenance:
+  reviewed: true
   local_help_topics:
   - psmatch2
+  - pstest
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/psmatch2.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

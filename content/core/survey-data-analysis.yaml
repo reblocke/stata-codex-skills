@@ -1,32 +1,55 @@
 slug: survey-data-analysis
 skill: core
 section: Statistics and Econometrics
-title: Survey Data Analysis in Stata
-trigger: Use when the user needs built-in Stata help with survey data analysis in stata.
-commands: &id001
-- svyset
-- svy
-source_topics: *id001
-syntax_patterns: []
+order: 280
+title: Complex Survey Design and Estimation
+trigger: >-
+  Use for probability weights, strata, primary sampling units, finite-population corrections,
+  subpopulation analyses, design-based means or proportions, and svy-prefixed regression.
+commands: [svyset, svydescribe, svy, subpop(), estat effects]
+aliases: [survey weights, pweights, complex survey, design-based analysis, PSU, strata, subpopulation]
+source_topics: [svyset, svy, svy_estimation]
+syntax_patterns:
+- svyset psu [pweight=weight], strata(stratum) fpc(fpc)
+- "svy: mean outcome"
+- "svy, subpop(eligible): proportion outcome"
+- "svy: regress outcome exposure covariates"
+assumptions:
+- Weights, strata, PSUs, and finite-population corrections correctly encode the sampling design.
+- The target population and any subpopulation indicator are defined consistently with survey eligibility and nonresponse.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Applying weights without strata and PSU variables does not reproduce the full survey design variance.
+- if restricts the estimation data, whereas subpop() retains full-design information for domain variance estimation.
+- Single-PSU strata require an explicit, justified handling rule and can otherwise make standard errors missing.
 workflows:
-- Start with the official help topics attached to Survey Data Analysis in Stata, then tailor the syntax
-  to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises svyset and inspect the resulting log.
-related_refs:
-- descriptive-statistics
-- missing-data-handling
+- Translate the survey documentation into svyset, run svydescribe, and verify weight, stratum, and PSU ranges.
+- Use subpop() for domain estimates, report design degrees of freedom, and compare weighted and unweighted denominators.
+validation_case: >-
+  Declare a synthetic stratified clustered design with pweights, estimate a survey mean, and verify the design
+  degrees of freedom are positive.
+validation_mode: stata
+related_refs: [descriptive-statistics, missing-data-handling]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  set obs 40
+  generate int psu = ceil(_n/5)
+  generate byte stratum = ceil(psu/4)
+  generate double weight = 1 + mod(_n, 3)/10
+  generate double outcome = 10 + stratum + mod(_n, 5)
+  svyset psu [pweight=weight], strata(stratum)
+  svy: mean outcome
+  assert e(N) == 40
+  assert e(df_r) > 0
 provenance:
-  local_help_topics:
-  - svyset
-  - svy
+  local_help_topics: [svyset, svy, svy_estimation]
+  local_help_globs: []
   local_help_files:
   - ado/base/s/svyset.sthlp
   - ado/base/s/svy.sthlp
+  - ado/base/s/svy_estimation.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/survey-data-analysis.md
   upstream_only: false
+  package_only: false
+  reviewed: true

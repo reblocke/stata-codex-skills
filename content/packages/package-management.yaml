@@ -1,43 +1,99 @@
 slug: package-management
 skill: packages
 section: Data and Workflow Utilities
-title: Stata Package Management Guide
-trigger: Use when the user asks about search or a related community-package workflow.
-commands:
+order: 320
+title: Built-In Stata Tooling for Community-Package Lifecycle Management
+trigger: Use when the user asks how to search, inspect, install, pin, update, remove, isolate, or troubleshoot community-contributed Stata packages with findit, search, ssc, net, ado, which, adopath, sysdir, or net set ado.
+aliases:
+- package management
+- findit
 - search
+- ssc describe
 - ssc install
 - net install
-- adoupdate
+- ado describe
+- ado update
+- ado uninstall
+- adopath
+- sysdir
+- which
+- net set ado
+commands:
+- findit
+- search
+- ssc describe
+- ssc install
+- net install
+- ado describe
+- ado update
+- ado uninstall
+- which
+- adopath
+- sysdir
+- net set ado
 source_topics:
+- findit
 - search
 - ssc
 - net
+- adofile
 - adoupdate
-syntax_patterns: []
+- sysdir
+- which
+syntax_patterns:
+- which command_name
+- ado describe package_name
+- ssc describe package_name
+- ssc install package_name
+- net install package_name, from("immutable_source_url")
+- sysdir set PLUS "project/ado/plus"
+assumptions:
+- Package installation, update, or removal is an external state change that requires the user's authorization in their active Stata environment.
+- Reproducible work records the source channel and resolved version or commit and isolates project dependencies when practical.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- search/findit/ssc/net are built-in lifecycle tools, not community estimation packages; this reference lives here because it governs community-package management.
+- ssc install ..., replace and ado update, update mutate the active environment and can silently change results; inspect first and pin or record the resolved version.
+- adopath precedence can load a different copy than expected. which and ado describe must be checked in the same session that runs the analysis.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises search and inspect the resulting log.
+- Inspect with which, ado describe, adopath, and sysdir before proposing any change.
+- Ask for authorization, then prefer a project-specific PLUS directory and a pinned or lock-verifiable source; never default to replace.
+- After installation, reopen a clean session, verify which/ado describe, run a package-specific smoke test, and record source/version metadata.
+validation_case: In batch mode without network or mutation, display sysdir/adopath, locate the built-in regress command with which, and require an error-free log.
+validation_mode: stata
 related_refs:
 - workflow-best-practices
 - external-tools-integration
+preflight_commands:
+- which regress
+- adopath
+- sysdir
 install_commands: []
-smoke_test: search reghdfe
+smoke_test: |
+  sysdir
+  adopath
+  which regress
 provenance:
+  reviewed: true
   local_help_topics:
+  - findit
   - search
   - ssc
   - net
+  - adofile
   - adoupdate
+  - sysdir
+  - which
+  local_help_globs: []
   local_help_files:
+  - ado/base/f/findit.sthlp
   - ado/base/s/search.sthlp
   - ado/base/s/ssc.sthlp
   - ado/base/n/net.sthlp
+  - ado/base/a/adofile.sthlp
   - ado/base/a/adoupdate.sthlp
+  - ado/base/s/sysdir.sthlp
+  - ado/base/w/which.sthlp
   upstream_files:
   - plugins/stata/skills/stata/packages/package-management.md
+  package_only: false
   upstream_only: false

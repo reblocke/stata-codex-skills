@@ -1,45 +1,89 @@
 slug: did
 skill: packages
 section: Estimation Packages
-title: Modern Difference-in-Differences Packages in Stata
-trigger: Use when the user asks about csdid or a related community-package workflow.
+order: 120
+title: Modern Staggered Difference-in-Differences Packages
+trigger: Use when the user asks for csdid, csdid_plot, drdid, did_multiplegt, did_imputation, bacondecomp, heterogeneous or staggered treatment timing, group-time effects, not-yet-treated controls, or modern alternatives to two-way fixed effects.
+aliases:
+- csdid
+- csdid_plot
+- drdid
+- did_multiplegt
+- did_imputation
+- bacondecomp
+- staggered difference-in-differences
 commands:
 - csdid
+- csdid_plot
+- drdid
+- did_multiplegt
+- did_imputation
+- bacondecomp
 source_topics:
 - csdid
-syntax_patterns: []
+- drdid
+- did_multiplegt
+- did_imputation
+- bacondecomp
+syntax_patterns:
+- csdid outcome covariates, ivar(unit_id) time(time_var) gvar(first_treat_var) method(dripw) notyet
+- estat event, window(-5 5)
+- csdid_plot, group
+- drdid outcome covariates, ivar(unit_id) time(time_var) tr(treatment) dripw
+- did_multiplegt outcome unit_id time_var treatment_var, robust_dynamic dynamic(5) placebo(3)
+- did_imputation outcome unit_id time_var first_treat_var, horizons(0/5) pretrends(3)
+- bacondecomp outcome treatment, ddetail
+assumptions:
+- Units have a valid panel identifier, consistently spaced time variable, and correctly encoded first-treatment period.
+- The chosen never-treated or not-yet-treated comparison group is substantively credible for the target group-time effects.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- gvar() must encode the first treatment period consistently, with never-treated units represented exactly as the installed command expects; validate it before estimation.
+- Staggered-adoption estimators differ in control group, aggregation, anticipation, and weighting. The commands are not interchangeable wrappers around the same estimand.
+- Event-time coefficients require an explicit reference period, support at each horizon, and clustering aligned with treatment assignment.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises csdid and inspect the resulting log.
+- Use which and ado describe for the requested estimator and dependencies; ask before installing or updating packages in the user's environment.
+- Audit panel identifiers, time spacing, treatment reversals, first-treatment timing, and available comparison groups before choosing an estimator.
+- Report the estimator, control group, aggregation, event window, clustering level, and support counts alongside estimates and plots.
+validation_case: Generate a seeded balanced panel with never-treated and staggered-treated units, run csdid with not-yet-treated controls, and require finite group-time estimates in an error-free batch log.
+validation_mode: stata
 related_refs:
 - difference-in-differences
 - treatment-effects
+- event-study
+preflight_commands:
+- which csdid
+- which drdid
+- ado describe csdid
 install_commands:
-- ssc install csdid, replace
-smoke_test: 'clear
-
-  set seed 12345
-
-  set obs 80
-
-  gen id = ceil(_n/4)
-
-  gen t = mod(_n-1,4)
-
-  gen gvar = cond(id <= 10, 2, 0)
-
-  gen y = rnormal() + 2*(gvar>0 & t>=gvar)
-
-  csdid y, ivar(id) time(t) gvar(gvar) notyet'
+- ssc install drdid
+- ssc install csdid
+- ssc install did_multiplegt
+- ssc install did_imputation
+- ssc install bacondecomp
+smoke_test: |
+  clear
+  set seed 271828
+  set obs 120
+  generate id = ceil(_n / 6)
+  generate time = mod(_n - 1, 6)
+  generate gvar = cond(id <= 7, 2, cond(id <= 14, 4, 0))
+  generate outcome = id / 20 + time / 10 + 1.5 * (gvar > 0 & time >= gvar) + rnormal()
+  isid id time
+  csdid outcome, ivar(id) time(time) gvar(gvar) notyet
+  assert colsof(e(b)) > 0
+  mata: st_numscalar("codex_did_finite", all(st_matrix("e(b)") :< .))
+  assert scalar(codex_did_finite) == 1
 provenance:
+  reviewed: true
   local_help_topics:
   - csdid
+  - drdid
+  - did_multiplegt
+  - did_imputation
+  - bacondecomp
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/did.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

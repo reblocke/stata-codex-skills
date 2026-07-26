@@ -1,32 +1,67 @@
 slug: mathematical-functions
 skill: core
 section: Data Operations
-title: Mathematical and Statistical Functions in Stata
-trigger: Use when the user needs built-in Stata help with mathematical and statistical functions in stata.
-commands: &id001
+order: 170
+title: Mathematical, Statistical, and Random-Number Functions
+trigger: >-
+  Use for arithmetic transformations, logarithms, powers, probability distributions, rowwise calculations,
+  and reproducible random-number generation in generate, replace, scalar, or Mata expressions.
+commands:
+- abs()
+- exp()
+- ln()
+- sqrt()
+- round()
+- normal()
+- invnormal()
+- runiform()
+- rnormal()
+- set seed
+aliases: [math function, statistical function, random number, RNG, probability function, transformation]
+source_topics:
 - functions
 - random_number_functions
-source_topics: *id001
-syntax_patterns: []
+syntax_patterns:
+- generate double log_value = ln(value) if value > 0 & !missing(value)
+- set seed 271828
+- generate double draw = rnormal(0, 1)
+- generate byte inside = inrange(value, lower, upper)
+assumptions:
+- Function inputs use the expected units and lie within each function's mathematical domain.
+- Reproducible random generation controls the seed, observation order, and number of prior draws.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Domain violations such as ln(nonpositive) or sqrt(negative) return missing and can propagate silently.
+- Random draws are reproducible only when the seed and observation order are controlled.
+- Binary floating-point values may not compare exactly after calculation; use tolerances for numerical assertions.
 workflows:
-- Start with the official help topics attached to Mathematical and Statistical Functions in Stata, then
-  tailor the syntax to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises functions and inspect the resulting log.
+- Guard each transformation’s domain, generate into a new variable, and tabulate unexpected missing results.
+- Set and record a seed before random generation, verify the intended distribution, and avoid sorting between dependent draws.
+validation_case: >-
+  Evaluate known transformations, generate seeded normal draws, and use tolerance-based assertions for floating-point results.
+validation_mode: stata
 related_refs:
 - variables-operators
-- date-time-functions
+- bootstrap-simulation
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  set obs 20
+  generate double x = _n
+  generate double root = sqrt(x)
+  generate double logged = ln(x)
+  set seed 271828
+  generate double draw = rnormal()
+  assert abs(root[4] - 2) < 1e-12
+  assert logged[1] == 0
+  assert !missing(draw)
 provenance:
-  local_help_topics:
-  - functions
-  - random_number_functions
+  local_help_topics: [functions, random_number_functions]
+  local_help_globs: []
   local_help_files:
   - ado/base/f/functions.sthlp
   - ado/base/r/random_number_functions.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/mathematical-functions.md
   upstream_only: false
+  package_only: false
+  reviewed: true

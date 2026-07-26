@@ -1,29 +1,49 @@
 slug: treatment-effects
 skill: core
 section: Causal Inference
-title: Treatment Effects and Causal Inference
-trigger: Use when the user needs built-in Stata help with treatment effects and causal inference.
-commands: &id001
-- teffects
-source_topics: *id001
-syntax_patterns: []
+order: 440
+title: Regression Adjustment, Weighting, and Doubly Robust Treatment Effects
+trigger: >-
+  Use for ATE or ATET estimation with teffects ra, ipw, aipw, or ipwra; includes outcome and treatment
+  models, overlap, potential-outcome means, robust inference, and postestimation balance.
+commands: [teffects ra, teffects ipw, teffects aipw, teffects ipwra, tebalance, predict]
+aliases: [treatment effects, ATE, ATET, regression adjustment, inverse probability weighting, IPWRA, doubly robust]
+source_topics: [teffects, teffects_ra, teffects_ipw, teffects_ipwra]
+syntax_patterns:
+- teffects ra (outcome covariates) (treated), ate
+- teffects ipw (outcome) (treated covariates), atet
+- teffects ipwra (outcome outcome_covariates) (treated treatment_covariates), ate
+assumptions:
+- Conditional exchangeability, positivity, consistency, and no interference hold for the chosen treatment contrast.
+- Outcome and treatment variables precede the outcome window, and model covariates are not treatment-induced.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Extreme inverse-probability weights signal practical positivity problems and can dominate the estimate.
+- Doubly robust estimators still fail when both nuisance models are misspecified and do not address unmeasured confounding.
+- ATE and ATET target different populations; choose the estimand before modeling rather than after seeing results.
 workflows:
-- Start with the official help topics attached to Treatment Effects and Causal Inference, then tailor
-  the syntax to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises teffects and inspect the resulting log.
-related_refs:
-- matching-methods
-- difference-in-differences
+- Draw the causal structure, define treatment/outcome timing and estimand, then inspect overlap before estimation.
+- Fit the planned estimator, evaluate balance and weight distributions, and report alternative nuisance-model specifications.
+validation_case: >-
+  Estimate an ATE with regression adjustment on bundled data, verify convergence and sample size, and calculate
+  potential-outcome means.
+validation_mode: stata
+related_refs: [matching-methods, difference-in-differences]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  sysuse auto, clear
+  teffects ra (price mpg weight) (foreign), ate
+  assert e(N) == 74
 provenance:
-  local_help_topics:
-  - teffects
+  local_help_topics: [teffects, teffects_ra, teffects_ipw, teffects_ipwra]
+  local_help_globs: []
   local_help_files:
   - ado/base/t/teffects.sthlp
+  - ado/base/t/teffects_ra.sthlp
+  - ado/base/t/teffects_ipw.sthlp
+  - ado/base/t/teffects_ipwra.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/treatment-effects.md
   upstream_only: false
+  package_only: false
+  reviewed: true

@@ -1,0 +1,879 @@
+schema_version: 1
+packages:
+  asdoc:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/a
+      descriptor: asdoc.pkg
+      distribution_date: '20210723'
+      files:
+        a/asdoc.ado: 4cd58fab6ca6c73518a055ab652e0a054bb75ed9343ba8320c0b66201512b68b
+        a/asdoc.sthlp: 24b733a4fdb9f4cfe8dc8ca91e2a19b656a970149e41d652e5d7aa721d108d0b
+        l/lasdoc.mlib: 5863d66ab44bd536b19e1dd9e1896a6fa9e6bfa295a678172b12479db9738585
+    generated_files: {}
+  estout:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/e
+      descriptor: estout.pkg
+      distribution_date: '20260413'
+      files:
+        _/_eststo.ado: c7d12cf1c1ef2388becfc8a17f90fcf197f41d77d9170373d01d6a87591a4a50
+        _/_eststo.hlp: 422a3a6bbe4c9d9b670af1eb159ce8af43af5a2d78a3c6d2de10f2a31d56ec8f
+        e/estadd.ado: 215bb477394db489bdcb4dcf44011863ebb11d34b730503969b084b87c4f18ea
+        e/estadd.hlp: 7699b78be5b6c44923d1958a5c49b1e3eaa5b9acf13ea637665f7bb940198ae0
+        e/estout.ado: cc57869d2e78033d8dd4d436f85f4457ebfbac67553c8a2fb6c606a05ac6c392
+        e/estout.hlp: cf6d2d213ccfbbd4c6f8e19d5a66753324ae217e3803bf13bf9d55d1459bbc37
+        e/estpost.ado: 7b2d0839a787ce0994fe30595bc84f03a14746d329f0d92aae6cd734a36867f9
+        e/estpost.hlp: 7f698093c2fbe2326df813d28d662ff4e3a6e4eff7ace360bc39a3b8c142f4b3
+        e/eststo.ado: 8abde23b7a1085ea415d83cbe8be34e31236fd180dc4386b7b6435b06c69cd3a
+        e/eststo.hlp: 9b4a1714e22ba895c2f7df0eb1b044a0e0a993f8c6aa2535b64073f91b1ba9a5
+        e/esttab.ado: d198b138f5d96d5d88d0cfdd8e48efa8d4bf524c4b623f6a371d094e51889233
+        e/esttab.hlp: 486c7cd8c05b8497f7cbb7d9e8fad133489ea55391a6cb6b86d09c5c9c002d77
+    generated_files: {}
+  outreg2:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/o
+      descriptor: outreg2.pkg
+      distribution_date: '20140817'
+      files:
+        o/outreg2.ado: d366daa9d0621fe1011204879f696c75939202776802991ae96d170ae9d44e3f
+        o/outreg2.hlp: a583dd287315d0a32aaf7df94d4cfbb1184b9356d5f0d5f812ff8a663228793c
+        o/outreg2_prf.ado: 37984439b2159ca82bb6f8cc85deb4101994404bc90faab26f724b16a346895f
+        s/seeout.ado: 69c8700c387ee29399b407766d9be8f8e46a29b7246fe457b245cff25eeadb7d
+        s/seeout.hlp: ad470113294a6d21a0b5695e3d5fb05070dd7486bb50e9dc6144b2514d444c84
+        s/shellout.ado: 13289488a6da8f0272732b8e266967f9ecf5e944655b7a3cd946e2da974a2e63
+        s/shellout.hlp: 14f9bd234a19cf0a2d9da79c443c48a013b33735459d067d79cc0f4bf1a3ed1c
+    generated_files: {}
+  tabout:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/t
+      descriptor: tabout.pkg
+      distribution_date: '20190316'
+      files:
+        f/figout.ado: 517fb7434fa9ab0ce455bbbf429856b2ed5573abbf93128980d2918536a7d9af
+        f/figout.hlp: 26b6f64bb34699bed0d32228a122fa19c867ffac1ed71ee961c5b710bd3e2c53
+        t/tabout.ado: e2ed86d1f1ac1c685e8c0e3d42e1826b861d4a7ed77ebdd0750ec8402a323d29
+        t/tabout.hlp: b7be2bae27b4feec4cdc5e97ebe28733add7519ad7a7a95ada22e760f9d9e75f
+        t/tabstatout.ado: 9fbb7840f45c7331386fdea9b4d09bb47e450772a51681b65eb143343c699cdc
+    generated_files: {}
+  binsreg:
+    distributions:
+    - source: https://raw.githubusercontent.com/nppackages/binsreg/1f0dbb8bc0b477fc24f300c538810a696df0792e/stata
+      descriptor: binsreg.pkg
+      distribution_date: '20260527'
+      files:
+        b/binslogit.ado: 01149d061c49c7a9de38a08b60fd82f942e83f25041c68f28cd293e8ebec323c
+        b/binslogit.sthlp: e9ab8009791820248fd9ad70f7e3e9c586e1283ea1407b093bd650f91f78d33e
+        b/binsprobit.ado: 74aec5a52c163bfb19d9b0409189de3413fb4faacd573d2d438b64b71525efbd
+        b/binsprobit.sthlp: ef6745ff678d173a619a27a7ba1b519a4bbe597292b27713425453ebcdd0da85
+        b/binspwc.ado: 110dc01b46bea81b2b03c053d9b0e36ab450861a404667bd4ab5115f8d88bfcc
+        b/binspwc.sthlp: 60febf87cbaee2e0f1ebbae9efda9dac75ab8d6242ba7f0b1b489d6c4c1e4b0a
+        b/binsqreg.ado: cf51af2b4fb8a71b13eecf1f0d091c9d86e4e0f5f9ef8e469353ccd902d48cc2
+        b/binsqreg.sthlp: ab7ea64aade80bbce4e5bf9cf5f0002ff1cbf7978aa631a173ef362bc946f555
+        b/binsreg.ado: 4e25451b4effcddfd9121ba7b7511c2a66ab23da4f512f156abfed22f90aba68
+        b/binsreg.sthlp: 8b5654343e52f604ed9179b8852be3375feee3b39e33dd8fec08c30b1d978700
+        b/binsreg_irecode.ado: b2cd7d3d99db02afa4fdb9c2b18e9a8affe4596c6d07aceac4883de444d1e67b
+        b/binsreg_pctile.ado: 16b0144e37ad9c0a322134f553de6c2df8d80678fc61c2b102c2e4bf19842c9e
+        b/binsregselect.ado: 02540878c7662e8e0c86c6ecfe8ce47cec9d31359c0e282f7b03505c673e732b
+        b/binsregselect.sthlp: 6e7b7ab6171e16764ad92fffb6e8e6985f5d4259bb50ba5e3a6509e3d5ced517
+        b/binstest.ado: 6feab96816a8c00da900bf8486c02f1a68ce0e11b40e4c2eaba228f015019c99
+        b/binstest.sthlp: 075b7bf315661cd5e0fcb9445c3b75c742cb499a53fdfb73a6c87362c9cdc302
+        l/lbinsreg.mlib: 6e9f13fd7b5481154ce9066f578cd4cb7daea6e0d2f31d586861bc4dcc48a302
+    generated_files: {}
+  did:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/d
+      descriptor: drdid.pkg
+      distribution_date: '20251005'
+      files:
+        _/_gmm_dripw.ado: 2ad84cf49550828278dbb37a42741ca5a143e2b0e0f6fd02cb44c0548c31851d
+        _/_gmm_regipw.ado: 1e8d8ff57f5b271ac2f6414ef8ad2907100d9cba1e7f73882e26ea7df71ab829
+        _/_gmm_repeated.ado: f7af5faf9ecdfbc47b70a33ece573354e0b8788b2e7587f85fb3b2d181cb1528
+        _/_het_did_gmm.ado: a410955086ccfbec101810964e2cc2c6ff27f337e1d5dcf6274c2805e52d3a56
+        d/drdid.ado: 242dd51923580cda80b28f1b00512b9f95666db989825c46a9fad21d87dcfc9f
+        d/drdid.sthlp: 8fd3579f24b066e9c951c4fb8ffb310a28db8b24964f98cbc1c0f808753e6c18
+        d/drdid_display.ado: 340cf38f80b02e87f3e88d866be52a57011ba8dae8e8fb27ea18e9e082915741
+        d/drdid_predict.ado: cb211f4bcd2837f0731672a7f4c754ebf0124d0dcceed7f9bf02c1888e66d09c
+    - source: http://fmwww.bc.edu/repec/bocode/c
+      descriptor: csdid.pkg
+      distribution_date: '20251005'
+      files:
+        _/_gcsgvar.ado: 7aafe6b124f386dd692319a05fd452c9b8610f6f17f7274202383bbd11ec027b
+        c/csdid.ado: f4f10d23f753ba1a5231ce5aa7999b65ceb58cd4a5ad66964b0793f65d179bcc
+        c/csdid.sthlp: e8d443784817d8f1312ef0fd891e2bd463b478b0ae6786102fc91b8b865718a5
+        c/csdid_estat.ado: be037cb115ceb25d16cb3f458764a5a5a1274175207c30d8024362426c1539a4
+        c/csdid_plot.ado: 6eb16369b1472b7878c7778accb6bfc4fd912c56a9f7df183dd63eed356a4825
+        c/csdid_postestimation.sthlp: 1003135e022bd19d2e2c5a297364c227ed13b6d701d08c0e9b6f1626efe05374
+        c/csdid_rif.ado: cd8dee134c83f8b88ea1157e2f1fbcd79de33f548abfa2c7d16dd23217b7c601
+        c/csdid_stats.ado: 5dfa8b7932dbf4ed36c60070e2fa0570196fdedbdb31c9ec7f10ee84c0a00052
+        c/csdid_table.ado: 6efaac3e8aee1092c7033dc97625d41ed605892bd4585f26d626afbe33388a88
+        t/tsvmat.ado: cdc9476da5809d2a3c31ad8bfc249347949702fbeaf7698fe2c6ab69da72140f
+    - source: http://fmwww.bc.edu/repec/bocode/d
+      descriptor: did_multiplegt.pkg
+      distribution_date: '20240719'
+      files:
+        d/did_multiplegt.ado: 9b933d09115b0ed72c3a9cbe6459900eb7a6c099b03641685f8dd98a8050b42b
+        d/did_multiplegt.sthlp: 81ebfb526362d2dbfe270301ad2101515de2a8d5df159aa4c2bcba0b8a24262a
+    - source: http://fmwww.bc.edu/repec/bocode/d
+      descriptor: did_imputation.pkg
+      distribution_date: '20231122'
+      files:
+        d/did_imputation.ado: ca5f40639db954212aac65db922647a241ac18f79cf6a2241c9b19434d42b4d6
+        d/did_imputation.sthlp: 4aaaf172b9d983f1fa991e17af948fe80c5e20b3250b53c9e7432bff9484b550
+    - source: http://fmwww.bc.edu/repec/bocode/b
+      descriptor: bacondecomp.pkg
+      distribution_date: '20220921'
+      files:
+        b/b.ado: 4b0e1d00260f5037a0573e4597ead24c05c9d789ff50ca15026fa062ce521a72
+        b/b.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+        b/ba.ado: 5e7005cf0d9c6ecd28fefc1b28764518bacfbc71a96b30419a03ccfc9cd99e2e
+        b/ba.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+        b/bac.ado: 28c404f72e4b018b1fce6a9e22e81149a57adab54567d2462820df87baa07c93
+        b/bac.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+        b/baco.ado: d8f1ff3aaaab86455c6608e7f9200b39726dc3ab40b384662b6c8073432b74bf
+        b/baco.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+        b/bacon.ado: edb63b53b9221c7ec540a1056e8f3d1a4619c7e862bbc303621eea85793f9314
+        b/bacon.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+        b/bacond.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+        b/baconde.ado: 27972c4903261aec3ad9b6f8d8f035752a17912485ae8e6e57e73f92dc7c78f4
+        b/baconde.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+        b/bacondec.ado: ca9550037688648c315df3814c67b7a2534babf16b962741bb6b2e43e060906a
+        b/bacondec.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+        b/bacondeco.ado: 5afd8298978c7a49d7199e30576de5d9eef0d042f0f49a08cce1326780bcb733
+        b/bacondeco.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+        b/bacondecom.ado: 5a11ef70b357ce0c178828dbff9742d2726710ad8e1a526b8791ac541e5bc8b6
+        b/bacondecom.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+        b/bacondecomp.ado: 709cc3679c647d69aab6b5a40eea323be38965c02cf85616913a219d57a9e5c6
+        b/bacondecomp.sthlp: 01c2b605c3fc0213d9c661b71c683b5e5cc74da3b9d9554746c0f6f5ef1828b6
+    generated_files: {}
+  ivreg2:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/r
+      descriptor: ranktest.pkg
+      distribution_date: '20200929'
+      files:
+        l/livreg2.mlib: a2e917496f21c00c428b43ff77f6036f9e5b9889c867bcff33fbf2a494d84161
+        r/ranktest.ado: 484c00ea5e4781f74419f21e9e4aeb333c00dfa24a3eb85f580b52c923690b28
+        r/ranktest.sthlp: 7c905aa57e8cad4cb12fad483ddec29fbda82ad5b8045bd1fdc822251036edc2
+        r/ranktest11.ado: 3eb940c66df4a840afa0e3f81ea98f9fd84ed4107264705c879749d4882c8328
+        r/ranktest11.sthlp: bef09afb570aad88361f1e18948412284e366bf22d2b1d02e9327eeec228329a
+        r/ranktest9.ado: 2a6ec6a43f2b983ce37086c3147ff42f8ea0c5be7b1632971130ac5111e7e886
+    - source: http://fmwww.bc.edu/repec/bocode/i
+      descriptor: ivreg2.pkg
+      distribution_date: '20240814'
+      files:
+        i/ivreg2.ado: 0e93b020dcd4d9b2806db9e4bb432fa0381756ec2c64dc50275957ad58ef3fb4
+        i/ivreg2.sthlp: 1c412d0275d8df8390b4cc78ca4a72ea72cd05962d89cd5643aebbaa8173e308
+        i/ivreg210.ado: 66c0256e303d242e69950a9fdff2980423b42490eb916b186f879018985efddd
+        i/ivreg210.sthlp: 55c85076a8948a5a1428508f159a17504f806b133e629972d28420031b8138ae
+        i/ivreg210_p.ado: d0279cd365bc8fe3aec3a44393e5f9466374338f9d3b9a4743135234e5d7c253
+        i/ivreg28.ado: 3a3775074a6029b521752183eb752a6fb0c8740a1aabec06c2da8a419309da9a
+        i/ivreg28.hlp: db8b4f19fe165a4be5d6c34a4dd667002989011ffe542a461b6fad87ec8c9713
+        i/ivreg28_cue.ado: bedb269ca371866e96dea7852baef2156a70f8262c5dbc6d1216a8c23a47dd3b
+        i/ivreg28_p.ado: 6dccfcde0466ef499c0d122fffa3001ef14b62c02f6a4d7d0497069239d0f72f
+        i/ivreg29.ado: 30170b31eead0bc7274800c2976f48faaec4b8a81ebee5b299db86ff2aece021
+        i/ivreg29.hlp: fe3767960ed228a0e820190da84a73fdfb9d4a1300f65b73389757d56fae9619
+        i/ivreg29_cue.ado: e67620642666e295a64d70a80b8307cc7409983a4bb110f5af8263d46ce42c20
+        i/ivreg29_p.ado: 6536988dedbd00c5f278ecd2c395c12289d791cd0a226aba5fbbc12ef00c7270
+        i/ivreg2_p.ado: c2779a259bf5c4da6c92b8a12f9bcde8b1b4c6fe47f4d5d7c10b38ae3d9eb642
+        l/livreg2.mlib: a2e917496f21c00c428b43ff77f6036f9e5b9889c867bcff33fbf2a494d84161
+    - source: http://fmwww.bc.edu/repec/bocode/x
+      descriptor: xtivreg2.pkg
+      distribution_date: '20200626'
+      files:
+        x/xtivreg2.ado: 39cc983b484f7c4c61d876d0af013931f7efd6ae9fb798140fc69982bf87b985
+        x/xtivreg2.hlp: 8a9cd4401324b48fc98bc68fcd49e1bbc60099dd8d2fa5c88a78ab47c00972fd
+        x/xtivreg2_p.ado: 35eeb13880a6549e0a724f584039267063948337e37800063ba44203a403fe86
+    - source: http://fmwww.bc.edu/repec/bocode/f
+      descriptor: ftools.pkg
+      distribution_date: '20260111'
+      files:
+        f/fcollapse.ado: bec0014c804a413e40451d1a83e5faee7766dd442d812fe9549b2f8f878a2004
+        f/fcollapse.sthlp: 3cfd14b325a16209b0d6c4276907f15f699bcada9168bb4ba7e4ac2026256402
+        f/fcollapse_functions.mata: eb282f461a357497508d40a3d2c374e94d5ae4242b99c3b2596f736212614bd5
+        f/fcollapse_main.mata: 375eea05d3e412a0fa2f7406c606f0176f993109bf6e0bfcc7ef2975ba74ea11
+        f/fegen.ado: c5d1638f193b142e9c7529b3f36fcf53486d68689b320d21ff7e8cdd93c50e25
+        f/fegen.sthlp: 9d7662d1c3015361998ab549c7d4a780345ec26268478a86b185d375928ecf7d
+        f/fegen_group.ado: 92ca1712b8a2d03574d14529c85d390a5561af0b7217c0f103c2b764d9d0dd6b
+        f/fisid.ado: a889b5fb4c3cd6b0ac90db7500278b8080f0f66b86c71eb992a4477db57232c0
+        f/fisid.sthlp: 97b7eaa5baee4555c0920f3a797a9019e1535fb0c655c30069e580b5ecd5f806
+        f/flevelsof.ado: 24cb51b023866abf04420e43d3333abeefd7db66cfcf5beb5f6595b012f53192
+        f/flevelsof.sthlp: 627333bda5c89f7e40aec78efbeb24ed3c625f588f4f9b6dde3aa744ae0356f2
+        f/fmerge.ado: 1c2d18a8d72a12f68a7f743fb14c7a8186ece35ae05b0f75093ebc0133bcd697
+        f/fmerge.sthlp: db75a458e863fdb726e432419b6075e6192040aba30853df67b7afb1d49dd2a6
+        f/freshape.ado: 29051f47c412d0e4bde2bae86e6db4f8e6787fc47cef4dd2a2c673c8b075f22f
+        f/fsort.ado: a9eeb9312323c7898a715733d2baceb46578f5a1a3f698a87108b4cda053d97c
+        f/fsort.sthlp: 6a83df419f1d3068327560eaf4ea37906c55b27151aed2c5ebd1999a0d69700e
+        f/ftab.ado: 7a6e5d40a7f4beb2cab3b9ff2a96edb725ae5cb1cf6b18098847a81ed3c0f531
+        f/ftools.ado: c7eba3272b5fcd1dfa157e65c37840a051c6e2bf327d5ee31d42df65cf330b00
+        f/ftools.mata: 4af859bca19614684d3dd45566e13e17c6cf44df951ecca538bda5a44ebd1744
+        f/ftools.sthlp: 988637569f8803e4f2ef2c8dc2f1e9050e7898f1828da64c2087eee43f98e001
+        f/ftools_common.mata: ce73eae9f933f0c670e1d58f7200234414c68f5a19419357622d1e0b3887bcab
+        f/ftools_experimental.mata: a087387a4e44847f1c86f965839743150c494975c51bdd03a7896a755d3abfb2
+        f/ftools_hash1.mata: a31bcd5cb93be191bf235cdf1e81f794be0f51cec9a9fb747d615e5c9ee8af0c
+        f/ftools_main.mata: b836c7e21872691d6b9c9da84f8407b82365852911d244561ce4bdb1a26e85af
+        f/ftools_plugin.mata: 897146c21a1fc6e899ef19ed01a3251d19e35c7deb5158ddf3c3f0caf6450125
+        f/ftools_type_aliases.mata: 27338dcf0d0b5f24795b46aa7fdeab79309bf18c35bacdee2313fce5ef739885
+        j/join.ado: 34a6141b43e66a25982f9514bdb8721a167091508a525114449db1648da3b18a
+        j/join.sthlp: 015893b534060334efeca44aa84f676128357adefeda2e0e8e6be48598eb600e
+        l/local_inlist.ado: c4540d6ef1c85d2ea2fdc5e9eefcfaf767f9eb2a2cc40cf3e2e5e019714d71c3
+        l/local_inlist.sthlp: 9912ba9a104be9c6130beb5a387582c6296e3b8d8bf1a3fec935d92d836af100
+        m/ms_add_comma.ado: 62c404231453f13f968e7780823d3235e7c3695b72ac1dbe28275478f2e6e208
+        m/ms_compile_mata.ado: 4a316f4e00e00cef93d5cfe151308e1a128a1551fc908dd47efe6406ff00ab26
+        m/ms_expand_varlist.ado: b862f7ba8f490dc1931b7dda7a37e6d6c9fd6cff9435d378b61da0e353bd91ca
+        m/ms_fvstrip.ado: b272704336522f4ea707948549b542d802ab3eb257c3ad2341a1c543685a51f5
+        m/ms_fvstrip.sthlp: cfe5988bb044628ab33795b04816a5492a8c92917cdf5c7734779d85cbb873dd
+        m/ms_fvunab.ado: a4f47474e6d4cead0cf05cf75fd4fa6c36156e997fc2a8aa6584c122bc934900
+        m/ms_get_version.ado: c20215fb7583cac63083464ef18b402d8382686c7c4c8cec05caa6b5a6ca9d91
+        m/ms_parse_absvars.ado: 98bec7d062b656cfc6818d49b6130af151b76798c33cd7031469fc5125ffe2cc
+        m/ms_parse_depvar.ado: 3987003611f401125e66629bd613cd5188e51878b05b6bb72eeb56ed1b17266c
+        m/ms_parse_varlist.ado: bdb27378f1524d332cca571674c4e48c52a3138ee8183aa56bbebadb38cde48f
+        m/ms_parse_vce.ado: 99af53ca13f325a917b7377762feab140914a5a6534c0953ea9ce6d55dcfa678
+        p/parallel_map.ado: 96bea0da77aa112275134c77cad6f06977ae86f55759a2c7459e16d0eacf34dd
+        p/parallel_map.sthlp: b8ea404ce46d53c60eea67baee24257085a3d286772716888dfd30e4702a45fc
+        p/parallel_map_template.do.ado: d7fe2acbb7b97591b91d55760c7fc80b5ec60f5a432d80f670209647463c3d06
+    - source: http://fmwww.bc.edu/repec/bocode/r
+      descriptor: reghdfe.pkg
+      distribution_date: '20260111'
+      files:
+        e/estfe.ado: a2913f84bf90792230b525de0c495cbddfc810dc78c83dd351bac4cf9e353333
+        r/reghdfe.ado: 0c700ea38de4ed110d0cbb57acd3e24351a5ab68b61dd84fcb0e5bc8f02d941a
+        r/reghdfe.mata: 903eb887abf948a23f4640f4e3ec0d06965b2413fcfae0342e6c4d4ef6ead4c4
+        r/reghdfe.sthlp: fc3e5b070db4e9bd5c93246d291805d5a7e0d3d9d2c38b58042b4f8377e11864
+        r/reghdfe3.ado: 06ae4682ad1421c08dfa520dc98609141006602192d9703ab147310c0aa1db5b
+        r/reghdfe3.sthlp: 54bdd8cd01fd4273978d989e29e310d5158461fc72edd874272da5cfbb42d62a
+        r/reghdfe3_estat.ado: 9e9ceaa020bdfd1f6803e671531f162a5194440f14330f4c0fe629d8a878b73a
+        r/reghdfe3_footnote.ado: 66558aab202a6345540988cf555037794eace5e09a17ddebaacafa0890bfc4ea
+        r/reghdfe3_p.ado: 422280314dd7dc48b9a3b6238face0abd698f459160918ca2b0195125587b3d2
+        r/reghdfe5.ado: 0ccc39e990efeb8aa6c603ac7feb89bec47ed73d5ace095d13504390cd1baf2a
+        r/reghdfe5.mata: f99d6502e5d5b300041a4c6290de25ebc5f8c20bc629292adcdc1cdaa9658187
+        r/reghdfe5.sthlp: 0f9b33f8d36ba36de40e56738f52f7a5ee20aa8296b48d9ae9a699316f1875fa
+        r/reghdfe5_estat.ado: 911cb9a178f13b6b68a9e3757b57880549e53b64ad9e5d3154ea5da7e191774b
+        r/reghdfe5_footnote.ado: a70ae8289b52d86c28e01fafddb10ef381d922e80da875d4b3907a3dc9fd8d5a
+        r/reghdfe5_header.ado: df5d665c5f504355ac345e87f8c3b3fe0adced08b73b5d1e51715f1eae2bfba6
+        r/reghdfe5_p.ado: 7b04d29494f2f8d977dc94ffaca701c6b7ec28768066f4cd3b93a5437e89e003
+        r/reghdfe5_parse.ado: 13662b3579e740e4233700d0f966b4cf7e03f6109a08cacd44e33fcf098cb20a
+        r/reghdfe_estat.ado: c824d5d2ca8e5bbeeb1916cc80afd05554c668467ebed96c7a5ca86b8a5a87bb
+        r/reghdfe_footnote.ado: 39efcab7ff05fe00ccfa24e2d6e428a216471bacc7896f97d12544aae33602ac
+        r/reghdfe_header.ado: 2d39165ed4363c1fc503b0d599dc942db55c87415733957e98ba26eccc66f65d
+        r/reghdfe_p.ado: ce736f81cfe3cecbd5d5f66c275582ce0d622ea8e67161df8bc7855dfd0b1639
+        r/reghdfe_programming.sthlp: db849ee333a5fa269381cf928fdf9c5c465ce13cd3219a31737f8b6299cd67c2
+    - source: https://raw.githubusercontent.com/sergiocorreia/ivreghdfe/bfb5577a6dbdfb029ab4ab6a7e93f7257a827b42/src
+      descriptor: ivreghdfe.pkg
+      distribution_date: '20251129'
+      files:
+        i/ivreghdfe.ado: d1605318c15d3b7975b28a365e2176cd885fbf6b9378a60feaf97458c32d966e
+        i/ivreghdfe.sthlp: 3cf9edb0918df56176bc433e737f090f9008d47efaf001e897ebd4cb63bacda8
+    generated_files: {}
+  nprobust:
+    distributions:
+    - source: https://raw.githubusercontent.com/nppackages/nprobust/dfcb562d34822c75528c1c2d8a5a153be6b3a683/stata
+      descriptor: nprobust.pkg
+      distribution_date: '20260517'
+      files:
+        k/kdbwselect.ado: 4044680c7cbb11ae0a5cfebf98dd66081cb999b538fb0bf867b129c2fb331052
+        k/kdbwselect.sthlp: a3f737258b4ed162e648a11b928dfc1e026617f71777d340c8cc025d3ce1f515
+        k/kdrobust.ado: fc677e7c59e1dd492689859aa18da694fed653c6fbb9655767f3008a7eadafe6
+        k/kdrobust.sthlp: d20b197ea66bc553a90c3356523c54534277387f1759f73ca6030a03e94f6bff
+        l/lnprobust.mlib: 1febee5d14c91da1455585fe6de1e5e74b8b22f82ecebe582237518f6ec7aa45
+        l/lpbwselect.ado: 4c40dc792572b87859a1cc95407afe71b98e27f524949b91b4ef4193c892ab69
+        l/lpbwselect.sthlp: 6b936594b19aea570c32897049bfa76d63e35bed931681b46d3b6270a40d90b3
+        l/lprobust.ado: 335ce5bd9064c100b5b2a84585b1d68ef44ac4e81ebe7a4b303f99ddd8363b6e
+        l/lprobust.sthlp: b1ce5be3e49b7ced667402f5fd5ddcd883b2a8d870aefa7f3274a87eb2f00a88
+    generated_files: {}
+  psmatch2:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/p
+      descriptor: psmatch2.pkg
+      distribution_date: '20180201'
+      files:
+        d/density2.ado: 90691c0b2651bd3772b33f48afe31d7dfce0cc883ea52112d6a3e370859222ba
+        p/psgraph.ado: 68a74abd8389e15610428173e1d8bba45d31019b2915b63c5b34ac5b1dcd305b
+        p/psgraph.sthlp: b2ceb5a00fccfb73f2e9c88f777cffae8c50487c1c168bb5719a792b8af7ab3b
+        p/psmatch2.ado: d8ea98dbd1a6c8514dc8086d32aaa8f0f5af3842657a88ad91de60547d125ed5
+        p/psmatch2.dlg: b291fe1a13d1c79e59cde68557617bde5d0ff3b67669b26ac3164a950b5a74f3
+        p/psmatch2.sthlp: d36e2282883d7b6f490daa457401877a3fd09e6fa7d2258b816ec93224b7f581
+        p/pstest.ado: f237a82605d900a7a188a124693cc4ab6c208153d5ef5e9fe2be372774ab8bd4
+        p/pstest.sthlp: bc1b7b997752dae124321d909ac7625029306aead842d293a3b2daa3bc1d2863
+        p/pstest2.ado: 4d17503db43ec5662a1096fb4f031069b9ab964d98a1dc675a843d235607fce7
+    generated_files: {}
+  rdrobust:
+    distributions:
+    - source: https://raw.githubusercontent.com/rdpackages/rdrobust/5d7b5cdb7a304b87981736f4d6fa63002a470ee1/stata
+      descriptor: rdrobust.pkg
+      distribution_date: '20260527'
+      files:
+        l/lrdrobust.mlib: 8326368068fab41e1e002c0d3c1c8251ec5b830dbecc912926cc880fd2a2b663
+        r/rdbwselect.ado: 789ff489d79cb92f74da34f82b40de1c5ed2b780ca9e0d90ad296e8c57ec683a
+        r/rdbwselect.sthlp: 8584942234dd5b723881d0557fdfbf476e515faa2d0799caf99eac12a38cc745
+        r/rdplot.ado: 1ab28b4d1e4e5b6a0e2e0563d9b9b399ffb86346467513054977567093f204b5
+        r/rdplot.sthlp: 41aa4f40af4d7f3d9de6cd78e449cf9c2b0e519ebfd20e629e87d85ba669fa74
+        r/rdrobust.ado: c82916177517c9b9bf63b432678ef94fb5fe0883c2b936188903b4875eb5a863
+        r/rdrobust.sthlp: 6bd246cc9c9d3395862c6584bba24e86f355bef012560ac9a3ebbeb17008e7b3
+        r/rdrobustplot.ado: aaa3e2642c2aeebfa74d638429f9663ef783e6565aa4b2595f2f5edd883cea17
+        r/rdrobustplot.sthlp: f2e97a693b83ed0be8f0c9b33cbd2ef054a9d4701ce429c972084d7a8db717e3
+    - source: https://raw.githubusercontent.com/rdpackages/rddensity/94a458351c8fb7bbc5bb4648828be4906947ed4c/stata
+      descriptor: rddensity.pkg
+      distribution_date: '20260527'
+      files:
+        l/lrddensity.mlib: 77689520d44946f6e80a9fb294e4c26be1ac60fd34c2de1df6c30a6764c2abc9
+        r/rdbwdensity.ado: 1e5a2ae7435d22fab714734a1738c172f967033870791a66f410f88af4897005
+        r/rdbwdensity.sthlp: 9cdc2160c3ae6e769c1a416c17df9151a595544b244e8fb7c6703a88e020e184
+        r/rddensity.ado: 5fcc419ab5671b2ffd17db96fe2ea6ad08a91ddd1693d1a20c7d752cc4f22ebe
+        r/rddensity.sthlp: 6c0026f34bc54d450636311642bd3f9fc7c5bba4f759271164073b943394c477
+    - source: https://raw.githubusercontent.com/rdpackages/rdlocrand/0d96ece47e56c33c0ad8fbc7f72f1d229ed60732/stata
+      descriptor: rdlocrand.pkg
+      distribution_date: '20260527'
+      files:
+        l/lrdlocrand.mlib: cdc5c783432eb36ff10379ddd3b85cf0e1861433ac681e2f9f5389e24157f5b7
+        r/rdrandinf.ado: f8a0ba1dd03eb7c6d31a82cc1aedb74019ea0d0111f50ee9ddfbe24fca98a45f
+        r/rdrandinf.sthlp: a3104a5f7d758602129fd4e219fd17ce7ea1fec6b4155085e2820a60eb08c1eb
+        r/rdrandinf_model.ado: daf840e6c168f25c215d28b2c3d6f23353a87eb26cb3299843a371a9ab8023bd
+        r/rdrbounds.ado: 50e47652722c3ef32cf2c217c277dcabe6c715756873c99a31feb9150246c4ab
+        r/rdrbounds.sthlp: eede5da044d790a29631c7bc50b519d8956bb6162952a5e053c477b086286169
+        r/rdsensitivity.ado: 85b7b1213d5f00b493093a8594a1c5775bffd7e6ceaffaeabbe993673d17acc2
+        r/rdsensitivity.sthlp: c271c2eefdc53ccaf907d18034e124984282bd4004eb360d9f3264849c153c52
+        r/rdwinselect.ado: efd6940e77e74745c02a8bf4489885991efd08419dafb3240070751ddc615f60
+        r/rdwinselect.sthlp: c53307db7549a5f3b806101c9d57552e8ae2d7f2ba1f3bf8b8dcb6eb174b7f99
+        r/rdwinselect_allcovs.ado: 442d80b6d938f013248abaa170753833f15be7e879b31b533e47258eae54d5a2
+    - source: https://raw.githubusercontent.com/rdpackages/rdmulti/23b1e7d6e53bb69575d307629985724adbec6e30/stata
+      descriptor: rdmulti.pkg
+      distribution_date: '20260515'
+      files:
+        l/lrdmulti.mlib: b92a94cd2420766dfbf1d776ec6eec9d79c4981e5b67127b0216bf55e00c1aec
+        r/rdmc.ado: e7476d2e210d200dbc7cba8356d6fdcafd61f8ad38c0a6e22f5abf94af1ae9d3
+        r/rdmc.sthlp: 08ca9c00a7705faf3eba173bb503669d3bf8606297cc904368f539ebb402fe85
+        r/rdmcplot.ado: 42d749324eb03bf2b6458d942d9a4f4f2f5613c1d657891d234fe49a22d4b1ae
+        r/rdmcplot.sthlp: c019f279ffe35ee80a537351713698900d5c4b360c1091092ea803b2e313e12d
+        r/rdms.ado: 32e4bfcc548250e2b22afc4799d542e3b15b52b1822fcafec8a5326f413537a5
+        r/rdms.sthlp: 8d2d708b5f49d75e5e436f7b81f9e5408d4d93bbc405b44dcc1b34b1939dd89d
+    generated_files: {}
+  reghdfe:
+    distributions:
+    - source: https://raw.githubusercontent.com/sergiocorreia/stata-require/7ee750b12f9c51ec8a879445cbf39357c308bdee/src
+      descriptor: require.pkg
+      distribution_date: '20240410'
+      files:
+        r/require.ado: bfc799167555a9e6bf2bb32daac24f49092d64cf3f6701a50f27a3fd1e6aacdc
+        r/require.sthlp: 2afb397d3e8a4b434178618352f350beef20eea25cf1b169b95d1d4bef2c34a9
+    - source: https://raw.githubusercontent.com/sergiocorreia/ftools/7b3663e49ea5c5b81638c55be29edf416e68e8b7/src
+      descriptor: ftools.pkg
+      distribution_date: '20260109'
+      files:
+        f/fcollapse.ado: bec0014c804a413e40451d1a83e5faee7766dd442d812fe9549b2f8f878a2004
+        f/fcollapse.sthlp: 3cfd14b325a16209b0d6c4276907f15f699bcada9168bb4ba7e4ac2026256402
+        f/fcollapse_functions.mata: eb282f461a357497508d40a3d2c374e94d5ae4242b99c3b2596f736212614bd5
+        f/fcollapse_main.mata: 375eea05d3e412a0fa2f7406c606f0176f993109bf6e0bfcc7ef2975ba74ea11
+        f/fegen.ado: c5d1638f193b142e9c7529b3f36fcf53486d68689b320d21ff7e8cdd93c50e25
+        f/fegen.sthlp: 9d7662d1c3015361998ab549c7d4a780345ec26268478a86b185d375928ecf7d
+        f/fegen_group.ado: 92ca1712b8a2d03574d14529c85d390a5561af0b7217c0f103c2b764d9d0dd6b
+        f/fisid.ado: a889b5fb4c3cd6b0ac90db7500278b8080f0f66b86c71eb992a4477db57232c0
+        f/fisid.sthlp: 97b7eaa5baee4555c0920f3a797a9019e1535fb0c655c30069e580b5ecd5f806
+        f/flevelsof.ado: 24cb51b023866abf04420e43d3333abeefd7db66cfcf5beb5f6595b012f53192
+        f/flevelsof.sthlp: 627333bda5c89f7e40aec78efbeb24ed3c625f588f4f9b6dde3aa744ae0356f2
+        f/fmerge.ado: 1c2d18a8d72a12f68a7f743fb14c7a8186ece35ae05b0f75093ebc0133bcd697
+        f/fmerge.sthlp: db75a458e863fdb726e432419b6075e6192040aba30853df67b7afb1d49dd2a6
+        f/fsort.ado: a9eeb9312323c7898a715733d2baceb46578f5a1a3f698a87108b4cda053d97c
+        f/fsort.sthlp: 6a83df419f1d3068327560eaf4ea37906c55b27151aed2c5ebd1999a0d69700e
+        f/ftab.ado: 7a6e5d40a7f4beb2cab3b9ff2a96edb725ae5cb1cf6b18098847a81ed3c0f531
+        f/ftools.ado: c7eba3272b5fcd1dfa157e65c37840a051c6e2bf327d5ee31d42df65cf330b00
+        f/ftools.mata: 4af859bca19614684d3dd45566e13e17c6cf44df951ecca538bda5a44ebd1744
+        f/ftools.sthlp: 988637569f8803e4f2ef2c8dc2f1e9050e7898f1828da64c2087eee43f98e001
+        f/ftools_common.mata: ce73eae9f933f0c670e1d58f7200234414c68f5a19419357622d1e0b3887bcab
+        f/ftools_hash1.mata: a31bcd5cb93be191bf235cdf1e81f794be0f51cec9a9fb747d615e5c9ee8af0c
+        f/ftools_main.mata: b836c7e21872691d6b9c9da84f8407b82365852911d244561ce4bdb1a26e85af
+        f/ftools_plugin.mata: 897146c21a1fc6e899ef19ed01a3251d19e35c7deb5158ddf3c3f0caf6450125
+        f/ftools_type_aliases.mata: 27338dcf0d0b5f24795b46aa7fdeab79309bf18c35bacdee2313fce5ef739885
+        j/join.ado: 34a6141b43e66a25982f9514bdb8721a167091508a525114449db1648da3b18a
+        j/join.sthlp: 015893b534060334efeca44aa84f676128357adefeda2e0e8e6be48598eb600e
+        l/local_inlist.ado: c4540d6ef1c85d2ea2fdc5e9eefcfaf767f9eb2a2cc40cf3e2e5e019714d71c3
+        l/local_inlist.sthlp: 9912ba9a104be9c6130beb5a387582c6296e3b8d8bf1a3fec935d92d836af100
+        m/ms_add_comma.ado: 62c404231453f13f968e7780823d3235e7c3695b72ac1dbe28275478f2e6e208
+        m/ms_compile_mata.ado: 4a316f4e00e00cef93d5cfe151308e1a128a1551fc908dd47efe6406ff00ab26
+        m/ms_expand_varlist.ado: b862f7ba8f490dc1931b7dda7a37e6d6c9fd6cff9435d378b61da0e353bd91ca
+        m/ms_fvstrip.ado: b272704336522f4ea707948549b542d802ab3eb257c3ad2341a1c543685a51f5
+        m/ms_fvstrip.sthlp: cfe5988bb044628ab33795b04816a5492a8c92917cdf5c7734779d85cbb873dd
+        m/ms_fvunab.ado: a4f47474e6d4cead0cf05cf75fd4fa6c36156e997fc2a8aa6584c122bc934900
+        m/ms_get_version.ado: c20215fb7583cac63083464ef18b402d8382686c7c4c8cec05caa6b5a6ca9d91
+        m/ms_parse_absvars.ado: 98bec7d062b656cfc6818d49b6130af151b76798c33cd7031469fc5125ffe2cc
+        m/ms_parse_varlist.ado: bdb27378f1524d332cca571674c4e48c52a3138ee8183aa56bbebadb38cde48f
+        m/ms_parse_vce.ado: 99af53ca13f325a917b7377762feab140914a5a6534c0953ea9ce6d55dcfa678
+        p/parallel_map.ado: 96bea0da77aa112275134c77cad6f06977ae86f55759a2c7459e16d0eacf34dd
+        p/parallel_map.sthlp: b8ea404ce46d53c60eea67baee24257085a3d286772716888dfd30e4702a45fc
+        p/parallel_map_template.do.ado: d7fe2acbb7b97591b91d55760c7fc80b5ec60f5a432d80f670209647463c3d06
+    - source: https://raw.githubusercontent.com/sergiocorreia/reghdfe/29b2b203f534413369d675d0c0f674d61291f536/src
+      descriptor: reghdfe.pkg
+      distribution_date: '20260708'
+      files:
+        e/estfe.ado: a2913f84bf90792230b525de0c495cbddfc810dc78c83dd351bac4cf9e353333
+        r/reghdfe.ado: e9b96033602a6f1785f1be0b6393b44d48ef0974009ee2bffee308bc251a6abc
+        r/reghdfe.mata: 55827e1e3c9bec3a0c9310c1147a24c3b997ca0a5dd256a353d98407f876dcf6
+        r/reghdfe.sthlp: 5c99c4d0b34eebe53d6f1158ba093d693cf4d0c74a3f7eb9603c6b0972b072c1
+        r/reghdfe3.ado: 06ae4682ad1421c08dfa520dc98609141006602192d9703ab147310c0aa1db5b
+        r/reghdfe3.sthlp: 54bdd8cd01fd4273978d989e29e310d5158461fc72edd874272da5cfbb42d62a
+        r/reghdfe3_estat.ado: 9e9ceaa020bdfd1f6803e671531f162a5194440f14330f4c0fe629d8a878b73a
+        r/reghdfe3_footnote.ado: 66558aab202a6345540988cf555037794eace5e09a17ddebaacafa0890bfc4ea
+        r/reghdfe3_p.ado: 422280314dd7dc48b9a3b6238face0abd698f459160918ca2b0195125587b3d2
+        r/reghdfe5.ado: 0ccc39e990efeb8aa6c603ac7feb89bec47ed73d5ace095d13504390cd1baf2a
+        r/reghdfe5.mata: f99d6502e5d5b300041a4c6290de25ebc5f8c20bc629292adcdc1cdaa9658187
+        r/reghdfe5.sthlp: 0f9b33f8d36ba36de40e56738f52f7a5ee20aa8296b48d9ae9a699316f1875fa
+        r/reghdfe5_estat.ado: 911cb9a178f13b6b68a9e3757b57880549e53b64ad9e5d3154ea5da7e191774b
+        r/reghdfe5_footnote.ado: a70ae8289b52d86c28e01fafddb10ef381d922e80da875d4b3907a3dc9fd8d5a
+        r/reghdfe5_header.ado: df5d665c5f504355ac345e87f8c3b3fe0adced08b73b5d1e51715f1eae2bfba6
+        r/reghdfe5_p.ado: 7b04d29494f2f8d977dc94ffaca701c6b7ec28768066f4cd3b93a5437e89e003
+        r/reghdfe5_parse.ado: 13662b3579e740e4233700d0f966b4cf7e03f6109a08cacd44e33fcf098cb20a
+        r/reghdfe_estat.ado: c824d5d2ca8e5bbeeb1916cc80afd05554c668467ebed96c7a5ca86b8a5a87bb
+        r/reghdfe_footnote.ado: 39efcab7ff05fe00ccfa24e2d6e428a216471bacc7896f97d12544aae33602ac
+        r/reghdfe_header.ado: 2d39165ed4363c1fc503b0d599dc942db55c87415733957e98ba26eccc66f65d
+        r/reghdfe_p.ado: ce736f81cfe3cecbd5d5f66c275582ce0d622ea8e67161df8bc7855dfd0b1639
+        r/reghdfe_programming.sthlp: db849ee333a5fa269381cf928fdf9c5c465ce13cd3219a31737f8b6299cd67c2
+    generated_files:
+      personal/l/lftools.mlib: 5b19a177ff932017f4735af3ae5a1f2942bee34f955f3ebe363e4295cdb34784
+  synth:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/s
+      descriptor: synth.pkg
+      distribution_date: '20260430'
+      files:
+        l/lsynth_mata_subr.mlib: 160c45f5fc32e75d94840bb8655ac56947f59cbd6d51b461283b0cb264f65f00
+        s/synth.ado: dd9f909121ff95ae70c8af4b9989656b790133d54e4c9da5274c964ef5959b8e
+        s/synth.sthlp: 26b2725287cf9f6cfd71c8e56e1b04bbe8c402260254a5e275560d5c0773812e
+        s/synth_ll.ado: 5b26f9ffc961fd39ca04021797b117c15cac1da48060eccad51213a88f84edb2
+        s/synthopt.plugin: 49973a8f93ed8ed3631767e1bd7fc9ce4009b39198eb8e5df1c990e5ff0dc298
+    generated_files: {}
+  xtabond2:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/r
+      descriptor: ranktest.pkg
+      distribution_date: '20200929'
+      files:
+        l/livreg2.mlib: a2e917496f21c00c428b43ff77f6036f9e5b9889c867bcff33fbf2a494d84161
+        r/ranktest.ado: 484c00ea5e4781f74419f21e9e4aeb333c00dfa24a3eb85f580b52c923690b28
+        r/ranktest.sthlp: 7c905aa57e8cad4cb12fad483ddec29fbda82ad5b8045bd1fdc822251036edc2
+        r/ranktest11.ado: 3eb940c66df4a840afa0e3f81ea98f9fd84ed4107264705c879749d4882c8328
+        r/ranktest11.sthlp: bef09afb570aad88361f1e18948412284e366bf22d2b1d02e9327eeec228329a
+        r/ranktest9.ado: 2a6ec6a43f2b983ce37086c3147ff42f8ea0c5be7b1632971130ac5111e7e886
+    - source: http://fmwww.bc.edu/repec/bocode/x
+      descriptor: xtabond2.pkg
+      distribution_date: '20250209'
+      files:
+        l/lxtabond2.mlib: a67a36be25aeb1119a99c4fd1b70f9d731a23516328543c0b805f0ddebe79541
+        x/xtab2_p.ado: f8366e5a906387320451c1c1490d1f8a647772b591a8225cdbba3dbe3979bca3
+        x/xtabond2.ado: 96a18e5a541b223ed20edf9301eddc4f6688d15cd38385325d910da13abfa66e
+        x/xtabond2.hlp: fc3151be031e32245ef75cdf2a9480f3b8401464357c03766ad53148c9d6dd7d
+        x/xtabond2.mata: 2a97bd6bc9e5ae3ca1f9346f7093d9cd16497029bd16b2598cdc8401b9268ba9
+    generated_files: {}
+  coefplot:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/c
+      descriptor: coefplot.pkg
+      distribution_date: '20250822'
+      files:
+        c/coefplot.ado: 7c555af8d3a3efa1d72861988259ca4d2b67d52516bb87d82f21f31b639517f3
+        c/coefplot.sthlp: 9b31f0702281293a698d618495a024f47cb0a3ede72fa548884dd52debb1207b
+    generated_files: {}
+  event-study:
+    distributions:
+    - source: https://raw.githubusercontent.com/sergiocorreia/stata-require/7ee750b12f9c51ec8a879445cbf39357c308bdee/src
+      descriptor: require.pkg
+      distribution_date: '20240410'
+      files:
+        r/require.ado: bfc799167555a9e6bf2bb32daac24f49092d64cf3f6701a50f27a3fd1e6aacdc
+        r/require.sthlp: 2afb397d3e8a4b434178618352f350beef20eea25cf1b169b95d1d4bef2c34a9
+    - source: http://fmwww.bc.edu/repec/bocode/f
+      descriptor: ftools.pkg
+      distribution_date: '20260111'
+      files:
+        f/fcollapse.ado: bec0014c804a413e40451d1a83e5faee7766dd442d812fe9549b2f8f878a2004
+        f/fcollapse.sthlp: 3cfd14b325a16209b0d6c4276907f15f699bcada9168bb4ba7e4ac2026256402
+        f/fcollapse_functions.mata: eb282f461a357497508d40a3d2c374e94d5ae4242b99c3b2596f736212614bd5
+        f/fcollapse_main.mata: 375eea05d3e412a0fa2f7406c606f0176f993109bf6e0bfcc7ef2975ba74ea11
+        f/fegen.ado: c5d1638f193b142e9c7529b3f36fcf53486d68689b320d21ff7e8cdd93c50e25
+        f/fegen.sthlp: 9d7662d1c3015361998ab549c7d4a780345ec26268478a86b185d375928ecf7d
+        f/fegen_group.ado: 92ca1712b8a2d03574d14529c85d390a5561af0b7217c0f103c2b764d9d0dd6b
+        f/fisid.ado: a889b5fb4c3cd6b0ac90db7500278b8080f0f66b86c71eb992a4477db57232c0
+        f/fisid.sthlp: 97b7eaa5baee4555c0920f3a797a9019e1535fb0c655c30069e580b5ecd5f806
+        f/flevelsof.ado: 24cb51b023866abf04420e43d3333abeefd7db66cfcf5beb5f6595b012f53192
+        f/flevelsof.sthlp: 627333bda5c89f7e40aec78efbeb24ed3c625f588f4f9b6dde3aa744ae0356f2
+        f/fmerge.ado: 1c2d18a8d72a12f68a7f743fb14c7a8186ece35ae05b0f75093ebc0133bcd697
+        f/fmerge.sthlp: db75a458e863fdb726e432419b6075e6192040aba30853df67b7afb1d49dd2a6
+        f/freshape.ado: 29051f47c412d0e4bde2bae86e6db4f8e6787fc47cef4dd2a2c673c8b075f22f
+        f/fsort.ado: a9eeb9312323c7898a715733d2baceb46578f5a1a3f698a87108b4cda053d97c
+        f/fsort.sthlp: 6a83df419f1d3068327560eaf4ea37906c55b27151aed2c5ebd1999a0d69700e
+        f/ftab.ado: 7a6e5d40a7f4beb2cab3b9ff2a96edb725ae5cb1cf6b18098847a81ed3c0f531
+        f/ftools.ado: c7eba3272b5fcd1dfa157e65c37840a051c6e2bf327d5ee31d42df65cf330b00
+        f/ftools.mata: 4af859bca19614684d3dd45566e13e17c6cf44df951ecca538bda5a44ebd1744
+        f/ftools.sthlp: 988637569f8803e4f2ef2c8dc2f1e9050e7898f1828da64c2087eee43f98e001
+        f/ftools_common.mata: ce73eae9f933f0c670e1d58f7200234414c68f5a19419357622d1e0b3887bcab
+        f/ftools_experimental.mata: a087387a4e44847f1c86f965839743150c494975c51bdd03a7896a755d3abfb2
+        f/ftools_hash1.mata: a31bcd5cb93be191bf235cdf1e81f794be0f51cec9a9fb747d615e5c9ee8af0c
+        f/ftools_main.mata: b836c7e21872691d6b9c9da84f8407b82365852911d244561ce4bdb1a26e85af
+        f/ftools_plugin.mata: 897146c21a1fc6e899ef19ed01a3251d19e35c7deb5158ddf3c3f0caf6450125
+        f/ftools_type_aliases.mata: 27338dcf0d0b5f24795b46aa7fdeab79309bf18c35bacdee2313fce5ef739885
+        j/join.ado: 34a6141b43e66a25982f9514bdb8721a167091508a525114449db1648da3b18a
+        j/join.sthlp: 015893b534060334efeca44aa84f676128357adefeda2e0e8e6be48598eb600e
+        l/local_inlist.ado: c4540d6ef1c85d2ea2fdc5e9eefcfaf767f9eb2a2cc40cf3e2e5e019714d71c3
+        l/local_inlist.sthlp: 9912ba9a104be9c6130beb5a387582c6296e3b8d8bf1a3fec935d92d836af100
+        m/ms_add_comma.ado: 62c404231453f13f968e7780823d3235e7c3695b72ac1dbe28275478f2e6e208
+        m/ms_compile_mata.ado: 4a316f4e00e00cef93d5cfe151308e1a128a1551fc908dd47efe6406ff00ab26
+        m/ms_expand_varlist.ado: b862f7ba8f490dc1931b7dda7a37e6d6c9fd6cff9435d378b61da0e353bd91ca
+        m/ms_fvstrip.ado: b272704336522f4ea707948549b542d802ab3eb257c3ad2341a1c543685a51f5
+        m/ms_fvstrip.sthlp: cfe5988bb044628ab33795b04816a5492a8c92917cdf5c7734779d85cbb873dd
+        m/ms_fvunab.ado: a4f47474e6d4cead0cf05cf75fd4fa6c36156e997fc2a8aa6584c122bc934900
+        m/ms_get_version.ado: c20215fb7583cac63083464ef18b402d8382686c7c4c8cec05caa6b5a6ca9d91
+        m/ms_parse_absvars.ado: 98bec7d062b656cfc6818d49b6130af151b76798c33cd7031469fc5125ffe2cc
+        m/ms_parse_depvar.ado: 3987003611f401125e66629bd613cd5188e51878b05b6bb72eeb56ed1b17266c
+        m/ms_parse_varlist.ado: bdb27378f1524d332cca571674c4e48c52a3138ee8183aa56bbebadb38cde48f
+        m/ms_parse_vce.ado: 99af53ca13f325a917b7377762feab140914a5a6534c0953ea9ce6d55dcfa678
+        p/parallel_map.ado: 96bea0da77aa112275134c77cad6f06977ae86f55759a2c7459e16d0eacf34dd
+        p/parallel_map.sthlp: b8ea404ce46d53c60eea67baee24257085a3d286772716888dfd30e4702a45fc
+        p/parallel_map_template.do.ado: d7fe2acbb7b97591b91d55760c7fc80b5ec60f5a432d80f670209647463c3d06
+    - source: http://fmwww.bc.edu/repec/bocode/r
+      descriptor: reghdfe.pkg
+      distribution_date: '20260111'
+      files:
+        e/estfe.ado: a2913f84bf90792230b525de0c495cbddfc810dc78c83dd351bac4cf9e353333
+        r/reghdfe.ado: 0c700ea38de4ed110d0cbb57acd3e24351a5ab68b61dd84fcb0e5bc8f02d941a
+        r/reghdfe.mata: 903eb887abf948a23f4640f4e3ec0d06965b2413fcfae0342e6c4d4ef6ead4c4
+        r/reghdfe.sthlp: fc3e5b070db4e9bd5c93246d291805d5a7e0d3d9d2c38b58042b4f8377e11864
+        r/reghdfe3.ado: 06ae4682ad1421c08dfa520dc98609141006602192d9703ab147310c0aa1db5b
+        r/reghdfe3.sthlp: 54bdd8cd01fd4273978d989e29e310d5158461fc72edd874272da5cfbb42d62a
+        r/reghdfe3_estat.ado: 9e9ceaa020bdfd1f6803e671531f162a5194440f14330f4c0fe629d8a878b73a
+        r/reghdfe3_footnote.ado: 66558aab202a6345540988cf555037794eace5e09a17ddebaacafa0890bfc4ea
+        r/reghdfe3_p.ado: 422280314dd7dc48b9a3b6238face0abd698f459160918ca2b0195125587b3d2
+        r/reghdfe5.ado: 0ccc39e990efeb8aa6c603ac7feb89bec47ed73d5ace095d13504390cd1baf2a
+        r/reghdfe5.mata: f99d6502e5d5b300041a4c6290de25ebc5f8c20bc629292adcdc1cdaa9658187
+        r/reghdfe5.sthlp: 0f9b33f8d36ba36de40e56738f52f7a5ee20aa8296b48d9ae9a699316f1875fa
+        r/reghdfe5_estat.ado: 911cb9a178f13b6b68a9e3757b57880549e53b64ad9e5d3154ea5da7e191774b
+        r/reghdfe5_footnote.ado: a70ae8289b52d86c28e01fafddb10ef381d922e80da875d4b3907a3dc9fd8d5a
+        r/reghdfe5_header.ado: df5d665c5f504355ac345e87f8c3b3fe0adced08b73b5d1e51715f1eae2bfba6
+        r/reghdfe5_p.ado: 7b04d29494f2f8d977dc94ffaca701c6b7ec28768066f4cd3b93a5437e89e003
+        r/reghdfe5_parse.ado: 13662b3579e740e4233700d0f966b4cf7e03f6109a08cacd44e33fcf098cb20a
+        r/reghdfe_estat.ado: c824d5d2ca8e5bbeeb1916cc80afd05554c668467ebed96c7a5ca86b8a5a87bb
+        r/reghdfe_footnote.ado: 39efcab7ff05fe00ccfa24e2d6e428a216471bacc7896f97d12544aae33602ac
+        r/reghdfe_header.ado: 2d39165ed4363c1fc503b0d599dc942db55c87415733957e98ba26eccc66f65d
+        r/reghdfe_p.ado: ce736f81cfe3cecbd5d5f66c275582ce0d622ea8e67161df8bc7855dfd0b1639
+        r/reghdfe_programming.sthlp: db849ee333a5fa269381cf928fdf9c5c465ce13cd3219a31737f8b6299cd67c2
+    - source: http://fmwww.bc.edu/repec/bocode/a
+      descriptor: avar.pkg
+      distribution_date: '20150730'
+      files:
+        a/avar.ado: 2dda9aa7aeddd75b1001ffd260a7ac6e7e75566a8500b240c7c0751475e11637
+        a/avar.sthlp: 78bfc1c9b05065fd9ee55540230898e0582157932de077210952e008f1c971f1
+        a/avar9.ado: 3a210ee4f83463a0b4c60a61f912d12f66647fe6179c168d3ca1c085708af66a
+        l/livreg2.mlib: a2e917496f21c00c428b43ff77f6036f9e5b9889c867bcff33fbf2a494d84161
+    - source: http://fmwww.bc.edu/repec/bocode/e
+      descriptor: eventstudyinteract.pkg
+      distribution_date: '20220911'
+      files:
+        e/eventstudyinteract.ado: dcf01a334702e76254527beff4dac522fef8664327fe505121fca8651e7c04e9
+        e/eventstudyinteract.sthlp: e18ce548acc0bb20292b6a2b4810c368ca63fcaee12808ca1682e9f68a2e968e
+    - source: http://fmwww.bc.edu/repec/bocode/e
+      descriptor: eventdd.pkg
+      distribution_date: '20231209'
+      files:
+        e/eventdd.ado: e9cf4aad6e6b31485c06fa22f97de708c087df816cc6af5e48b8eb8f7ac3f74e
+        e/eventdd.sthlp: 9eb2c9e157f2d724e1312099b8f6b9207f684e6ebf6fbc1641df56b06e4c905a
+        e/eventdd_estat.ado: 10d986e2830d710baeac0424a864c7ba4784d7b16e126672dd2d85ad36d198e3
+    - source: http://fmwww.bc.edu/repec/bocode/e
+      descriptor: event_plot.pkg
+      distribution_date: '20210608'
+      files:
+        e/event_plot.ado: 40f890e061325f35dd269c1c0043a5ca2720aed295244df2c179e7c7878dbcd0
+        e/event_plot.sthlp: 37c47b4d697d5ab0bf90a800364af10b0dd18404dedae39dbc5f7548453c409a
+    generated_files: {}
+  graph-schemes:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/g
+      descriptor: grstyle.pkg
+      distribution_date: '20200919'
+      files:
+        g/grstyle.ado: a055f64e5670eec4cbd6b9a92b77bce3f511194559a9f96011f27160b088848d
+        g/grstyle.hlp: 7cb2565484143e77abd57f70cb082d949396459e93e57411e09fdae66b387a47
+        g/grstyle_set.ado: 2d56dc43ac72bc47f85d8443982c495226ef498af7114c2557e8db24637ca95a
+        g/grstyle_set.hlp: 15c61817560f0b2ce500ec4649a7c36f0bc20ce3f822e78eccb03665825387cd
+    - source: http://fmwww.bc.edu/repec/bocode/p
+      descriptor: palettes.pkg
+      distribution_date: '20251213'
+      files:
+        c/colorcheck.ado: c61583d61a9bcb807f888da649f978949789ca8eaf03c69a8765775cb66f369d
+        c/colorcheck.sthlp: 457b2bd2faace92a8a4de6086e18ed6d9150700a102b137b51c1c61d685d156a
+        c/colorpalette.ado: ae77fb837573c7547a6f19a9521be9d20f27ef31947694487b05177c3eb7cf63
+        c/colorpalette.sthlp: 9ceb68cd7662ee824fef49dfeae14197524f444ae796c20fdd3f6c38dd4c6a8b
+        c/colorpalette9.ado: e70e18262a5515ed4f715de0eba25ec48eb26c77d59129090dbcecd7e3335728
+        c/colorpalette9.hlp: 2f402c6f90c204abdc21ef7c8883fffbfee3e832f89f22fcb25eb3fa405c9810
+        l/linepalette.ado: 8a30f15f6cf5389f6b79c202f7b18334239f7411dd2ec56b0ceb892df751cbd0
+        l/linepalette.hlp: b2a157e2930af713d5a1aae20500c3e6c58f847a75dd00cfa1908530f618c31a
+        p/palettes.hlp: 7c79af48590b9d3924346036967d26817e60bb98027b12680fe52ac75bd06fdd
+        s/symbolpalette.ado: 9b55c3cd37f056d5fa12ee396483a83dac2ccb50315128d848647825823747e5
+        s/symbolpalette.hlp: c14e8407b971662a2f19bbf25fd7052f7f7cbaa9bf802a48e7b92d33a29c7d39
+    - source: http://fmwww.bc.edu/repec/bocode/c
+      descriptor: colrspace.pkg
+      distribution_date: '20251213'
+      files:
+        c/colrspace.sthlp: 7206b098487882575836b009c3ea30e1c2a9041285dec628f886456cc7a89054
+        c/colrspace_library_generators.sthlp: e8b0fce54052441ad83cfa4fc91ce1d8d07bfef1cad875aec2e93ee59bc98953
+        c/colrspace_library_lsmaps.sthlp: d456faadce5bf0f741d06186f357518104a335bff5b0c0a9ea7c493ca583b6cc
+        c/colrspace_library_namedcolors.sthlp: a4a37fba4fb2acd7e445ab63d7124af2b6e5ff237818470d35e6e8cc6635d271
+        c/colrspace_library_palettes.sthlp: e32893087947f8af44889a5361af8fc9fe34d66402932e5fddb4a11f9abd3cad
+        c/colrspace_library_rgbmaps.sthlp: dddef3974eb1103cdde801a200a15ff98209560af133439200ba7b9500b07fa2
+        c/colrspace_source.sthlp: 0acdc717d60ae716fb4e812506b58eae2a8e1ed5ff554374c0ca4e15e3a30d42
+        l/lcolrspace.mlib: eb6a3bc4c5e2a95ca56f23515f046cbae2433edaab4f0aedfeaf24fdc7e62e5a
+    - source: http://fmwww.bc.edu/repec/bocode/s
+      descriptor: schemepack.pkg
+      distribution_date: '20221111'
+      files:
+        s/scheme-black_brbg.scheme: 485442eec4fe6996f0c9b6b114c1db84afb4f2f05137d246a5cc86e369478466
+        s/scheme-black_cividis.scheme: 2d5daebeffc31b5f390b28917e0781bbcdb6fef3a9c6018c1fc6a1e56acc96b5
+        s/scheme-black_hue.scheme: e4f092c2402bc27a29be35d5342d8c5ce4894e69f68428900b46c30fb88123bd
+        s/scheme-black_jet.scheme: 945897ad3589f24cfde010c56761d3b0077ead05cb80105dfdec9c3428a9814e
+        s/scheme-black_piyg.scheme: 0f0d6f6698d929c8f23d5c38ce47ff7958b404375a4843485a6d59446ced2b82
+        s/scheme-black_ptol.scheme: 6d300ed7392ff1a7062cdcc812ccd80771d7cc5a1480c19283996b5604063d9f
+        s/scheme-black_set3.scheme: 5668109191fed75a340bdf3f26211d9fdbc913864d35e651edce44ddc42f56f4
+        s/scheme-black_tableau.scheme: 9b3e37a2248c92c473f97ca4133223f1396150b8f40b14f9027bcd45e6e5da4c
+        s/scheme-black_viridis.scheme: fd538c3a4106ab18eb444e74a8a362d372aa4b7a37797b2c565e0572b0df21ee
+        s/scheme-black_w3d.scheme: 8f2942505183198c2ee047dbd0e3c644a5e12e4ba3272a3e2ae946c9b3209880
+        s/scheme-cblind1.scheme: ba9ef4423497d49c699be95539cf99c70c84f2a84b1decba173528abefdeab28
+        s/scheme-gg_brbg.scheme: 53b5684cc0d231221a50511fbec1e313ae5dc3ce5d44747a6935a9689caf0905
+        s/scheme-gg_cividis.scheme: 0c40610492a0aa52cfeb61151a7a9abeef93b65cea116516179251cc1679f8da
+        s/scheme-gg_hue.scheme: 5e621d6d4bc275acbbead8097d5156170f3ea9a9e11c42130624ae2f97df6bf1
+        s/scheme-gg_jet.scheme: 2e66e8650d029a6a7c523bfd58a57f8ce7c3b272809cdd5135ed475e699c9b18
+        s/scheme-gg_piyg.scheme: a094a050f47c99f77f0a7f9ea4b47eda94808b7edaef36da1b6f26bd7ece3945
+        s/scheme-gg_ptol.scheme: 62dc3c6a36cd427f28f587ba873e256e8269ca69345cde214fd8821e043e23c9
+        s/scheme-gg_set3.scheme: 2c5fa1b5a5e25b63af0da1d04a9e02ef0ce20a26eb5f978f365c55f6f49c3de9
+        s/scheme-gg_tableau.scheme: af923f8f45c615d7ef5d33241837568c28a4a0748a43cf025901f74c77b9a301
+        s/scheme-gg_viridis.scheme: 994bcfa0b39b090246294d0bddeeeef0abd7dea3706eba94b812c607e3dbe0f6
+        s/scheme-gg_w3d.scheme: 2d75f02b2f88a2bb12e5dbc0fa419f47d90cb69f45a1f27fb74d47bcab6cc848
+        s/scheme-neon.scheme: d2ff3360e14986a5b42d343ed401252cdefaccaa469832e9a925a9d6342b6540
+        s/scheme-rainbow.scheme: 3980a189aa8ab5c4ef535af8842590ec2b515d2504a02d346c2c80dda33cd02c
+        s/scheme-swift_red.scheme: 416412d1d5d158221cb8f2a43b82b242b6ecd18c17681f965a592b767d44ddcf
+        s/scheme-tab1.scheme: cb49cc93a258ac29c5ce10f4566aec35f73716b81ddc6748a96fb5c290f11d01
+        s/scheme-tab2.scheme: 71eb8e618912ab87291364fe393770e5e33452839f3964275ffc84a6322a7dd1
+        s/scheme-tab3.scheme: 5d5e1f441698a75ebc3c7b6c8adf4381a542420a0e994fa80b19371bc1a82294
+        s/scheme-ukraine.scheme: cb770270699e302ad0dd09d44b467b66a0e8aaf5648dc8e3e3aec46583b21cad
+        s/scheme-white_brbg.scheme: 2c13eafeab096e79b34e28abf0e61e90b1cdedaa2d71227ca55e3ed6477e9497
+        s/scheme-white_cividis.scheme: f391421bd9d90c4facc7510a76554467e84c9d3fc4475c1e763a5d6272df1909
+        s/scheme-white_hue.scheme: 019bddcc827c931742a48d13f9169b6f01eab5be24195ef0ec50d2bc5671f2a6
+        s/scheme-white_jet.scheme: f5267001a9fd0e53a367f3127a8151db7b2bfe58087246f3bc649269d0663706
+        s/scheme-white_piyg.scheme: cd406bd08d70bc722a2f2be426112bce03dee0652ee8d6770e74bd680f5c4b2a
+        s/scheme-white_ptol.scheme: dae32947c6bbe01c0bd96bbd992ab9301448c36949c31d889d411e1d29e067cf
+        s/scheme-white_set3.scheme: cd55b211bbb474ab03ba6fd886b6333b3c986bd737f9a7de65351827e1a708b0
+        s/scheme-white_tableau.scheme: feb07dc30725627d3ecdf404b53564dbec39627debf7a7d49e9eccce4fa27af7
+        s/scheme-white_viridis.scheme: 2613a52d2de4f4bfeae8e0a0df38d6e285731603b4cc10b70ac149b9ae9af07d
+        s/scheme-white_w3d.scheme: 95b6b7dc28ec3e87c18824da2969ad0492c362d8c9ac7530be0e159f6626f7fe
+        s/schemepack.sthlp: 7622a0e950d6d1269c17822e4705202d191ab6f90f9954f825f4b588e2a70921
+    - source: http://fmwww.bc.edu/repec/bocode/b
+      descriptor: blindschemes.pkg
+      distribution_date: '20200807'
+      files:
+        b/blindschemes.sthlp: 9effa066380dfe4e27d3791966ebd883390a1122fe10e887c1a5076bbe187df7
+        p/plotplain.sthlp: afc6f7e5fc9cbdf86ed4e542df171da5c4038a6756edeac0f646a9a4ba90a41a
+        p/plotplainblind.sthlp: afc6f7e5fc9cbdf86ed4e542df171da5c4038a6756edeac0f646a9a4ba90a41a
+        p/plottig.sthlp: 916760793fd3c9fb1dcb89afbf336337cba2b145f756214f0aeaf1b2155afa4e
+        p/plottigblind.sthlp: 916760793fd3c9fb1dcb89afbf336337cba2b145f756214f0aeaf1b2155afa4e
+        s/scheme-plotplain.scheme: 67f4150bfd44c852ae2a5704b8f7db2df696e51a9a8c2feaf10aa25a491423b8
+        s/scheme-plotplainblind.scheme: 5c85d7ea45ffc791692ac1595b25ee7a4f9f5a13500ac14211a40b1f26a57b8a
+        s/scheme-plottig.scheme: 8c9ff7092115a5a3d0bdd3a60b2084a4794c03699a58c0313ff01e5e63fbb505
+        s/scheme-plottigblind.scheme: 432334442eaecafad2a2ee341136844aba7fee596722c3b34bf834e752c534cd
+        style/color-ananas.style: 4662ab579917f60c732b9cf32004caaba59d894fca4706c96352239b346b4d77
+        style/color-orangebrown.style: f64dbf3f7b9a435660008d4a62345df6274daa37ce88affaef4e54151a66d565
+        style/color-plb1.style: 8d3d8b3b38841862008fa70d5a0195f780c0dd7575fa9587d1267a872438e22f
+        style/color-plb2.style: 5a1845d46d1603b42cb26d83b7b2ccbe1f02d8667af6e014ace9bbdf221239dd
+        style/color-plb3.style: 2153a60d7070f10cbcd0cc68e56935311b2022ffbbcc5e611e7b9f0bf7fe4ff3
+        style/color-plg1.style: 747c20cc70bdde8d5ee955149e5bef3a3c493e622e830856a8069256857cd167
+        style/color-plg2.style: d3bdd52eaee4f497aa95a1755013611d41eca7958466e3219aea9a62899f03b4
+        style/color-plg3.style: b182fc1133f086a2bff55d178c5c406dcfe2c3b3a3ac0ee2ae4cd1662d356d81
+        style/color-pll1.style: 8aa6750d1c060e85259a79ff1049f4e33820f82c048261c39c8e8a1815b5e5f7
+        style/color-pll2.style: af87259ef9b49a3dc67c29452e74e96240306606149a187329f07b755b4649f0
+        style/color-pll3.style: 239946f4718fe2df86cc309a666a90ad273c30007456a17ceea67289f8071b9f
+        style/color-plr1.style: b6eeaa1a094beb8771a0d4d8a677e6d1d48af26c3114bd48bbd37062ff885feb
+        style/color-plr2.style: e8a9203e05a8e0c2e6e2fd2e19776dbbfc41876e57b22ce6a7a4cf351ca48056
+        style/color-ply1.style: 0beb8cdc4ebf1c9a956a983625b3d060226567bb4de42c1e0e9239644de076c5
+        style/color-ply2.style: 40bfd385ad2025c05912c99df01cf99bd279be4fc3521544929ace5b30c77530
+        style/color-ply3.style: 5b988e62ef743a97cd5be411565f90c78fb22c81e53087db7c27c5006d6855f1
+        style/color-reddish.style: 91a9d1a531b8e9878653e7a14b9002440cfaec136704ba47842f3b782ee94904
+        style/color-sea.style: 1e63fcfa6d1bbfd4cf7181844bacd00730758294b1d5937396dbfb2bfda4d609
+        style/color-sky.style: 51a84ad875e89284b409c37f11cac398f5378779a06c34041dcc0b35bc575437
+        style/color-turquoise.style: c58c3d0b36296a487e99a18c46c7520b529cee90603a5ec369f969ba9a3e2b6f
+        style/color-vermillion.style: 323a45b80c66e9d346342e4db0c88933f772a3e64c16b226423aa596bf2330f8
+    generated_files: {}
+  data-manipulation:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/g
+      descriptor: gtools.pkg
+      distribution_date: '20221205'
+      files:
+        _/_gtools_internal.ado: 8127e53809c75435fcecf4d9ab2c52cdcbeca85399bf09b99a5ca0a8ec33ad9d
+        _/_gtools_internal.mata: 870990f8b2875b06834adde3714fe1e90a382aeacbe4eb088e342b509e64b76a
+        f/fasterxtile.ado: fd471f84f5133b4a5f3df8c0c32871e5e26c37638ddf399fbd5c38e82c3f18cf
+        f/fasterxtile.sthlp: 72b6c49e5e9147df153bbbddd67bd6c9845f0ab62387362a74267ebc55e885e3
+        g/gcollapse.ado: a9b9c3f4a93a9394d7977be7a95cab21d3bcf22a3d83c1d5050a1bcce3abb8b7
+        g/gcollapse.sthlp: 1bc56dd5a45f226fab6352aecff40fa2951b32ec322d6fc46e16307cf0bd2492
+        g/gcontract.ado: 2b5acd82ad00b9b655a7e559c89e2a297b6d8d590dbfe0fc8fd0d19f61915adf
+        g/gcontract.sthlp: 3b2bd7c1784af72d5194c3354c50b8aed9a49e020b209963a99854d5eb53a482
+        g/gdistinct.ado: c79d77b4dfaab72da80cb354ecfc69959ac7dca871c72f5086e980f494904113
+        g/gdistinct.sthlp: 8defdff3174a45053f9bcadc3fc6b23e12adc21a973662a3e499fab804434a9a
+        g/gduplicates.ado: 353b82cd258071048bd499514a97fc652ab489c1abe7a607e0506aefe489ae69
+        g/gduplicates.sthlp: aa507cf547709c1c84168d356e03db82eba579df72f7e5281d9181dce8ea5e76
+        g/gegen.ado: 890f27222b837552480a799a6c7d6e89d6172ae33a0a0293e9987d0215c8b644
+        g/gegen.sthlp: 1056c4673702f5af55e2c9aa72926f1eccf991b8026b5f6487f7da14f8fb50a1
+        g/gglm.ado: e3f22b268188883a38c9be353f7a42f3ec551ab74036914bf77c803b1ced270f
+        g/gglm.sthlp: a59a81429c0929db4746f9557eff0162337bf8ce053821b9c8a11522078e8506
+        g/gisid.ado: 5aaf1119722b49980d85946819c9942d855334c067c7bcdf1790bf5b51fd676b
+        g/gisid.sthlp: 6eb1883b54e38b066aa3018669c71db60f93ce1e9e1314b9d1c80e916907e2d9
+        g/givregress.ado: 46ac72ad1d2d4be5c8962421429d149a75e9459dde47eacb6cdc105781d1c1ef
+        g/givregress.sthlp: 0045ae07a85f93287c9a487e43807fd571f9e38a50be6d1e6ce9f02b6d88b402
+        g/glevelsof.ado: be087ac17936252c95770e1035ab3ccd3b575107ec6de3791b4c75c54d5bd8fe
+        g/glevelsof.sthlp: e4321d5286798c8384b9d1096970eb5024746b6095e5f2b661a59fdd5eb3d769
+        g/gpoisson.ado: 29e4bf63ee9e37958afa3e1e3b5f5abc5f7eb7a92733df7289cfc505e7e58b7f
+        g/gquantiles.ado: 46690cc637b604b2f3b2201ee5037647c84cb23e2fab919a9e74535b354638ab
+        g/gquantiles.sthlp: 72b6c49e5e9147df153bbbddd67bd6c9845f0ab62387362a74267ebc55e885e3
+        g/greg.ado: 5f38cf020a3a2fb08b7c55e86c395fad9666685a483e03bd45d30bffd58b3698
+        g/greg.sthlp: 5e01e6222bf4e550dda0540a11b295b2a7a2220599c7fbac84adc1a8147b85d8
+        g/gregress.ado: fc4ecbd5bfb703616c8e579827f113c60c13ddbfeff67f4bbd4c71a10776711a
+        g/gregress.sthlp: 5e01e6222bf4e550dda0540a11b295b2a7a2220599c7fbac84adc1a8147b85d8
+        g/greshape.ado: 8480237715a6b6433b983acaacffe873b9cf39c5059ca3029df7511d57ce9702
+        g/greshape.sthlp: b7428671757f87be41a3a6da1f644f2b466f7ce7e706b33ed1e67f38d0416249
+        g/gstats.ado: 2bff86fa8036d0fdb282c0ba1437076dc2338d648cc153d384b00ee6205e7611
+        g/gstats.sthlp: 5d668a6b5febda89097538036b5c082f339a92d0cbb87db2c0e70ad759cd61e6
+        g/gstats_hdfe.sthlp: 101cc9299ca53f7a1aeab736f9d7a4556731d6db78a5cf37ca74dfc46993a0b7
+        g/gstats_moving.sthlp: b73d2bbe544377241cbe2d13a2118d50b669636d99ae3e5d687f091578985e31
+        g/gstats_range.sthlp: b73d2bbe544377241cbe2d13a2118d50b669636d99ae3e5d687f091578985e31
+        g/gstats_residualize.sthlp: 101cc9299ca53f7a1aeab736f9d7a4556731d6db78a5cf37ca74dfc46993a0b7
+        g/gstats_sum.sthlp: 1ccddc30d5f42a8a8ccc509044801474436503d8c078ed67921805128424c906
+        g/gstats_summarize.sthlp: 1ccddc30d5f42a8a8ccc509044801474436503d8c078ed67921805128424c906
+        g/gstats_tab.sthlp: 1ccddc30d5f42a8a8ccc509044801474436503d8c078ed67921805128424c906
+        g/gstats_transform.sthlp: b73d2bbe544377241cbe2d13a2118d50b669636d99ae3e5d687f091578985e31
+        g/gstats_winsor.sthlp: 6c5d66c9c7023a8a817be709e1275af65aa2d87fcf6e72e226063905f02beac1
+        g/gtools.ado: 36155d3b2832fc9e82f2c85145074af93574f50d6a951276ad48fdf4999e2485
+        g/gtools.sthlp: af2067d8e85c4c52d5da741b4e2448c89178fca27a8788f2073b30267e5f1a9d
+        g/gtools_macosx_v2.plugin: 2d7234697dbd961de7f7aa56ca0dc1722c262743e3d9bc97cd460b7c797991da
+        g/gtools_macosx_v3.plugin: 45f4d5599c0f85158da5b263f92e4c1328b95979e4ecd00ef161d0d5e8e3d5c1
+        g/gtools_unix_v2.plugin: 75e653ae433b2148259fb31982cb35f91f8fc33174f9227c9bcbe9247b1a3793
+        g/gtools_unix_v3.plugin: 2e9d759a9afc4be5a22cf3b4ac0b2fab0506c2a42d870c556d85b3cc3f8fd975
+        g/gtools_windows_v2.plugin: 4427aa6363492b06da511f7e907dff63e62358d7bef750621678dfd3dd3cbbb4
+        g/gtools_windows_v3.plugin: 3cada6c86f2cc75bcc73494a1fc23c2c94fe7d13d73c28126b336da38b1853fb
+        g/gtop.ado: 24d006688043dfe40d03fe7d73dd7271241a58d117719c1ca492fd13575c32c5
+        g/gtop.sthlp: aaaf31dc64d3c255a59148ca16757ef440e383924a0f7341864dd368007f1e8c
+        g/gtoplevelsof.ado: 685c9f6cf4f37b8854ccbe57e013ebcf857d0b3dda9599e25d0bd0c059fae9e9
+        g/gtoplevelsof.sthlp: aaaf31dc64d3c255a59148ca16757ef440e383924a0f7341864dd368007f1e8c
+        g/gunique.ado: 12d3435dcf8910fee5b12cf2ef90d5a20f0199b327e9c6291e62d1c463dc9156
+        g/gunique.sthlp: 0072ee7ecf2a20935db89fdeff4e400b7edf2ca5cd6329b76cf5c1c29e8ccf8d
+        h/hashsort.ado: fd0560f278e88f09d8a22ca60b292646b5d0c8bb6cddce12568da4bbd5a21ec8
+        h/hashsort.sthlp: 6816f4ae851bd919e2210e60c8350d599544da0fe459c0f17963561f5d472b30
+        l/lgtools.mlib: b5204e83dde2a913b9e32ee58305d48e935489d45527b7f35b6c21222eae89cd
+    - source: http://fmwww.bc.edu/repec/bocode/r
+      descriptor: rangestat.pkg
+      distribution_date: '20170511'
+      files:
+        r/rangestat.ado: 7bde60817b53fd3897ac2c626b82086b98de7ba45e54a895b8619346c778d552
+        r/rangestat.sthlp: 9ea3b82701b7e54e9642dd8d224eae0bceb0ac7a2782d7054e0a89f6d38ea088
+        r/rangestat_run.ado: 96bec1b87e385097922773eb570b00d7b3dfc96c31a4246bb825b2578ad28a48
+    - source: http://fmwww.bc.edu/repec/bocode/e
+      descriptor: egenmore.pkg
+      distribution_date: '20190124'
+      files:
+        _/_gadjl.ado: afd5aca82f61448f23c5dd5844732be3965c440b1523c3347732733a29786097
+        _/_gadju.ado: 2a0ad31531562b3a7f1336b91fefc3bca74fc4cc962dcac7730ad637fd7b2939
+        _/_gaxis.ado: ef76e4a36ca6d7d5aafa0bea47ec4c51b07e5ebe16edce2e0a23ea2cfea69120
+        _/_gbase.ado: 4325edcedc7de385d9179dd5c1c55b04e0cfad25da3ecb0ae0a2c45cfa2d329d
+        _/_gbom.ado: b2ada8e311b50d14dfe95ffa9e113dcb29b33a08c1d42bab858f370a0b3d3a28
+        _/_gbomd.ado: d8b7f5b89071db940a1eee30cc03c7aff20c9326b0963a1b0147df537e2236f4
+        _/_gclsst.ado: c751f44ed1d905dd92dabf0ae5ef5f02a6992ecc3708db5b08bf60db62ffc9f9
+        _/_gcorr.ado: e2c9b6882ba73b002c7444b193854f02e4123d50f108fa11e3897238fea2c0a2
+        _/_gd2.ado: a9be97be2fa223531dd6738e1e7c4f05bdf509ed1a4d2567be92c940c5db0bbd
+        _/_gdayofyear.ado: f32a7edc1cdde1fb69ddd3b169b8dce9ba47bd8b0c0040c6e83a7b3b248c5918
+        _/_gdecimal.ado: 62c7bb426556a89ceede745570f043892363062a0c93e1bcdd58d7edd58bb21a
+        _/_gdensity.ado: 2a4a4f7cb994ac9f160af666d3d389d359861f6d18e269ed413015c4dd3d40f6
+        _/_gdhms.ado: 285155c458b09d2225bd1a6320283b15578cc2af424172bb108bbefb5be3c365
+        _/_gegroup.ado: 9ad81a71d2cf99e5a0e161e3cf924a1c2c325cb6396b30c7b30c704bb31a1574
+        _/_gelap.ado: 432d595ce73510229c9e378f6d62f6668609a61d4d8c85d941ca7292b5e603ec
+        _/_gelap2.ado: e19094d95745ff22e26226af8a94367cbfaaf476b0e39b5a12c9996304b162d1
+        _/_geom.ado: 5afd58579fe66b594c007cf3aa7241ce566d9e6645f8a1ccf6d42bfa98ccdc27
+        _/_geomd.ado: bdb8adff9ba516f3c86ab0c35f0b6e316e79e609c8d5ac67f6eb2403bf5d9c9c
+        _/_gewma.ado: f67a45f775382ba5c39b1159266f4603fb417125fa7cb05e0af9ae696719b78a
+        _/_gfilter.ado: d0e55267e5d885519bc9845e4011ec8ac1b5d606c79576c96bed50e83f716faa
+        _/_gfirst.ado: 4aa5771827557d53e216f75a4a405bf7ec26e1f215f8f294f9ddfa80b42f483c
+        _/_gfoy.ado: 95e25e5161b01b096e2a656fca7563da7bbaabf6a4aa8b55859258734dcb08a3
+        _/_ggmean.ado: a0b7c87c77ef9d1f308d721004b393ba96293e7ff6392f31ea96700fd93cc358
+        _/_ggroup2.ado: e95a4a3e257ac3f35dcf50ad0396df704e546bfff85b652f7518082b56155878
+        _/_ghmean.ado: 639577e4e635cc72101fda264da942d85ca001d92ef851e52cddc363e547dab4
+        _/_ghmm.ado: c4fe3800d07484f6983a9a189a91e50c981b2420252f4d440e24e206e0a28bc0
+        _/_ghmmss.ado: 7b52acac0f6ead98f962bd2eb7c46ab45aed113006332265e8b93c8cdd2456d8
+        _/_ghms.ado: 357486a95e85cc4685eb244d7ccb9ba2f63aa35995371b1be32b68d2e8cfcd90
+        _/_gifirst.ado: a4c8e2ed28520e99d56854e484ab7abcc3e73b1faf9a1890cbc9092b737c4064
+        _/_gilast.ado: 7648a3a5e14fb70717c2581bb62c1650f1f5406d1a816f8d7927f6ecf37294c3
+        _/_gincss.ado: 9e81700c580080f134cace243be928978755510b388a8f622d51c67c00db43ac
+        _/_giso3166.ado: 64c731aefdf06ca83408ccb7f469b9be9e9872b7aa4bbaee297cb25c0dfc4ded
+        _/_glastnm.ado: 1410821f0c0fb3acee3fdeabf6df8ef0e67c82c819fee5251581fdd4c38423b6
+        _/_gminutes.ado: 5937f6bd4e0d262843c94b1daa034afd401787b99134671d122d49e5f8e7f081
+        _/_gmixnorm.ado: df34273bea5c8185336a22de15412f5abd7d733af9958bc8e46b2c275096781c
+        _/_gmlabvpos.ado: b7e5fb47b48163e315c73908a3053ddf14871c4e23577a3140b21fee5c94c91d
+        _/_gmsub.ado: 9d3de8f59f64b08a0c3516258ba5964574e3865657e1e07c53c6ae5a3b348499
+        _/_gncyear.ado: d228c43b2ca0f6a9b1810893cfb2c90e65b2d2aed1a99a0167ecea39ef1f2dd5
+        _/_gnmiss.ado: b7b0a99644873841440dc5812024b7a7ad83e2134743531a3fbc9e4543a6a9dd
+        _/_gnoccur.ado: fbca0e5c7f440cf634518210cc77e472d8da103170b23b86b201182d6afd1906
+        _/_gnss.ado: 62174c04da69600733783c23975ebcba1d332b91a5d48b331232e7755c1c82e3
+        _/_gntos.ado: 829a15525bf93bdf4a02c52d4caba0d172a13a64ee49d169483a410d898ec4d5
+        _/_gnvals.ado: e014435760c9eeb2a96cbf732f12129d402341e8baca58bce2b404f1872097f9
+        _/_gnwords.ado: 31a04792ea9258e3553387333b034b057bc05cc33700fe80abfc7e6bc2074690
+        _/_goutside.ado: 21ca2db85621cbd1e21ab79063223bc7c400cbd42ed6705d71f76d7c27abf943
+        _/_grall.ado: c4aabdf84f4fa07714c77d0e7fa56b67dccfbce0ba59ad0f0ee6fec23dca18df
+        _/_grany.ado: e65b02aba6ddef66a19027f0874e9f8a3ebe96129f7826c0c0279453d4cc3fe9
+        _/_grcount.ado: 395be4a8999b3046e43246887d0ea22f9fa00495b9c2cfb992256c0874424499
+        _/_grecord.ado: f37060e1f4ab52d3b519c6e3102ab9781abd722e4303d25e8b000eb48e775a66
+        _/_grepeat.ado: a47482cd6aab3f3a71f411abaae4c4f36952d2b7c3621cb58cfbb240b92c3426
+        _/_gridit.ado: 908adfd6d3620cd5d9523973a1fa07e89ed98b8a9b79943fd6c14cc37ab266a3
+        _/_grndint.ado: 8523c2bf928d8eaf4c1e0ef56fa14bf9cdfcad8d01619afdc72134e56bf33b2e
+        _/_grndsub.ado: 2e52e90c560a9c3cbb621c0345d3f7568749900ddee61b2e78d71acd8e8ea95a
+        _/_growmedian.ado: 030b192298eb05b81fb1ab52f20008c1cb05259f1b6f44d29f4f4512a70f9878
+        _/_grownvals.ado: 226364f0e88499cf4c7b47275fbd3a33a7c6ab315873e01666cc51fb1537e3ca
+        _/_growsvals.ado: bc5d80b7f3d520d2b1097c253138a7891808d4dc85c40fe23f5a80b52db7c1a8
+        _/_grsum2.ado: 8b4a19114cc108aa110e0469f069855b19855b8e83f7a3a0e62144e4c7ac6a9c
+        _/_gseconds.ado: 49c59bdd607bf5470a24b38f34a6ce0e3f20f4a5c7d273d1de25e4da65fe95b5
+        _/_gsemean.ado: 1e42593aecd589e0fee720ef0c0424177efc842bf6b14c1023ceec1e339e1a0f
+        _/_gsieve.ado: 7e24ba6143936c6064b8cbbd4da11659b74843488e27520f8bf07fc56ea7e8e6
+        _/_gston.ado: 4fdd42130f5bebf7cc547de729d83bd09b21e7c52efa80da93d17970d21c1380
+        _/_gsumoth.ado: 8c5a8f00c2296b2721bddbb8efc3a7329444b66ad9d377cf028874871fdb5b0b
+        _/_gtod.ado: aab59f4b815126beb1b0346db3711e3e20d7e919b60a57c9770dfed7b945f6d5
+        _/_gtotal0.ado: 34d763bae289bfb45c2405ae6f8040aa0c5931e4d159710bbbb17964c1f1b4e3
+        _/_gtruncdig.ado: 23502df81cbeba85644ac09595a854205e3760a3f2676d0046e9954a019db3be
+        _/_gvar.ado: 247921ac98279c4d8b4645855033abf2401eafad0268995af1f91e5703ee8f53
+        _/_gwordof.ado: ecb89fc6caf6436444790586606a50e444e4c7ed23ad5e5dbd1421a294f8c87e
+        _/_gwpctile.ado: 3be64de0f4f4dd29354b7c7b26d3381ea50939d1a2d03f982e01b9fe8cd58572
+        _/_gwtfreq.ado: 86c81dfaac04fa1641f5d60414149369613a54ae350533bce50cb1280c137e1b
+        _/_gxtile.ado: dfebedc3013ca41d9d4c9cae628e84bbdf8fdb53a1ef9b8527f381bc35754450
+        e/egenmore.sthlp: c5d46b69a9e2ae564e4e462a5f7727966b3bd648d2f436fbb0b9036fb9da345c
+    - source: http://fmwww.bc.edu/repec/bocode/d
+      descriptor: distinct.pkg
+      distribution_date: '20120321'
+      files:
+        d/distinct.ado: 84b9e238385e1baf2cb338e75c2e20d6c5d1fadf5866e1a3a98551b533f123e1
+        d/distinct.hlp: d049f1d883e65787e6772d25b799f7552c2a38d575b372030b41af08e92b6ecd
+    - source: http://fmwww.bc.edu/repec/bocode/m
+      descriptor: missings.pkg
+      distribution_date: '20170511'
+      files:
+        m/missings.ado: cad8f9bf4413e7155424aaf2cb742675d82ea69b2190ca9dd3d80f733b042618
+        m/missings.sthlp: 4cd50910b8e9b193c23949ce28ad961207dc19bd0055e1716cabb3f627dd0a72
+    - source: http://fmwww.bc.edu/repec/bocode/c
+      descriptor: carryforward.pkg
+      distribution_date: '20160212'
+      files:
+        c/carryforward.ado: b2bd50614723ff9113fb6ebde5b4402d6396b2aebe14309e9318ec1f424a0506
+        c/carryforward.hlp: 710d37e3f9b58fd33743aef757a9d335aad558e39e9a4b97fdead41039ab434a
+    generated_files: {}
+  winsor:
+    distributions:
+    - source: http://fmwww.bc.edu/repec/bocode/w
+      descriptor: winsor.pkg
+      distribution_date: '20060809'
+      files:
+        w/winsor.ado: 6b93f4ac55228245ae8cdfb64268c90dfe87c33b1d48ea3690d84f3d61307664
+        w/winsor.hlp: d6fb45f313cfbcf2ae61fc8f0c84b1d4fceec91e1eba8ce39c59ea9dd8330598
+    - source: http://fmwww.bc.edu/repec/bocode/w
+      descriptor: winsor2.pkg
+      distribution_date: '20201125'
+      files:
+        w/winsor2.ado: 91bb976b40aa6769215e8a5ff66dde65d9bb8a32e4f4f380af3419f9bb855c97
+        w/winsor2.sthlp: 1d60a3d665d1b34b5fcbca97f2c6e6f72da4c8e9157d4a1580cb8411e018e0d0
+    generated_files: {}

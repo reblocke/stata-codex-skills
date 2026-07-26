@@ -1,26 +1,51 @@
 # {{ entry.title }}
 
 ## When to use
+
 {{ entry.trigger }}
 
+## Routing aliases
+
+{% for alias in entry.routing_aliases %}
+- `{{ alias }}`
+{% endfor %}
+{% if entry.preflight_commands %}
+
+## Installation preflight
+
+Run these read-only checks before proposing installation:
+
+```stata
+{% for line in entry.preflight_commands %}
+{{ line }}
+{% endfor %}
+```
+{% endif %}
 {% if entry.install_commands %}
-## Installation
+
+## Optional installation
+
+These commands change the active Stata environment. Ask before running them
+outside an isolated validation directory.
+
 ```stata
 {% for line in entry.install_commands %}
 {{ line }}
 {% endfor %}
 ```
 {% endif %}
-
 {% if entry.commands %}
+
 ## Key commands and topics
+
 {% for command in entry.commands %}
 - `{{ command }}`
 {% endfor %}
 {% endif %}
-
 {% if entry.syntax_patterns %}
+
 ## Syntax patterns
+
 ```stata
 {% for line in entry.syntax_patterns %}
 {{ line }}
@@ -28,39 +53,45 @@
 ```
 {% endif %}
 
-{% if entry.gotchas %}
 ## Common gotchas
+
 {% for item in entry.gotchas %}
 - {{ item }}
 {% endfor %}
-{% endif %}
 
-{% if entry.workflows %}
-## Workflow notes
+## Assumptions
+
+{% for item in entry.assumptions %}
+- {{ item }}
+{% endfor %}
+
+## Workflow
+
 {% for item in entry.workflows %}
 - {{ item }}
 {% endfor %}
-{% endif %}
-
 {% if entry.smoke_test %}
+
 ## Smoke test
+
 ```stata
 {{ entry.smoke_test }}
 ```
 {% endif %}
 
-## Validation case
-{{ entry.validation_case }}
+## Validation
 
-{% if entry.related_refs %}
+- Mode: `{{ entry.validation_mode }}`
+- Case: {{ entry.validation_case }}
+
+{% if entry.related_routes %}
 ## Related references
-{% for item in entry.related_refs %}
-- `{{ item }}`
+
+{% for item in entry.related_routes %}
+- `{{ item.qualified_path }}`{{ item.instruction }}
 {% endfor %}
 {% endif %}
 
 ## Provenance
-- Local help topics: {% if entry.provenance.local_help_topics %}{{ entry.provenance.local_help_topics | join(", ") }}{% else %}none{% endif %}
-- Harvested local help files: {% if entry.provenance.local_help_files %}{{ entry.provenance.local_help_files | join(", ") }}{% else %}none{% endif %}
-- Upstream inventory files: {% if entry.provenance.upstream_files %}{{ entry.provenance.upstream_files | join(", ") }}{% else %}none{% endif %}
-- Upstream-only source allowed: {{ "yes" if entry.provenance.upstream_only else "no" }}
+
+See `{{ entry.provenance_index_path }}` for reviewed source files and lock coverage.

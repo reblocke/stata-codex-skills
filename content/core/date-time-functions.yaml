@@ -1,34 +1,71 @@
 slug: date-time-functions
 skill: core
 section: Data Operations
-title: Date and Time Functions in Stata
-trigger: Use when the user needs built-in Stata help with date and time functions in stata.
-commands: &id001
+order: 160
+title: Date and Time Conversion, Arithmetic, and Display
+trigger: >-
+  Use for converting string dates or timestamps to Stata numeric datetimes, applying %td/%tc formats,
+  extracting components, calculating intervals, and working with daily, monthly, quarterly, or clock time.
+commands:
+- daily()
+- clock()
+- mofd()
+- dofm()
+- year()
+- month()
+- format %td
+- format %tc
+aliases: [Stata date, Stata datetime, timestamp conversion, date arithmetic, elapsed time]
+source_topics:
 - datetime
-- datetime_translation
+- datetime_conversion
+- datetime_display_formats
 - format
-source_topics: *id001
-syntax_patterns: []
+syntax_patterns:
+- generate double event_date = daily(date_text, "YMD")
+- generate double event_time = clock(timestamp, "YMDhms")
+- format event_date %tdCCYY-NN-DD
+- generate int event_month = mofd(event_date)
+assumptions:
+- Raw date strings have a known component order, time zone when relevant, and consistent precision.
+- Date arithmetic uses a single declared Stata time scale and a scientifically appropriate time origin.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- A display format changes how a numeric datetime looks but does not convert string data or change its units.
+- Daily dates count days from 01jan1960, while datetime values count milliseconds; mixing them gives implausible intervals.
+- Use double storage for %tc datetime values because float cannot represent millisecond-scale values precisely.
 workflows:
-- Start with the official help topics attached to Date and Time Functions in Stata, then tailor the syntax
-  to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises datetime and inspect the resulting log.
+- Inspect raw strings, convert with an explicit mask, format the numeric result, and count failed conversions.
+- Convert both endpoints to the same time scale before subtracting and assert plausible interval bounds.
+validation_case: >-
+  Convert known daily and clock strings, apply display formats, extract calendar components, and assert exact
+  dates and elapsed hours.
+validation_mode: stata
 related_refs:
-- data-management
 - string-functions
+- variables-operators
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  input str10 date_text str19 timestamp
+  "2026-07-24" "2026-07-24 12:30"
+  end
+  generate double event_date = daily(date_text, "YMD")
+  generate double event_time = clock(timestamp, "YMDhm")
+  format event_date %tdCCYY-NN-DD
+  format event_time %tcCCYY-NN-DD_HH:MM
+  assert year(event_date) == 2026
+  assert month(event_date) == 7
+  assert day(event_date) == 24
 provenance:
-  local_help_topics:
-  - datetime
-  - datetime_translation
-  - format
+  local_help_topics: [datetime, datetime_conversion, datetime_display_formats, format]
+  local_help_globs: []
   local_help_files:
   - ado/base/d/datetime.sthlp
+  - ado/base/d/datetime_conversion.sthlp
+  - ado/base/d/datetime_display_formats.sthlp
   - ado/base/f/format.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/date-time-functions.md
   upstream_only: false
+  package_only: false
+  reviewed: true

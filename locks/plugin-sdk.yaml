@@ -1,0 +1,11 @@
+schema_version: 1
+sources:
+  - filename: stplugin.h
+    url: https://www.stata.com/plugins/stplugin.h
+    sha256: 0d32086bfb7a621e30ed7fefa41b351b6733bb4561da28a4c581580d62c64e8b
+  - filename: stplugin.c
+    url: https://www.stata.com/plugins/stplugin.c
+    sha256: ab694f53e30a404bbfbe59d301a81b8bc59eeecf84bc5427eb65cbf0c5020d6d
+  - filename: hello.c
+    url: https://www.stata.com/plugins/hello.c
+    sha256: 1ea64f7dea195acd9bd5715b827669d62a642e62ea9d4cf4990649b87f69758c

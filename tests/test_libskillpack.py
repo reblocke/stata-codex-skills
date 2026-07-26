@@ -126,6 +126,30 @@ class RunStataDoTests(unittest.TestCase):
             self.assertEqual(cwd / "smoke.log", log_path)
             self.assertEqual(f"{marker}\n", log_path.read_text(encoding="utf-8"))
 
+    def test_popen_receives_matching_cwd_and_pwd_environment(self) -> None:
+        with TemporaryDirectory(prefix="stata-run-") as temp_root:
+            cwd = Path(temp_root) / "work"
+            do_file = self._make_do_file(cwd)
+            marker = "VALIDATION COMPLETE: cwd-contract"
+
+            def fake_popen(*args, **kwargs) -> ImmediateProcess:
+                del args
+                self.assertEqual(str(cwd), kwargs["cwd"])
+                self.assertEqual(str(cwd), kwargs["env"]["PWD"])
+                (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
+                return ImmediateProcess()
+
+            with patch.object(libskillpack.subprocess, "Popen", side_effect=fake_popen):
+                result, _ = libskillpack.run_stata_do(
+                    Path("/fake/stata"),
+                    do_file,
+                    cwd,
+                    completion_marker=marker,
+                    timeout_seconds=1,
+                )
+
+            self.assertEqual(0, result.returncode)
+
     def test_preexisting_workdir_log_is_not_accepted_as_fresh(self) -> None:
         with TemporaryDirectory(prefix="stata-run-") as temp_root:
             cwd = Path(temp_root) / "work"

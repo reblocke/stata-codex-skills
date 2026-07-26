@@ -1,32 +1,53 @@
 slug: sample-selection
 skill: core
 section: Causal Inference
-title: Sample Selection Models in Stata
-trigger: Use when the user needs built-in Stata help with sample selection models in stata.
-commands: &id001
-- heckman
-- heckprobit
-source_topics: *id001
-syntax_patterns: []
+order: 450
+title: Heckman Sample-Selection Models
+trigger: >-
+  Use when an outcome is observed only after a nonrandom selection process and the task calls for
+  heckman or heckprobit, a selection equation, exclusion restrictions, inverse Mills ratios, or selection correction.
+commands: [heckman, heckprobit, mills(), predict]
+aliases: [sample selection, Heckman correction, Heckit, inverse Mills ratio, selection equation]
+source_topics: [heckman, heckprobit]
+syntax_patterns:
+- heckman outcome x1 x2, select(observed = z1 z2 x1 x2)
+- heckman outcome x1 x2, select(observed = z1 z2 x1 x2) twostep
+- heckprobit binary_outcome x1 x2, select(observed = z1 z2 x1 x2)
+assumptions:
+- The joint outcome-selection error distribution and functional forms are correctly specified for likelihood-based correction.
+- At least one defensible predictor affects selection but not the outcome directly when relying on an exclusion restriction.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Identification only from distributional nonlinearity is fragile when the same covariates appear in both equations.
+- Selection correction addresses missing outcomes under its model, not treatment confounding or missing covariates generally.
+- A nonsignificant rho does not prove selection is ignorable, especially with weak exclusions or limited overlap.
 workflows:
-- Start with the official help topics attached to Sample Selection Models in Stata, then tailor the syntax
-  to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises heckman and inspect the resulting log.
-related_refs:
-- limited-dependent-variables
-- treatment-effects
+- Describe why outcomes are unobserved, define outcome and selection equations, and defend exclusion variables before estimation.
+- Compare likelihood and two-step estimates, inspect selection predictions, and test sensitivity to exclusions and functional form.
+validation_case: >-
+  Simulate an outcome observed after a modeled selection process, fit two-step heckman with an excluded predictor,
+  and verify a nonempty estimation sample.
+validation_mode: stata
+related_refs: [limited-dependent-variables, missing-data-handling]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  set seed 271828
+  set obs 300
+  generate double education = rnormal()
+  generate double age = 40 + 8*rnormal()
+  generate double children = rnormal()
+  generate byte observed = 0.5*education - 0.4*children + rnormal() > 0
+  generate double wage = 10 + 2*education + 0.1*age + rnormal() if observed
+  heckman wage education age, select(observed = education age children) twostep
+  assert e(N) > 0
 provenance:
-  local_help_topics:
-  - heckman
-  - heckprobit
+  local_help_topics: [heckman, heckprobit]
+  local_help_globs: []
   local_help_files:
   - ado/base/h/heckman.sthlp
   - ado/base/h/heckprobit.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/sample-selection.md
   upstream_only: false
+  package_only: false
+  reviewed: true

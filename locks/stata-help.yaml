@@ -1,0 +1,839 @@
+schema_version: 1
+stata_release:
+  edition: BE
+  bundle_identifier: com.stata.stata18
+  bundle_version: 18.0.179
+  executable: StataBE
+  platform: macOS
+selectors:
+  core/advanced-programming:
+    exact_stems:
+    - program
+    - syntax
+    - return
+    - ereturn
+    globs: []
+    files:
+    - ado/base/p/program.sthlp
+    - ado/base/s/syntax.sthlp
+    - ado/base/r/return.sthlp
+    - ado/base/e/ereturn.sthlp
+  core/basics-getting-started:
+    exact_stems:
+    - use
+    - save
+    - describe
+    - edit
+    - sysuse
+    globs: []
+    files:
+    - ado/base/u/use.sthlp
+    - ado/base/s/save.sthlp
+    - ado/base/d/describe.sthlp
+    - ado/base/e/edit.sthlp
+    - ado/base/s/sysuse.sthlp
+  core/bootstrap-simulation:
+    exact_stems:
+    - bootstrap
+    - simulate
+    - permute
+    globs: []
+    files:
+    - ado/base/b/bootstrap.sthlp
+    - ado/base/s/simulate.sthlp
+    - ado/base/p/permute.sthlp
+  core/data-import-export:
+    exact_stems:
+    - import
+    - import_delimited
+    - import_excel
+    - export
+    globs: []
+    files:
+    - ado/base/i/import.sthlp
+    - ado/base/i/import_delimited.sthlp
+    - ado/base/i/import_excel.sthlp
+    - ado/base/e/export.sthlp
+  core/data-management:
+    exact_stems:
+    - generate
+    - merge
+    - joinby
+    - duplicates
+    - isid
+    - append
+    - reshape
+    - collapse
+    - egen
+    globs: []
+    files:
+    - ado/base/g/generate.sthlp
+    - ado/base/m/merge.sthlp
+    - ado/base/j/joinby.sthlp
+    - ado/base/d/duplicates.sthlp
+    - ado/base/i/isid.sthlp
+    - ado/base/a/append.sthlp
+    - ado/base/r/reshape.sthlp
+    - ado/base/c/collapse.sthlp
+    - ado/base/e/egen.sthlp
+  core/date-time-functions:
+    exact_stems:
+    - datetime
+    - datetime_conversion
+    - datetime_display_formats
+    - format
+    globs: []
+    files:
+    - ado/base/d/datetime.sthlp
+    - ado/base/d/datetime_conversion.sthlp
+    - ado/base/d/datetime_display_formats.sthlp
+    - ado/base/f/format.sthlp
+  core/descriptive-statistics:
+    exact_stems:
+    - summarize
+    - tabulate
+    - tabstat
+    - codebook
+    - correlate
+    globs: []
+    files:
+    - ado/base/s/summarize.sthlp
+    - ado/base/t/tabulate.sthlp
+    - ado/base/t/tabstat.sthlp
+    - ado/base/c/codebook.sthlp
+    - ado/base/c/correlate.sthlp
+  core/difference-in-differences:
+    exact_stems:
+    - didregress
+    - didregress_postestimation
+    - did_intro
+    globs: []
+    files:
+    - ado/base/d/didregress.sthlp
+    - ado/base/d/didregress_postestimation.sthlp
+    - ado/base/d/did_intro.sthlp
+  core/external-tools-integration:
+    exact_stems:
+    - pystata_intro
+    - pystata_integration
+    - shell
+    - java_plugin
+    - javacall
+    globs: []
+    files:
+    - ado/base/p/pystata_intro.sthlp
+    - ado/base/p/pystata_integration.sthlp
+    - ado/base/s/shell.sthlp
+    - ado/base/j/java_plugin.sthlp
+    - ado/base/j/javacall.sthlp
+  core/gmm-estimation:
+    exact_stems:
+    - gmm
+    - gmm_postestimation
+    globs: []
+    files:
+    - ado/base/g/gmm.sthlp
+    - ado/base/g/gmm_postestimation.sthlp
+  core/graphics:
+    exact_stems:
+    - graph
+    - graph_describe
+    - graph_twoway
+    - histogram
+    - scatter
+    globs: []
+    files:
+    - ado/base/g/graph.sthlp
+    - ado/base/g/graph_describe.sthlp
+    - ado/base/g/graph_twoway.sthlp
+    - ado/base/h/histogram.sthlp
+    - ado/base/s/scatter.sthlp
+  core/limited-dependent-variables:
+    exact_stems:
+    - logit
+    - probit
+    - mlogit
+    - ologit
+    - poisson
+    - nbreg
+    - tobit
+    globs: []
+    files:
+    - ado/base/l/logit.sthlp
+    - ado/base/p/probit.sthlp
+    - ado/base/m/mlogit.sthlp
+    - ado/base/o/ologit.sthlp
+    - ado/base/p/poisson.sthlp
+    - ado/base/n/nbreg.sthlp
+    - ado/base/t/tobit.sthlp
+  core/linear-regression:
+    exact_stems:
+    - regress
+    - ivregress
+    - margins
+    - predict
+    globs: []
+    files:
+    - ado/base/r/regress.sthlp
+    - ado/base/i/ivregress.sthlp
+    - ado/base/m/margins.sthlp
+    - ado/base/p/predict.sthlp
+  core/machine-learning:
+    exact_stems:
+    - lasso
+    - elasticnet
+    - dsregress
+    - h2o_intro
+    - h2oml
+    - h2oml_rf
+    - h2oml_gbm
+    globs: []
+    files:
+    - ado/base/l/lasso.sthlp
+    - ado/base/e/elasticnet.sthlp
+    - ado/base/d/dsregress.sthlp
+    - ado/base/h/h2o_intro.sthlp
+    - ado/base/h/h2oml.sthlp
+    - ado/base/h/h2oml_rf.sthlp
+    - ado/base/h/h2oml_gbm.sthlp
+  core/mata-data-access:
+    exact_stems:
+    - mf_st_data
+    - mf_st_store
+    - mf_st_view
+    - mf_st_addvar
+    - mf_st_matrix
+    - mf_st_local
+    - mf_st_numscalar
+    globs: []
+    files:
+    - ado/base/m/mf_st_data.sthlp
+    - ado/base/m/mf_st_store.sthlp
+    - ado/base/m/mf_st_view.sthlp
+    - ado/base/m/mf_st_addvar.sthlp
+    - ado/base/m/mf_st_matrix.sthlp
+    - ado/base/m/mf_st_local.sthlp
+    - ado/base/m/mf_st_numscalar.sthlp
+  core/mata-introduction:
+    exact_stems:
+    - mata
+    - m2_intro
+    globs: []
+    files:
+    - ado/base/m/mata.sthlp
+    - ado/base/m/m2_intro.sthlp
+  core/mata-matrix-operations:
+    exact_stems:
+    - matrix
+    - matrix_operators
+    - mata
+    globs: []
+    files:
+    - ado/base/m/matrix.sthlp
+    - ado/base/m/matrix_operators.sthlp
+    - ado/base/m/mata.sthlp
+  core/mata-programming:
+    exact_stems:
+    - m2_declarations
+    - m2_for
+    - m2_return
+    - m2_syntax
+    globs: []
+    files:
+    - ado/base/m/m2_declarations.sthlp
+    - ado/base/m/m2_for.sthlp
+    - ado/base/m/m2_return.sthlp
+    - ado/base/m/m2_syntax.sthlp
+  core/matching-methods:
+    exact_stems:
+    - teffects_psmatch
+    - teffects_nnmatch
+    - tebalance
+    globs: []
+    files:
+    - ado/base/t/teffects_psmatch.sthlp
+    - ado/base/t/teffects_nnmatch.sthlp
+    - ado/base/t/tebalance.sthlp
+  core/mathematical-functions:
+    exact_stems:
+    - functions
+    - random_number_functions
+    globs: []
+    files:
+    - ado/base/f/functions.sthlp
+    - ado/base/r/random_number_functions.sthlp
+  core/maximum-likelihood:
+    exact_stems:
+    - ml
+    - mlexp
+    globs: []
+    files:
+    - ado/base/m/ml.sthlp
+    - ado/base/m/mlexp.sthlp
+  core/missing-data-handling:
+    exact_stems:
+    - mi
+    - misstable
+    - mi_impute
+    globs: []
+    files:
+    - ado/base/m/mi.sthlp
+    - ado/base/m/misstable.sthlp
+    - ado/base/m/mi_impute.sthlp
+  core/nonparametric-methods:
+    exact_stems:
+    - npregress
+    - lowess
+    globs: []
+    files:
+    - ado/base/n/npregress.sthlp
+    - ado/base/l/lowess.sthlp
+  core/panel-data:
+    exact_stems:
+    - xtset
+    - xtreg
+    - xt
+    globs: []
+    files:
+    - ado/base/x/xtset.sthlp
+    - ado/base/x/xtreg.sthlp
+    - ado/base/x/xt.sthlp
+  core/programming-basics:
+    exact_stems:
+    - foreach
+    - forvalues
+    - macro
+    - do
+    globs: []
+    files:
+    - ado/base/f/foreach.sthlp
+    - ado/base/f/forvalues.sthlp
+    - ado/base/m/macro.sthlp
+    - ado/base/d/do.sthlp
+  core/regression-diagnostics:
+    exact_stems:
+    - regress_postestimation
+    - regress_postestimation_plots
+    - linktest
+    globs: []
+    files:
+    - ado/base/r/regress_postestimation.sthlp
+    - ado/base/r/regress_postestimation_plots.sthlp
+    - ado/base/l/linktest.sthlp
+  core/regression-discontinuity:
+    exact_stems:
+    - regress
+    - ivregress
+    - lpoly
+    - graph_twoway
+    - twoway_lpoly
+    globs: []
+    files:
+    - ado/base/r/regress.sthlp
+    - ado/base/i/ivregress.sthlp
+    - ado/base/l/lpoly.sthlp
+    - ado/base/g/graph_twoway.sthlp
+    - ado/base/t/twoway_lpoly.sthlp
+  core/sample-selection:
+    exact_stems:
+    - heckman
+    - heckprobit
+    globs: []
+    files:
+    - ado/base/h/heckman.sthlp
+    - ado/base/h/heckprobit.sthlp
+  core/sem-factor-analysis:
+    exact_stems:
+    - sem
+    - gsem_command
+    - factor
+    globs: []
+    files:
+    - ado/base/s/sem.sthlp
+    - ado/base/g/gsem_command.sthlp
+    - ado/base/f/factor.sthlp
+  core/spatial-analysis:
+    exact_stems:
+    - spset
+    - spmatrix
+    - spmatrix_summarize
+    - spregress
+    globs: []
+    files:
+    - ado/base/s/spset.sthlp
+    - ado/base/s/spmatrix.sthlp
+    - ado/base/s/spmatrix_summarize.sthlp
+    - ado/base/s/spregress.sthlp
+  core/string-functions:
+    exact_stems:
+    - string_functions
+    - split
+    - f_regexm
+    - f_ustrlen
+    globs: []
+    files:
+    - ado/base/s/string_functions.sthlp
+    - ado/base/s/split.sthlp
+    - ado/base/f/f_regexm.sthlp
+    - ado/base/f/f_ustrlen.sthlp
+  core/survey-data-analysis:
+    exact_stems:
+    - svyset
+    - svy
+    - svy_estimation
+    globs: []
+    files:
+    - ado/base/s/svyset.sthlp
+    - ado/base/s/svy.sthlp
+    - ado/base/s/svy_estimation.sthlp
+  core/survival-analysis:
+    exact_stems:
+    - stset
+    - stcox
+    - sts
+    globs: []
+    files:
+    - ado/base/s/stset.sthlp
+    - ado/base/s/stcox.sthlp
+    - ado/base/s/sts.sthlp
+  core/tables-reporting:
+    exact_stems:
+    - etable
+    - collect_preview
+    - collect_layout
+    - collect_export
+    - table
+    - putexcel
+    - putdocx_intro
+    - putpdf_intro
+    globs: []
+    files:
+    - ado/base/e/etable.sthlp
+    - ado/base/c/collect_preview.sthlp
+    - ado/base/c/collect_layout.sthlp
+    - ado/base/c/collect_export.sthlp
+    - ado/base/t/table.sthlp
+    - ado/base/p/putexcel.sthlp
+    - ado/base/p/putdocx_intro.sthlp
+    - ado/base/p/putpdf_intro.sthlp
+  core/time-series:
+    exact_stems:
+    - tsset
+    - arima
+    - var
+    - irf
+    globs: []
+    files:
+    - ado/base/t/tsset.sthlp
+    - ado/base/a/arima.sthlp
+    - ado/base/v/var.sthlp
+    - ado/base/i/irf.sthlp
+  core/treatment-effects:
+    exact_stems:
+    - teffects
+    - teffects_ra
+    - teffects_ipw
+    - teffects_ipwra
+    globs: []
+    files:
+    - ado/base/t/teffects.sthlp
+    - ado/base/t/teffects_ra.sthlp
+    - ado/base/t/teffects_ipw.sthlp
+    - ado/base/t/teffects_ipwra.sthlp
+  core/variables-operators:
+    exact_stems:
+    - generate
+    - missing
+    - if
+    - functions
+    globs: []
+    files:
+    - ado/base/g/generate.sthlp
+    - ado/base/m/missing.sthlp
+    - ado/base/i/if.sthlp
+    - ado/base/f/functions.sthlp
+  core/workflow-best-practices:
+    exact_stems:
+    - log
+    - version
+    - cd
+    globs: []
+    files:
+    - ado/base/l/log.sthlp
+    - ado/base/v/version.sthlp
+    - ado/base/c/cd.sthlp
+  packages/package-management:
+    exact_stems:
+    - findit
+    - search
+    - ssc
+    - net
+    - adofile
+    - adoupdate
+    - sysdir
+    - which
+    globs: []
+    files:
+    - ado/base/f/findit.sthlp
+    - ado/base/s/search.sthlp
+    - ado/base/s/ssc.sthlp
+    - ado/base/n/net.sthlp
+    - ado/base/a/adofile.sthlp
+    - ado/base/a/adoupdate.sthlp
+    - ado/base/s/sysdir.sthlp
+    - ado/base/w/which.sthlp
+  plugins/cpp_plugins:
+    exact_stems:
+    - plugin
+    globs: []
+    files:
+    - ado/base/p/plugin.sthlp
+  plugins/packaging_and_help:
+    exact_stems:
+    - net
+    - ssc
+    - plugin
+    globs: []
+    files:
+    - ado/base/n/net.sthlp
+    - ado/base/s/ssc.sthlp
+    - ado/base/p/plugin.sthlp
+  plugins/performance_patterns:
+    exact_stems:
+    - plugin
+    globs: []
+    files:
+    - ado/base/p/plugin.sthlp
+  plugins/plugin-sdk-basics:
+    exact_stems:
+    - plugin
+    globs: []
+    files:
+    - ado/base/p/plugin.sthlp
+  plugins/testing_strategy:
+    exact_stems:
+    - plugin
+    - runtest
+    globs: []
+    files:
+    - ado/base/p/plugin.sthlp
+    - ado/base/r/runtest.sthlp
+  plugins/translation_workflow:
+    exact_stems:
+    - plugin
+    globs: []
+    files:
+    - ado/base/p/plugin.sthlp
+files:
+  ado/base/a/adofile.sthlp:
+    sha256: 2bc298ec7681781d60d789c59049672c76a73cc9137b6e011992b298e8810c1f
+  ado/base/a/adoupdate.sthlp:
+    sha256: 072f4357b8247aabd499d3842d7c72a3696081ac196e4d34194b0c2e16d46f80
+  ado/base/a/append.sthlp:
+    sha256: d3711124c36d2b33199db9d1dcab384d18af904ea95ca01af372c99218e94e3e
+  ado/base/a/arima.sthlp:
+    sha256: dc0ab2f34b618a7f40bf1488ad5cf380d9abf6758fd1b1f4deb227accd260f3e
+  ado/base/b/bootstrap.sthlp:
+    sha256: 13745629ea9e456c4a5262d8aebbcf70529263b7eb79579d0b08c5f0bbd20914
+  ado/base/c/cd.sthlp:
+    sha256: 554e28626466b01ac11e0c40c8b0ca5fc640dbc6ee70c7905006d078d9752662
+  ado/base/c/codebook.sthlp:
+    sha256: b0cefc694f5a328695b281e29877e23565828a6371550e66e0fd12a996d856b4
+  ado/base/c/collapse.sthlp:
+    sha256: 328ef261bde04644adbe18635646db88e6801455faee159949ce8669f1ffc378
+  ado/base/c/collect_export.sthlp:
+    sha256: 5eadd341e2d68d0a620f7a84b77d104335f6ce9476ef26be8a4287c3c7476cee
+  ado/base/c/collect_layout.sthlp:
+    sha256: 4f9052eaaeb0fa1353d4df7dd8917a9271a8a4a288d9bfed7d33c7478c38ea5e
+  ado/base/c/collect_preview.sthlp:
+    sha256: dbaad23e819d6950ac23a6c7d77fbfb226be057db3b669396bb72a93a00d005b
+  ado/base/c/correlate.sthlp:
+    sha256: 3a2a784cfea46d5fb6ab482dac5aa91c40fbf50be15576b2b2e376e75f2e4203
+  ado/base/d/datetime.sthlp:
+    sha256: bc8cf2991ebd6c064ea5bcbf3397c6ece074fe7e0004db129c61d473f9b46fbd
+  ado/base/d/datetime_conversion.sthlp:
+    sha256: 0fb2897b83edbf24814ed0924512e97c9f50f0606fe21822637b8a3116f170dc
+  ado/base/d/datetime_display_formats.sthlp:
+    sha256: 3e73af1db52646d6c31a26325ac5eb7b76c01384239cbc48ec30def1ed679e01
+  ado/base/d/describe.sthlp:
+    sha256: 9e275e794676a1b98f02189c396217b4cfe45b917c280f78f692e8cb5c0ca164
+  ado/base/d/did_intro.sthlp:
+    sha256: f5f909c450ef4868c72897f7f3fa7e470f32319d4ad1a3c86c4ba7a17ab68643
+  ado/base/d/didregress.sthlp:
+    sha256: df3758783cc51af681162c3ea095d8436b4ed085dabab896b1c882af2a32eed9
+  ado/base/d/didregress_postestimation.sthlp:
+    sha256: 7727e67140a3818e8d885a1da0de76e2eba854a0414d5ea3e7d5878ada442135
+  ado/base/d/do.sthlp:
+    sha256: 9e7efc28d2cc0d17a491c9dc196f5571609625d1f691a352337d09e360523eff
+  ado/base/d/dsregress.sthlp:
+    sha256: 800450ca9076c2569af59e41119d83ef0c354a54136aa2ecb159b5119075c9ce
+  ado/base/d/duplicates.sthlp:
+    sha256: 10a59511d8bd8c6200f527a0d633c6e566a99e827944a344dbfdb2155af66441
+  ado/base/e/edit.sthlp:
+    sha256: 348a37d87cd3aaa01aed4662c76af8f5d07008fad5d03c3b06d5cc1987e888a5
+  ado/base/e/egen.sthlp:
+    sha256: 73491f5168513fd36a38b5094519f93de3b33d29078a4778e85ade1d7d91a687
+  ado/base/e/elasticnet.sthlp:
+    sha256: 645c193721df43b73e981bf208dd4393911254240e7e57482466265665a99148
+  ado/base/e/ereturn.sthlp:
+    sha256: fe20b7b02cf249fa7a6c8aba99138a4f4bc40540333cbbc7e17c939202ee3bcd
+  ado/base/e/etable.sthlp:
+    sha256: ec09b02f0aa53fc9487d65d0b74487f9bf2f44f6a55a262db617b3e02095bcbf
+  ado/base/e/export.sthlp:
+    sha256: 9907fa044dedcc79d441f121f949fcacbdfb089a5563eaa616f958208bf6cc30
+  ado/base/f/f_regexm.sthlp:
+    sha256: 24f8ee8c7da0baad0e25c4db0ad996125b57478a4cf63632018a9bfa6e4bff39
+  ado/base/f/f_ustrlen.sthlp:
+    sha256: 5e992a120ab1cf539f67811df703bb479a0e78a8955298712f399ffb5cf75bec
+  ado/base/f/factor.sthlp:
+    sha256: 149dac07c607894046f1e8b045fdbb2ebe41a03c16da8bde63ccb71e0bf96aeb
+  ado/base/f/findit.sthlp:
+    sha256: c7f5a9877660b5ff05366ce73c888080c0b490d3efa794d28ea48db571d35f73
+  ado/base/f/foreach.sthlp:
+    sha256: 71efa793d57f2f8579cb2d0a9760879d7254f6e28d9a75889405897289e70b7a
+  ado/base/f/format.sthlp:
+    sha256: c2e01ee429d11f068bb2f99c0bb46a617448bc57c744bf47c53bc080f81b38a0
+  ado/base/f/forvalues.sthlp:
+    sha256: 26073822146ee4f7954b5ffd043d66ddc5d170ecf3c7bbf11ce74fb3e9b13079
+  ado/base/f/functions.sthlp:
+    sha256: 08e7cac3d4f5437532ac49012f244ed4b9976fce7da2e317035202423e3f5402
+  ado/base/g/generate.sthlp:
+    sha256: 8787d0f4dded99306ee465755d10aeaaa68ec2d3db8ed85d178ee99c5c8bfd20
+  ado/base/g/gmm.sthlp:
+    sha256: fc493bd815c315ac889ad06c238a5cad6ba3f105f5d3fcd05e66cd307ad0bf38
+  ado/base/g/gmm_postestimation.sthlp:
+    sha256: 8ecff1727a7683f1ef8efd17ad5b14b8001b8b8e59f67a283e362fa273e7ed83
+  ado/base/g/graph.sthlp:
+    sha256: 4280ee9b69c1ca8ca605763c97539244ba7885275b6e058c275b67ec550e36ce
+  ado/base/g/graph_describe.sthlp:
+    sha256: 9d877f917ea772d365cd374554432f4dc0828c66610c4f41c315d9e680532cbd
+  ado/base/g/graph_twoway.sthlp:
+    sha256: b44c10b4fe6eacbf32cf2c2ea6288c41567521f000e4eb63ea73638cda5e6535
+  ado/base/g/gsem_command.sthlp:
+    sha256: c6dd38472a4754c15a057801312160dfe3e1417dbce669a2851f65aa1d60f0e1
+  ado/base/h/h2o_intro.sthlp:
+    sha256: d26f8b0eb6eaafcab6bef90f3aa6bc92782912b4defd5aebae6cf61e9d804075
+  ado/base/h/h2oml.sthlp:
+    sha256: 95830a6081d46b040f209299a38fedea4353c36c8f8fe57ce47399810689f25f
+  ado/base/h/h2oml_gbm.sthlp:
+    sha256: 4dfcfc764f3d7b500ff3fed8f39b58c285a6dd5704d5d6f26b611a94b5c84faf
+  ado/base/h/h2oml_rf.sthlp:
+    sha256: 385697989035e79b05deac2e22fb6ddce2828bfd6b399c4fec5cdff3a1961112
+  ado/base/h/heckman.sthlp:
+    sha256: eebc72afed26a8b638c59c10532b207d9f7f038c3bd2216d97f38b0ab5a7ee4d
+  ado/base/h/heckprobit.sthlp:
+    sha256: 08f324e28bad4a5a04f3c496b896773a9f47d78c33f72e1c6c925f9676eda0a4
+  ado/base/h/histogram.sthlp:
+    sha256: 63e1f2ebd24d59a79da8f351cb2f414c983210f8352cf9035126bef9f1dd4e50
+  ado/base/i/if.sthlp:
+    sha256: 8a71bdc2af7a9dceab2df5ea871fce69886613f3663d00035a97e8d12b4d605a
+  ado/base/i/import.sthlp:
+    sha256: f981e0b163a3bc99d3c2359348491bb96a33581d63ded31b51a94e968bee636e
+  ado/base/i/import_delimited.sthlp:
+    sha256: fbf3fdeecff46b715f6cea28c68ee5d47af0fee9ac68ca7574c8c5eefb9def21
+  ado/base/i/import_excel.sthlp:
+    sha256: 5b810b579e70df8c4169d26c0dcea2f2700a70ef798bbf963b3f78e702c03c7c
+  ado/base/i/irf.sthlp:
+    sha256: 777020c7bbf0d07dd686f5456ae459d6925d9483e39e19e78205a8f8bdd83e8c
+  ado/base/i/isid.sthlp:
+    sha256: 19ccef70b2662dc5e14219e3d838333a4b03442eb9258d4caf565ff14550bbac
+  ado/base/i/ivregress.sthlp:
+    sha256: 4ecf486dc0c17dd363c2d3c8f7adb903d60ebd026945d0f6530aab0df236ae4f
+  ado/base/j/java_plugin.sthlp:
+    sha256: c6d5f56a1ccdbddf5d2c118f63c8d1c65671f0b80340c74bd933ad9a1cffccd9
+  ado/base/j/javacall.sthlp:
+    sha256: f5289c417d396618b5e63c81ed28f07ddd43cba33e31b4924f35165268e383b3
+  ado/base/j/joinby.sthlp:
+    sha256: fe66ce4f2100e09f8db7fe8ccdc935ecd3676835be7868897dac3fa02f70853a
+  ado/base/l/lasso.sthlp:
+    sha256: 17dc3b01fe8a837761fa000e05901a32aa5a7777b242261a4a516781946d7832
+  ado/base/l/linktest.sthlp:
+    sha256: f7606a682fed487de39b9acc47a3e3422d205256b84ba0ed752f9a09a11f273c
+  ado/base/l/log.sthlp:
+    sha256: 48abbc35320ff5095d226701788884fe967f2e80c4663163c62bec096357bbe5
+  ado/base/l/logit.sthlp:
+    sha256: e0fa3479f28152514ec04d02f43692d9ff414c6e55d20d37dadbd34bc5812053
+  ado/base/l/lowess.sthlp:
+    sha256: 0e722c9ecebd3c4e634ab8aed65dfe9ee55f11994d9373b12a949fe989807f59
+  ado/base/l/lpoly.sthlp:
+    sha256: 3666a9922cd57468c75c10d6f6fe2ea7b34ed0f4904c5731b74e10c64b6ccfca
+  ado/base/m/m2_declarations.sthlp:
+    sha256: f1e67ccddedd555700fc3dec1e555cb852b15cdc43295d8809c819dd6807f6fe
+  ado/base/m/m2_for.sthlp:
+    sha256: b00e35e43307bd58c8cbcc9b4d8184d1b180f5468314a8597a981a4164f8eb65
+  ado/base/m/m2_intro.sthlp:
+    sha256: ca3bdc49e0205a15201dec86f8307235b98b5ede56000f180815aa5683d949e0
+  ado/base/m/m2_return.sthlp:
+    sha256: 46485801a4629ea44831867f1da14ec6f95258c2bd8be253fdff6030c7c04087
+  ado/base/m/m2_syntax.sthlp:
+    sha256: db950ac29ad76600575b61ebc51f97245c14f747d65afb5b2c211bf31f5fdeb8
+  ado/base/m/macro.sthlp:
+    sha256: fad1361495bf98aeda376aeb374de1c1ca2a8f45be598a80cd71b12d7343fd2b
+  ado/base/m/margins.sthlp:
+    sha256: b898beca0c2983a27f44375a08b5b24f3cf8ec9165e397bab8fd80880103ed0c
+  ado/base/m/mata.sthlp:
+    sha256: 836626030e2743e70cd9f62069e040015862dd6c81c7afd4f3a7609a3dc42c13
+  ado/base/m/matrix.sthlp:
+    sha256: 5e94598166ee75814112d7ad6417236f96dfc74a3a6cf39193801373770a9c50
+  ado/base/m/matrix_operators.sthlp:
+    sha256: 5988a837148133c45b5b89cea02c10265f770bb01e19910d1c541f73e389ab27
+  ado/base/m/merge.sthlp:
+    sha256: 878b14aa82b6072d5ec540b92ca55b14f1f5e210b89fc3b6bcbb2588fa2802a1
+  ado/base/m/mf_st_addvar.sthlp:
+    sha256: 5467b938a071fb4fbaeac6916a579867d3dc0e9882ff563b5888b11a39e1c701
+  ado/base/m/mf_st_data.sthlp:
+    sha256: 4bed956a4158fd23936bc59918b206d996e0a2947c5e3d47922db7c37f74cf50
+  ado/base/m/mf_st_local.sthlp:
+    sha256: 01d6fdbb88248d2a9e2a4e15f46a8e8b82c71dbdefb577fa478f5ce329198f20
+  ado/base/m/mf_st_matrix.sthlp:
+    sha256: f639708db29756145f6bc32127c664f017d0519da5bf847d3b3032fe52251a88
+  ado/base/m/mf_st_numscalar.sthlp:
+    sha256: 21d1db78072ba127670aac61fb318f3935f5c5711dd6624aaf5afb1749b6c84c
+  ado/base/m/mf_st_store.sthlp:
+    sha256: b87c1c568ea8c6c99f4e2dee4eb6d3bbbec90765f4f5f924a610bf3f717a89bb
+  ado/base/m/mf_st_view.sthlp:
+    sha256: 12e462102ed701f1bc110ff2f12f0c0c351511a151f5f0149b8fe83b43151ba7
+  ado/base/m/mi.sthlp:
+    sha256: 18f0e0ecb9789081b2ce20e2a54e43dfd9003dc243ac877cf95fd559ee9192af
+  ado/base/m/mi_impute.sthlp:
+    sha256: 55aeea262fb0734792e76c1d02f96778a7edaa60bada3fd7cfee3406190a7f83
+  ado/base/m/missing.sthlp:
+    sha256: 74bc1e9d25e75ec6b457a6c79fa7419c1e5d3448dbbb5c5885ccf2df3413acee
+  ado/base/m/misstable.sthlp:
+    sha256: 028d7924cda2dfdb97e89ee5d90dc53fac33264b4c6b2694887eb4abd28aab02
+  ado/base/m/ml.sthlp:
+    sha256: 216e214ca99f544dfe31be4cc11feab0b70ef41c56c56d8da700b34d528584b8
+  ado/base/m/mlexp.sthlp:
+    sha256: 5529b36d48ce1b6bdb2b6ddd3ee5b86bc69f5c78017f2a70ef7da82d0c4fc714
+  ado/base/m/mlogit.sthlp:
+    sha256: 123936e69fc57876103150ea094bfc938eb2cec089131b1f592255d9e7cb7cf0
+  ado/base/n/nbreg.sthlp:
+    sha256: 572d558e1b2416f9fbe92bf964b5d70754b7b6118b36b54546e8bf0d9b3ee4ff
+  ado/base/n/net.sthlp:
+    sha256: fc43105ea9f93e9c87d899f22aa52a2ba09e05876da2c0f7205453848c4055b9
+  ado/base/n/npregress.sthlp:
+    sha256: 6ee1c3493278f42dcd3c84f37688b32be9cbb12e34f103bed52e06334a16b01b
+  ado/base/o/ologit.sthlp:
+    sha256: 294ae452009d7206e7d7bb24b85b62586de45e20bcf6c2d806223b3389f066ad
+  ado/base/p/permute.sthlp:
+    sha256: c9a5d5ac4cf37a8362984ed93a15719e4418adf03ba6b863424a6f7066b194c3
+  ado/base/p/plugin.sthlp:
+    sha256: 8b2040a56e8b1b926a7e4f5150d23ccb16c9198b4c59858e72adbbcebe207436
+  ado/base/p/poisson.sthlp:
+    sha256: 9d5ea55b891d2dc5586968b44155ed767045b632f585e6642c70b9eaafd1dd9b
+  ado/base/p/predict.sthlp:
+    sha256: f25b9b18191bb9e7e2002a41435ebf7dd39007109809ca28d20656580637fdf6
+  ado/base/p/probit.sthlp:
+    sha256: 552f2b6f9fa52008d2741b3abdaa98345cce0604df3c6e17d77643f3e70cfecb
+  ado/base/p/program.sthlp:
+    sha256: 5223d31ba23c9c6c8702c07398bf400ef52c8e6d84263ed477d73e6dd5eb1edb
+  ado/base/p/putdocx_intro.sthlp:
+    sha256: 49615ffb0afe9f2a2d5b605213f09dd970108f0ed8cb5a1abc16dc21d21da5f5
+  ado/base/p/putexcel.sthlp:
+    sha256: db36d2797a8f8619aa03f4a08e6f0b40659721b3c6edd1647ddca7bed836b0d7
+  ado/base/p/putpdf_intro.sthlp:
+    sha256: 4e20c40349bfc6bc7dc6b3399fa91864c4682ee69786d29db498bbc2f97dcfa8
+  ado/base/p/pystata_integration.sthlp:
+    sha256: 4912da4cffdcd6d90ceaa7120be8a4584979775af66cf09108975340647e2e2d
+  ado/base/p/pystata_intro.sthlp:
+    sha256: 5d7eec8e529ad50d182d039fe69b8d5dc664dc0adf9fa64b60be5c0cbe0b22a7
+  ado/base/r/random_number_functions.sthlp:
+    sha256: f58c5087433fd1b3957f0a2d49a326c5900792d41fec5dbbe2042c8b916e0c38
+  ado/base/r/regress.sthlp:
+    sha256: c54ea8b4b8cfbbdc8db817d0d8d6358ef5d98b1174e39b48b6ad7f53e9fbfb8f
+  ado/base/r/regress_postestimation.sthlp:
+    sha256: 94a249d1d8b9998d4b08665e6c2d42b4c6353d6bc33a2cf75e33922ad067f658
+  ado/base/r/regress_postestimation_plots.sthlp:
+    sha256: 7cc1c7a1e18d7b121844f2075e30124d91a4d2f912e9776b10f8cb8a0d568049
+  ado/base/r/reshape.sthlp:
+    sha256: 9c523461e22965f89193b29acdf4481df2f4a21dbcdbe5361b3dd2021e9f9bf7
+  ado/base/r/return.sthlp:
+    sha256: 8e08083cd6a910c7e4262aaea24e836f7510928f96911f6cc0578d1560f8755c
+  ado/base/r/runtest.sthlp:
+    sha256: 87e878c8ae48061d092d0c851d6651f76107e100bdc856de5eaf3ebf67de766f
+  ado/base/s/save.sthlp:
+    sha256: d007fc3e98b323c4b5d7eb66b31519f2c0eada8fb9c68c47b510aa79e62b0111
+  ado/base/s/scatter.sthlp:
+    sha256: 890abbbf23ae8bfbeb96cf8d84ba625bb0dc230ee9eb84af17816bbf3bdd9003
+  ado/base/s/search.sthlp:
+    sha256: 0debe5d6e585b4b0ce528a3ea4d602756bd360df7516477dfd072c8e8af51ea9
+  ado/base/s/sem.sthlp:
+    sha256: e87abc88b7177d4193550f166ca576f5e1cb8c41409913e9230f6bc21bff3947
+  ado/base/s/shell.sthlp:
+    sha256: c205a02b6e4edcea700c25d5a932e738b79925a4acda05bc65f9017571c1608d
+  ado/base/s/simulate.sthlp:
+    sha256: 04f909cadb696d2b4d2c0cf7bd8ae62c36c4b096d58296e430c14cda281142d8
+  ado/base/s/split.sthlp:
+    sha256: 0dde62052b88669bf571b8384c2717c7bc04b2fad836d166acb6c95676049270
+  ado/base/s/spmatrix.sthlp:
+    sha256: 7ec174105ee90bddae73fe04adbcd020ab1bd5cf133860e63317182d1fea985f
+  ado/base/s/spmatrix_summarize.sthlp:
+    sha256: f1aade92412a3f4f42e020f0402ca464ba6d61b96f8743cab0d3e4f2d6fb4b7e
+  ado/base/s/spregress.sthlp:
+    sha256: 0df3c21a74f4f40af8924ada84d57fc71062bf1fc193dee05de3dd9e216df49d
+  ado/base/s/spset.sthlp:
+    sha256: 1c2771380c8f9e5435bc58736deafc305550ad0c25cc4c7f815e7723fe8d5a64
+  ado/base/s/ssc.sthlp:
+    sha256: a8983bfbfbc81bb37447a36739493cc53399b2e3d7de8c9318bee5efe4178a5d
+  ado/base/s/stcox.sthlp:
+    sha256: bfe47e5149ef48e610538b1df3e496ca0d3137bb879e69863a5735558bda77ed
+  ado/base/s/string_functions.sthlp:
+    sha256: f208d722ddf3650c0af6bc69bf96bb3253ba0d9e6f26cb934765b5447b6e4013
+  ado/base/s/sts.sthlp:
+    sha256: c601ee8557b39b1fd90d61009325cfb7c63d026c9598fdfb4eb702ea09e509c0
+  ado/base/s/stset.sthlp:
+    sha256: b61b47e2a18c5e802ebee0f62c44803f62e25f55b6168cc15223bbaa3cf2b8a4
+  ado/base/s/summarize.sthlp:
+    sha256: efd516f3150e3504a9363bb8f58d6bf0662bb7b55e19aac43420fa37614a1689
+  ado/base/s/svy.sthlp:
+    sha256: a74501130ffcc49375852023f91b0963d7b1d36fe507f0e570c1ca0ec7f09f6f
+  ado/base/s/svy_estimation.sthlp:
+    sha256: d094dce10d5ef5991a086c2c54d4c167662c4600b7249e16dd1670ffe451fdf7
+  ado/base/s/svyset.sthlp:
+    sha256: e8e85d6d7b4fb1ea5081f31f58f862b3e60af545b4acc32a860172233150b537
+  ado/base/s/syntax.sthlp:
+    sha256: 62e223fc4d238af52f3fdf59599d8cd9b25568919f1e44094d09f00318afd11a
+  ado/base/s/sysdir.sthlp:
+    sha256: ead8bb93e33616591a5341cadb3f670c58981c4f141197c54832e2c694ffcdc0
+  ado/base/s/sysuse.sthlp:
+    sha256: b83cdcd944b2b9d3ce957fef8258deadd730d8128de3f1ed79c991b35a6968c5
+  ado/base/t/table.sthlp:
+    sha256: 0fb2ffdba125783fd7ec62a7cbc596bb65ae930a3a7d6147413de1009648c56a
+  ado/base/t/tabstat.sthlp:
+    sha256: 8a30567aefde6b99d1d558d1d976b00832b8de065707fc74a3a508e383e2aaba
+  ado/base/t/tabulate.sthlp:
+    sha256: 3ff874033de9191597098f7ed1b8e009c5c68402530bd8fddcc43d81aa5d62ed
+  ado/base/t/tebalance.sthlp:
+    sha256: 91b967ad7494510e82598c3b0be5275695d9d73a42abeee558390053e466ef0b
+  ado/base/t/teffects.sthlp:
+    sha256: cde1907a5100f152613a5ccbbe7515fa287ce889f0831bd4d8e5f97d324277ae
+  ado/base/t/teffects_ipw.sthlp:
+    sha256: 8b322a0e80069c4cae0f95ea88c0ea0562708ab6906dc00b5d27742281f7e395
+  ado/base/t/teffects_ipwra.sthlp:
+    sha256: 190bb7ef24157db468049e5e5f4dfb7a025cbfae6be60d2db94a99dd0d2c6fa2
+  ado/base/t/teffects_nnmatch.sthlp:
+    sha256: 2c091a63ffb1970384be9d804d0a7411bbb2fcaaa8fe68df1647a0485e87c5e1
+  ado/base/t/teffects_psmatch.sthlp:
+    sha256: 8a1a7055f7f8ce47c36cf4ef9f4d865f836bd17e6dddcd4d6a874ff869b42282
+  ado/base/t/teffects_ra.sthlp:
+    sha256: 169c0ba0000df82a1344c76ce86f081444d832aa5fe740ca8d78c1dca86cab62
+  ado/base/t/tobit.sthlp:
+    sha256: c4c274e554b3e3e21b8af07c2cb043569c36501545f4766f8e92d582bb100cac
+  ado/base/t/tsset.sthlp:
+    sha256: e85b33462e2f2c9bdb64828aa139dff68b02cf31f17f5788650bc05dfbbcf374
+  ado/base/t/twoway_lpoly.sthlp:
+    sha256: b4a700c4778b75721e2a87bad3686384d0239074a8acb281b2b3c760c0f40411
+  ado/base/u/use.sthlp:
+    sha256: 06f3fbe546f59b98bb7d933aa1791e5b15287e9eb95058977b7ef26012d76fcd
+  ado/base/v/var.sthlp:
+    sha256: 457fdd8b29f3f35217729846c0bb69d6051ee8ee5b82f066f6b21db7ec9fb93a
+  ado/base/v/version.sthlp:
+    sha256: 70285e689b53e94c4afd9f6d37152a11edd8620d6387964a3b723f8aba23bf32
+  ado/base/w/which.sthlp:
+    sha256: d42e17645092824057b8faaf735d10956b494911341c22c8d3d570c72443b74d
+  ado/base/x/xt.sthlp:
+    sha256: 896e46d441e46e1290d5420ec3c7ef5f265f1c5d5da33542c473dbbf6a9100db
+  ado/base/x/xtreg.sthlp:
+    sha256: aa50b07d2929b7f46f524cc839abd2140e699fff5e175441a5cd3f3ab6d23bfb
+  ado/base/x/xtset.sthlp:
+    sha256: 6d0de20c27f137cb6ff975244fd3546886d6ee17ab61feef786eba08f5ea81ea

@@ -1,35 +1,60 @@
 slug: outreg2
 skill: packages
 section: Tables and Reporting
-title: 'outreg2: Quick Regression Tables in Stata'
-trigger: Use when the user asks about outreg2 or a related community-package workflow.
+order: 30
+title: "outreg2: Immediate Regression-Table Export"
+trigger: Use when the user names outreg2 or wants to export each estimation result immediately to Word/RTF, Excel, LaTeX, text, or CSV without first storing a model collection.
+aliases:
+- outreg2
+- immediate regression export
+- Word regression table
+- Excel regression table
 commands:
 - outreg2
 source_topics:
 - outreg2
-syntax_patterns: []
+syntax_patterns:
+- outreg2 using filename.doc, replace ctitle(Model 1) label
+- outreg2 using filename.doc, append ctitle(Model 2) addtext(Fixed effects, Yes)
+- outreg2 using filename.tex, replace tex keep(varlist) addstat(Adjusted R2, e(r2_a))
+assumptions:
+- The intended estimation result is active immediately before each outreg2 call.
+- The output path, file format, column order, and replace-versus-append lifecycle are explicit.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- outreg2 exports the most recent estimation result; intervening estimation or postestimation commands can change what is written.
+- The .doc output is RTF rather than native DOCX. Confirm that the requested downstream application and format are compatible.
+- Use replace once and append for later models; verify the path because output is written immediately and can overwrite an existing table.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises outreg2 and inspect the resulting log.
+- Run which outreg2 and ado describe outreg2 first, and request authorization before any install or update outside an isolated validator.
+- Fit one model, verify its VCE and stored results, export it, then append each later model with explicit column titles.
+- Inspect the resulting file and reconcile coefficient rows, sample sizes, notes, and added statistics with the estimation log.
+validation_case: Fit two regressions in auto.dta, write the first to outreg2_smoke.doc, append the second, confirm the file exists, and require an error-free log.
+validation_mode: stata
 related_refs:
 - tables-reporting
 - estout
+- asdoc
+preflight_commands:
+- which outreg2
+- ado describe outreg2
 install_commands:
-- ssc install outreg2, replace
-smoke_test: 'sysuse auto, clear
-
-  reg price mpg weight
-
-  outreg2 using outreg2_smoke.doc, replace'
+- ssc install outreg2
+smoke_test: |
+  sysuse auto, clear
+  regress price mpg
+  outreg2 using outreg2_smoke.doc, replace ctitle(Base)
+  regress price mpg weight
+  outreg2 using outreg2_smoke.doc, append ctitle(Adjusted)
+  confirm file "outreg2_smoke.doc"
+  local outreg2_pref = c(sysdir_plus) + "o/outreg2.pref"
+  capture erase "`outreg2_pref'"
 provenance:
+  reviewed: true
   local_help_topics:
   - outreg2
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/outreg2.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

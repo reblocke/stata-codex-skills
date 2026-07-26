@@ -15,17 +15,13 @@ import validate_skill_pack  # noqa: E402
 
 
 class ValidateCoreTests(unittest.TestCase):
-    def test_validate_core_stages_do_file_and_uses_unique_marker(self) -> None:
-        with TemporaryDirectory(prefix="source path with spaces ") as source_root, TemporaryDirectory(
-            prefix="validate-work-"
-        ) as work_root:
-            source_root_path = Path(source_root)
+    def test_validate_core_builds_one_do_file_per_content_entry(self) -> None:
+        with TemporaryDirectory(prefix="validate-work-") as work_root:
             work_root_path = Path(work_root)
-            source_dir = source_root_path / "stata" / "core"
-            source_dir.mkdir(parents=True)
-            source_do_file = source_dir / "core_smoke.do"
-            source_text = 'clear all\ndisplay "VALIDATION COMPLETE"\nexit, clear\n'
-            source_do_file.write_text(source_text, encoding="utf-8")
+            entries = [
+                {"slug": "first", "order": 1, "smoke_test": "display 1"},
+                {"slug": "second", "order": 2, "smoke_test": "display 2"},
+            ]
             calls: list[tuple[Path, Path, str, str]] = []
 
             def fake_run_stata_do(
@@ -39,43 +35,35 @@ class ValidateCoreTests(unittest.TestCase):
                 do_text = do_file.read_text(encoding="utf-8")
                 calls.append((do_file, cwd, completion_marker, do_text))
                 log_path = cwd / f"{do_file.stem}.log"
-                log_path.write_text(f"{completion_marker}\n", encoding="utf-8")
+                slug = cwd.name
+                log_path.write_text(
+                    f"PASS: {slug}\n{completion_marker}\n",
+                    encoding="utf-8",
+                )
                 return CompletedProcess(["stata"], 0, "", ""), log_path
 
-            with patch.object(validate_skill_pack, "TESTS_ROOT", source_root_path), patch.object(
+            with patch.object(validate_skill_pack, "core_content_entries", return_value=entries), patch.object(
                 validate_skill_pack, "run_stata_do", side_effect=fake_run_stata_do
             ):
-                first_ok, first_log = validate_skill_pack.validate_core(
-                    Path("/fake/stata"), work_root_path / "first"
-                )
-                second_ok, second_log = validate_skill_pack.validate_core(
-                    Path("/fake/stata"), work_root_path / "second"
+                results = validate_skill_pack.validate_core(
+                    Path("/fake/stata"), work_root_path
                 )
 
-            self.assertTrue(first_ok)
-            self.assertTrue(second_ok)
+            self.assertEqual(
+                [("first", True), ("second", True)],
+                [(slug, success) for slug, success, _ in results],
+            )
             self.assertEqual(2, len(calls))
             self.assertNotEqual(calls[0][2], calls[1][2])
             self.assertIn(calls[0][2], calls[0][3])
             self.assertIn(calls[1][2], calls[1][3])
-            self.assertEqual(source_text, source_do_file.read_text(encoding="utf-8"))
-            self.assertEqual(calls[0][2], first_log)
-            self.assertEqual(calls[1][2], second_log)
-            self.assertEqual(work_root_path / "first" / "core", calls[0][1])
-            self.assertEqual(work_root_path / "second" / "core", calls[1][1])
+            self.assertIn("display 1", calls[0][3])
+            self.assertIn("display 2", calls[1][3])
+            self.assertEqual(work_root_path / "core" / "first", calls[0][1])
+            self.assertEqual(work_root_path / "core" / "second", calls[1][1])
 
     def test_validate_core_propagates_runner_marker_failure(self) -> None:
-        with TemporaryDirectory(prefix="validate-source-") as source_root, TemporaryDirectory(
-            prefix="validate-work-"
-        ) as work_root:
-            source_root_path = Path(source_root)
-            source_dir = source_root_path / "stata" / "core"
-            source_dir.mkdir(parents=True)
-            (source_dir / "core_smoke.do").write_text(
-                'clear all\ndisplay "VALIDATION COMPLETE"\n',
-                encoding="utf-8",
-            )
-
+        with TemporaryDirectory(prefix="validate-work-") as work_root:
             def fake_run_stata_do(
                 stata_binary: Path,
                 do_file: Path,
@@ -93,12 +81,21 @@ class ValidateCoreTests(unittest.TestCase):
                     "Stata log did not contain the exact completion marker.",
                 ), log_path
 
-            with patch.object(validate_skill_pack, "TESTS_ROOT", source_root_path), patch.object(
+            with patch.object(
+                validate_skill_pack,
+                "core_content_entries",
+                return_value=[
+                    {"slug": "sample", "order": 1, "smoke_test": "display 1"}
+                ],
+            ), patch.object(
                 validate_skill_pack, "run_stata_do", side_effect=fake_run_stata_do
             ):
-                success, _ = validate_skill_pack.validate_core(Path("/fake/stata"), Path(work_root))
+                results = validate_skill_pack.validate_core(
+                    Path("/fake/stata"), Path(work_root)
+                )
 
-            self.assertFalse(success)
+            self.assertEqual(1, len(results))
+            self.assertFalse(results[0][1])
 
 
 class CliValidationTests(unittest.TestCase):
@@ -109,7 +106,9 @@ class CliValidationTests(unittest.TestCase):
             with patch.object(validate_skill_pack, "lint_repo", return_value=[]), patch.object(
                 validate_skill_pack, "detect_stata_binary", return_value=Path("/fake/stata")
             ), patch.object(
-                validate_skill_pack, "validate_core", return_value=(False, "core failed")
+                validate_skill_pack,
+                "validate_core",
+                return_value=[("sample", False, "core failed")],
             ) as validate_core, patch.object(
                 validate_skill_pack,
                 "validate_packages",
@@ -182,7 +181,9 @@ class CliValidationTests(unittest.TestCase):
             with patch.object(validate_skill_pack, "lint_repo", return_value=[]), patch.object(
                 validate_skill_pack, "detect_stata_binary", return_value=Path("/fake/stata")
             ), patch.object(
-                validate_skill_pack, "validate_core", return_value=(True, "")
+                validate_skill_pack,
+                "validate_core",
+                return_value=[("sample", True, "")],
             ), patch.object(
                 validate_skill_pack,
                 "validate_packages",
@@ -269,7 +270,9 @@ class CliValidationTests(unittest.TestCase):
             with patch.object(validate_skill_pack, "lint_repo", return_value=[]), patch.object(
                 validate_skill_pack, "detect_stata_binary", return_value=Path("/fake/stata")
             ), patch.object(
-                validate_skill_pack, "validate_core", return_value=(False, "failed")
+                validate_skill_pack,
+                "validate_core",
+                return_value=[("sample", False, "failed")],
             ), patch.object(
                 validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
             ):
@@ -287,7 +290,9 @@ class CliValidationTests(unittest.TestCase):
             with patch.object(validate_skill_pack, "lint_repo", return_value=[]), patch.object(
                 validate_skill_pack, "detect_stata_binary", return_value=Path("/fake/stata")
             ), patch.object(
-                validate_skill_pack, "validate_core", return_value=(True, "")
+                validate_skill_pack,
+                "validate_core",
+                return_value=[("sample", True, "")],
             ), patch.object(
                 validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
             ):
@@ -305,7 +310,9 @@ class CliValidationTests(unittest.TestCase):
             with patch.object(validate_skill_pack, "lint_repo", return_value=[]), patch.object(
                 validate_skill_pack, "detect_stata_binary", return_value=Path("/fake/stata")
             ), patch.object(
-                validate_skill_pack, "validate_core", return_value=(False, "failed")
+                validate_skill_pack,
+                "validate_core",
+                return_value=[("sample", False, "failed")],
             ), patch.object(
                 validate_skill_pack.tempfile, "mkdtemp", return_value=str(work_root)
             ):

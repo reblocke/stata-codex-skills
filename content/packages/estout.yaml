@@ -1,39 +1,72 @@
 slug: estout
 skill: packages
 section: Tables and Reporting
-title: 'estout/esttab: Publication-Quality Tables in Stata'
-trigger: Use when the user asks about eststo or a related community-package workflow.
-commands:
-- eststo
-- esttab
+order: 20
+title: "estout, esttab, eststo, and estadd: Stored-Estimate Tables"
+trigger: Use when the user asks for estout, esttab, eststo, estadd, model storage, side-by-side regression tables, or export of stored estimates to LaTeX, CSV, HTML, or RTF.
+aliases:
 - estout
+- esttab
+- eststo
+- estadd
+- regression table
+- stored estimates
+commands:
+- estout
+- esttab
+- eststo
+- estadd
 source_topics:
 - estout
-syntax_patterns: []
+- esttab
+- eststo
+- estadd
+syntax_patterns:
+- "eststo model_name: estimation_command"
+- esttab model_list using filename.tex, replace se stats(N r2)
+- estadd scalar statistic_name = expression
+- estout model_list, cells(b(star fmt(3)) se(par fmt(3)))
+assumptions:
+- Every table column maps to a deliberately named stored estimate with a known estimation sample and VCE.
+- Requested row labels, statistics, significance rules, and output format are specified before export.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- esttab reports stored estimation results, so clear stale estimates and verify estimates dir before exporting.
+- File replace controls the output artifact, while eststo clear controls memory; confusing them can mix old models into a new table.
+- Factor-variable names and base categories can make keep(), drop(), and order() fragile; inspect coefficient names with matrix colnames e(b).
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises eststo and inspect the resulting log.
+- Run which esttab, which estout, and ado describe estout before use; obtain authorization before installing or updating the package.
+- Clear estimates, fit and name each model, replay the stored set, then export once with explicit statistics and formatting.
+- Validate the table against the estimation sample, coefficient names, standard-error type, and requested model order rather than judging appearance alone.
+validation_case: Store two regressions from auto.dta, verify both estimate names exist, render them with esttab in batch mode, and require an error-free log.
+validation_mode: stata
 related_refs:
 - tables-reporting
+- asdoc
 - outreg2
+preflight_commands:
+- which esttab
+- which estout
+- ado describe estout
 install_commands:
-- ssc install estout, replace
-smoke_test: 'sysuse auto, clear
-
+- ssc install estout
+smoke_test: |
+  sysuse auto, clear
   eststo clear
-
-  eststo: reg price mpg weight
-
-  esttab'
+  eststo base: regress price mpg
+  eststo adjusted: regress price mpg weight
+  estimates dir
+  esttab base adjusted, se stats(N r2)
+  eststo clear
 provenance:
+  reviewed: true
   local_help_topics:
   - estout
+  - esttab
+  - eststo
+  - estadd
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/estout.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

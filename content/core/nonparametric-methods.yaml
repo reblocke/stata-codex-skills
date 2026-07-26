@@ -1,32 +1,48 @@
 slug: nonparametric-methods
 skill: core
 section: Advanced Methods
-title: Nonparametric Methods in Stata
-trigger: Use when the user needs built-in Stata help with nonparametric methods in stata.
-commands: &id001
-- npregress
-- lowess
-source_topics: *id001
-syntax_patterns: []
+order: 630
+title: Nonparametric Regression and Smoothing
+trigger: >-
+  Use for locally weighted smoothers, kernel regression, series regression, bandwidth selection,
+  derivative estimation, and visual assessment of nonlinear relationships with lowess and npregress.
+commands: [lowess, npregress kernel, npregress series, margins, marginsplot]
+aliases: [nonparametric regression, LOWESS, LOESS, kernel regression, local polynomial, smoother]
+source_topics: [npregress, lowess]
+syntax_patterns:
+- lowess outcome exposure, bwidth(0.8) nograph
+- npregress kernel outcome exposure covariates
+- npregress series outcome exposure covariates
+- margins, at(exposure=(10(5)40))
+assumptions:
+- Observations are independent at the variance-estimation unit and the conditional mean is sufficiently smooth locally.
+- Bandwidth, kernel, or series complexity is selected without using the final visual pattern as an unreported optimization target.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Smaller bandwidths reduce smoothing bias but increase variance and visual noise.
+- Sparse boundary regions can be unstable even when the central fit looks smooth.
+- A nonparametric association is not automatically a causal dose-response relationship.
 workflows:
-- Start with the official help topics attached to Nonparametric Methods in Stata, then tailor the syntax
-  to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises npregress and inspect the resulting log.
-related_refs:
-- graphics
-- machine-learning
+- Plot raw data, inspect support and density, then compare prespecified bandwidths or basis complexities.
+- Report the support used for predictions and avoid extrapolating beyond regions with adequate observations.
+validation_case: >-
+  Fit LOWESS and kernel regression to bundled data, verify the estimation sample, and calculate predictions on observed support.
+validation_mode: stata
+related_refs: [graphics, regression-discontinuity]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  sysuse auto, clear
+  lowess price mpg, nograph
+  npregress kernel price mpg
+  assert e(N) >= 70
 provenance:
-  local_help_topics:
-  - npregress
-  - lowess
+  local_help_topics: [npregress, lowess]
+  local_help_globs: []
   local_help_files:
   - ado/base/n/npregress.sthlp
   - ado/base/l/lowess.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/nonparametric-methods.md
   upstream_only: false
+  package_only: false
+  reviewed: true

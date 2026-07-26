@@ -1,55 +1,62 @@
 slug: synth
 skill: packages
 section: Estimation Packages
-title: Synthetic Control Methods with synth
-trigger: Use when the user asks about synth or a related community-package workflow.
+order: 180
+title: "synth: Synthetic-Control Estimation"
+trigger: Use when the user asks for synth, synthetic control, donor weights, predictor weights, pre-treatment RMSPE, placebo/permutation inference, leave-one-out donor sensitivity, or treatment gaps.
+aliases:
+- synth
+- synthetic control
+- donor weights
+- placebo gaps
+- RMSPE
 commands:
 - synth
 source_topics:
 - synth
-syntax_patterns: []
+syntax_patterns:
+- synth outcome predictors outcome(preperiods), trunit(unit) trperiod(period) xperiod(preperiods)
+- synth outcome predictors, trunit(unit) trperiod(period) counit(donor_units) keep(results.dta) replace
+assumptions:
+- No donor is exposed to treatment or spillovers during the relevant period, and the treated unit has a credible convex combination in the donor pool.
+- Predictors and optimization periods use only pre-treatment information and provide adequate pre-treatment fit.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- Treatment must occur for one identified unit at a known period, with an untreated donor pool and no donor contamination during the outcome window.
+- Predictor periods, optimization periods, and reported result periods serve different roles; state each explicitly and use only pre-treatment information for fitting.
+- Conventional regression p-values are not the default inferential framework; assess placebo gaps, pre-treatment fit, donor weights, and sensitivity to influential donors.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises synth and inspect the resulting log.
+- Preflight synth with which and ado describe; ask before installing or updating the package.
+- Declare panel structure, treatment unit/period, donor exclusions, predictors, and pre-treatment periods before optimization.
+- Inspect predictor balance, donor weights, RMSPE, and the full gap path, then run prespecified placebo and leave-one-out checks.
+validation_case: Generate a seeded balanced panel with one treated unit and five donors, run synth using only pre-treatment predictors, and verify donor-weight and result matrices are returned without errors.
+validation_mode: stata
 related_refs:
 - treatment-effects
 - graphics
+preflight_commands:
+- which synth
+- ado describe synth
 install_commands:
-- ssc install synth, replace
-smoke_test: 'clear
-
-  set seed 12345
-
+- ssc install synth
+smoke_test: |
+  clear
+  set seed 271828
   set obs 60
-
-  gen state = ceil(_n/10)
-
-  bysort state: gen year = 2000 + _n - 1
-
-  tsset state year
-
-  gen beer = 20 + state + runiform()
-
-  gen lnincome = 10 + 0.02*(year - 2000) + 0.1*state
-
-  gen retprice = 50 + 0.5*state + runiform()
-
-  gen age15to24 = 0.18 + 0.005*runiform()
-
-  gen cigsale = 100 + 2*state + 0.4*(year - 2000) + 1.2*beer - 0.5*retprice + 12*age15to24 + rnormal()
-
-  replace cigsale = cigsale - 8 if state == 1 & year >= 2006
-
-  synth cigsale beer(2003(1)2005) lnincome retprice age15to24 cigsale(2005) cigsale(2003) cigsale(2001), trunit(1) trperiod(2006)'
+  generate unit = ceil(_n / 10)
+  bysort unit: generate year = 2000 + _n - 1
+  xtset unit year
+  generate double predictor = 5 + unit / 10 + runiform()
+  generate double outcome = 10 + unit + 0.2 * (year - 2000) + predictor + rnormal()
+  replace outcome = outcome + 3 if unit == 1 & year >= 2006
+  synth outcome predictor(2001(1)2005) outcome(2003) outcome(2005), trunit(1) trperiod(2006)
+  matrix list e(W_weights)
 provenance:
+  reviewed: true
   local_help_topics:
   - synth
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/synth.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

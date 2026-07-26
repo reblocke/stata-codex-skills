@@ -1,38 +1,71 @@
 slug: variables-operators
 skill: core
 section: Data Operations
-title: Variables and Operators in Stata
-trigger: Use when the user needs built-in Stata help with variables and operators in stata.
-commands: &id001
-- datatypes
+order: 140
+title: Variables, Types, Missing Values, and Operators
+trigger: >-
+  Use for generate and replace expressions, numeric and string storage types, missing values, if qualifiers,
+  logical and arithmetic operators, factor-variable notation, and observation subscripting.
+commands:
+- generate
+- replace
+- recast
+- compress
+- missing()
+- inlist()
+- inrange()
+- if
+aliases: [variable type, missing value, generate variable, replace variable, logical operator, factor variable]
+source_topics:
+- generate
 - missing
 - if
 - functions
-source_topics: *id001
-syntax_patterns: []
+syntax_patterns:
+- generate byte eligible = age >= 18 & !missing(age)
+- replace category = 1 if inlist(code, "A", "B")
+- generate double ratio = numerator / denominator if denominator != 0 & !missing(denominator)
+assumptions:
+- Each variable's storage type, coding scheme, unit, and missing-value representation are understood.
+- Boolean classifications define how missing and out-of-domain values should be handled.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Numeric missing values sort above every real number, so age > 65 also selects missing age unless guarded.
+- A single equals sign assigns a value; double equals tests equality inside expressions and qualifiers.
+- Float storage can lose decimal precision; use double for identifiers or calculations requiring exact precision.
+- Logical expressions involving strings and numeric missing values follow different missing-value conventions.
 workflows:
-- Start with the official help topics attached to Variables and Operators in Stata, then tailor the syntax
-  to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises datatypes and inspect the resulting log.
+- Inspect storage types and missingness, generate into a new variable, tabulate the result including missing, then replace only verified cases.
+- Use explicit parentheses in mixed and/or expressions and assert impossible states after classification.
+validation_case: >-
+  Construct real and missing values, classify them with guarded comparisons, and assert that missing observations
+  are not inadvertently treated as high values.
+validation_mode: stata
 related_refs:
 - data-management
 - mathematical-functions
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  input double x
+  5
+  12
+  .
+  end
+  generate byte high = x > 10 & !missing(x)
+  assert high == 0 in 1
+  assert high == 1 in 2
+  assert high == 0 in 3
+  assert missing(x[3])
 provenance:
-  local_help_topics:
-  - datatypes
-  - missing
-  - if
-  - functions
+  local_help_topics: [generate, missing, if, functions]
+  local_help_globs: []
   local_help_files:
-  - ado/base/d/data_types.sthlp
+  - ado/base/g/generate.sthlp
   - ado/base/m/missing.sthlp
   - ado/base/i/if.sthlp
   - ado/base/f/functions.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/variables-operators.md
   upstream_only: false
+  package_only: false
+  reviewed: true

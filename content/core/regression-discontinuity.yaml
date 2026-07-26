@@ -1,70 +1,64 @@
 slug: regression-discontinuity
 skill: core
 section: Causal Inference
-title: Regression Discontinuity Design in Stata
-trigger: Use when the user needs built-in Stata help with regression discontinuity design in stata.
-commands: &id001
-- rd
-source_topics: *id001
-syntax_patterns: []
+order: 420
+title: Manual Regression-Discontinuity Workflow with Built-in Stata
+trigger: >-
+  Use for a transparent built-in sharp or fuzzy regression-discontinuity workflow using regress, lpoly,
+  and twoway; includes cutoff coding, local bandwidths, side-specific slopes, sensitivity, placebo cutoffs,
+  density inspection, and covariate-continuity checks. Route robust bias-corrected inference to rdrobust.
+commands: [regress, ivregress 2sls, lpoly, twoway scatter, twoway lfit, histogram]
+aliases: [regression discontinuity, regression-discontinuity, RD, RDD, cutoff design, local linear regression]
+source_topics: [regress, lpoly, graph_twoway, twoway_lpoly]
+syntax_patterns:
+- generate double centered = running - cutoff
+- generate byte above = centered >= 0 if !missing(centered)
+- regress outcome i.above##c.centered if abs(centered) <= bandwidth, vce(robust)
+- generate double side_slope = above*centered
+- ivregress 2sls outcome centered side_slope (treatment = above) if abs(centered) <= bandwidth, vce(robust)
+- lpoly outcome centered if centered < 0 & abs(centered) <= bandwidth, nograph degree(1)
+- twoway (scatter outcome centered) (lfit outcome centered if centered < 0) (lfit outcome centered if centered >= 0), xline(0)
+assumptions:
+- Potential outcomes are continuous at the cutoff absent treatment, with no precise manipulation of the running variable.
+- The cutoff, assignment rule, bandwidth, polynomial order, and outcome timing are defined independently of observed effects.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Stata has no built-in rd command; do not infer provenance or syntax from unrelated help files containing the letters rd.
+- Global high-order polynomials can create unstable boundary behavior and misleading discontinuity estimates.
+- Conventional regress standard errors do not provide robust bias-corrected local-polynomial inference.
+- Sorting or heaping at the cutoff and discontinuities in baseline covariates threaten design validity.
 workflows:
-- Start with the official help topics attached to Regression Discontinuity Design in Stata, then tailor
-  the syntax to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises rd and inspect the resulting log.
-related_refs:
-- treatment-effects
-- difference-in-differences
+- Center the running variable, verify treatment assignment, plot raw data and separate local fits, then estimate a prespecified local linear model.
+- Repeat plausible bandwidths and polynomial orders, inspect placebo cutoffs and covariates, and route publication-grade robust inference to rdrobust.
+validation_case: >-
+  Generate a sharp cutoff with a known jump, estimate side-specific local linear slopes within a fixed bandwidth,
+  verify a positive discontinuity, and run a placebo cutoff model.
+validation_mode: stata
+related_refs: [linear-regression, graphics, rdrobust]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear
+  set obs 200
+  generate double centered = _n - 100.5
+  generate byte above = centered >= 0
+  generate double outcome = 2*above + 0.05*centered + 0.02*above*centered + 0.1*sin(_n)
+  regress outcome i.above##c.centered if abs(centered) <= 40, vce(robust)
+  assert _b[1.above] > 0
+  lpoly outcome centered if abs(centered) <= 40, degree(1) nograph
+  generate double placebo_centered = centered + 50
+  generate byte placebo_above = placebo_centered >= 0
+  regress outcome i.placebo_above##c.placebo_centered if abs(placebo_centered) <= 20, vce(robust)
+  assert abs(_b[1.placebo_above]) < 0.5
 provenance:
-  local_help_topics:
-  - rd
+  local_help_topics: [regress, ivregress, lpoly, graph_twoway, twoway_lpoly]
+  local_help_globs: []
   local_help_files:
-  - ado/base/a/aorder.sthlp
-  - ado/base/c/churdle.sthlp
-  - ado/base/c/churdle_postestimation.sthlp
-  - ado/base/c/ciwidth_onevar_dlg.sthlp
-  - ado/base/c/cluster_dendrogram.sthlp
-  - ado/base/c/cluster_dlg.sthlp
-  - ado/base/c/contents_stat_ordinal.sthlp
-  - ado/base/c/contour_dlg.sthlp
-  - ado/base/d/discard.sthlp
-  - ado/base/e/estat_coordinates.sthlp
-  - ado/base/e/estat_grdistances.sthlp
-  - ado/base/f/f_byteorder.sthlp
-  - ado/base/f/f_hadamard.sthlp
-  - ado/base/f/f_strdup.sthlp
-  - ado/base/f/f_ustrword.sthlp
-  - ado/base/f/f_word.sthlp
-  - ado/base/f/f_wordbreaklocale.sthlp
-  - ado/base/g/gsem_fvstandard.sthlp
-  - ado/base/i/import_haverdirect.sthlp
-  - ado/base/k/keyboard.sthlp
-  - ado/base/l/legend_order.sthlp
-  - ado/base/m/m2_reswords.sthlp
-  - ado/base/m/m4_standard.sthlp
-  - ado/base/m/mf_byteorder.sthlp
-  - ado/base/m/mf_gschurd.sthlp
-  - ado/base/m/mf_invorder.sthlp
-  - ado/base/m/mf_qrd.sthlp
-  - ado/base/m/mf_rdirichlet.sthlp
-  - ado/base/m/mf_schurd.sthlp
-  - ado/base/m/mf_strdup.sthlp
-  - ado/base/m/mf_ustrword.sthlp
-  - ado/base/m/mvreg_db_order.sthlp
-  - ado/base/o/order.sthlp
-  - ado/base/p/power_onevar_dlg.sthlp
-  - ado/base/p/power_pairedpr_dlg.sthlp
-  - ado/base/p/power_twovar_dlg.sthlp
-  - ado/base/p/prdocumented.sthlp
-  - ado/base/r/reswords.sthlp
-  - ado/base/s/scalar_dlg.sthlp
-  - ado/base/s/spmatrix_userdefined.sthlp
-  - ado/base/s/stpower_dlg.sthlp
-  - ado/base/v/varkeyboard.sthlp
+  - ado/base/r/regress.sthlp
+  - ado/base/i/ivregress.sthlp
+  - ado/base/l/lpoly.sthlp
+  - ado/base/g/graph_twoway.sthlp
+  - ado/base/t/twoway_lpoly.sthlp
   upstream_files:
   - plugins/stata/skills/stata/references/regression-discontinuity.md
-  upstream_only: true
+  upstream_only: false
+  package_only: false
+  reviewed: true

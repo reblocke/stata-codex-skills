@@ -1,36 +1,79 @@
 slug: ivreg2
 skill: packages
 section: Estimation Packages
-title: 'Instrumental Variables Packages: ivreg2 and ivreghdfe'
-trigger: Use when the user asks about ivreg2 or a related community-package workflow.
+order: 130
+title: "ivreg2, xtivreg2, and ivreghdfe: Instrumental-Variables Workflows"
+trigger: Use when the user asks for ivreg2, xtivreg2, ivreghdfe, ranktest, weak-instrument diagnostics, first-stage statistics, LIML, GMM, overidentification tests, endogenous-regressor tests, HAC inference, or IV with high-dimensional fixed effects.
+aliases:
+- ivreg2
+- xtivreg2
+- ivreghdfe
+- ranktest
+- weak instruments
+- LIML
+- instrumental variables
 commands:
 - ivreg2
+- xtivreg2
+- ivreghdfe
+- ranktest
 source_topics:
 - ivreg2
-syntax_patterns: []
+- xtivreg2
+- ivreghdfe
+- ranktest
+syntax_patterns:
+- ivreg2 depvar exogvars (endogvars = excluded_instruments), first robust
+- ivreg2 depvar exogvars (endogvars = excluded_instruments), liml first cluster(clustvar)
+- xtivreg2 depvar exogvars (endogvars = excluded_instruments), fe cluster(panel_id)
+- ivreghdfe depvar exogvars (endogvars = excluded_instruments), absorb(firm_id year) cluster(firm_id)
+assumptions:
+- Excluded instruments are relevant and satisfy a defensible exclusion restriction conditional on included covariates.
+- The clustering/HAC structure and fixed effects match the sampling and treatment-assignment process.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- Instrument relevance does not establish exclusion. State and defend the exclusion restriction before interpreting any IV estimate.
+- Use heteroskedasticity- or cluster-robust weak-identification statistics that correspond to the requested VCE; the conventional first-stage F is not a universal threshold.
+- ivreghdfe has additional ftools/reghdfe dependencies and option differences. Verify installed versions together before debugging syntax.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises ivreg2 and inspect the resulting log.
+- Preflight every requested command with which and ado describe; request authorization before installing or changing the dependency stack.
+- Inspect the first stage, weak-identification statistic, reduced form, overidentification conditions, and clustering structure before selecting 2SLS, LIML, or GMM.
+- For high-dimensional fixed effects, document absorbed effects and cluster dimensions and compare a smaller ivreg2 specification when feasible.
+validation_case: In auto.dta, construct two excluded instruments, run a robust ivreg2 model with first-stage output, and verify e(N), the coefficient vector, and an error-free log.
+validation_mode: stata
 related_refs:
 - linear-regression
 - gmm-estimation
+- reghdfe
+preflight_commands:
+- which ivreg2
+- which ranktest
+- which ivreghdfe
+- ado describe ivreg2
 install_commands:
-- ssc install ranktest, replace
-- ssc install ivreg2, replace
-smoke_test: 'sysuse auto, clear
-
-  gen z = turn + trunk
-
-  ivreg2 price weight (mpg = z)'
+- ssc install ranktest
+- ssc install ivreg2
+- ssc install xtivreg2
+- ssc install ftools
+- ssc install reghdfe
+- net install ivreghdfe, from("https://raw.githubusercontent.com/sergiocorreia/ivreghdfe/bfb5577a6dbdfb029ab4ab6a7e93f7257a827b42/src/")
+smoke_test: |
+  sysuse auto, clear
+  generate double excluded1 = turn + trunk
+  generate double excluded2 = length + headroom
+  ivreg2 price weight (mpg = excluded1 excluded2), first robust
+  assert e(N) > 0
+  assert colsof(e(b)) > 0
+  assert !missing(_b[mpg])
 provenance:
+  reviewed: true
   local_help_topics:
   - ivreg2
+  - xtivreg2
+  - ivreghdfe
+  - ranktest
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/ivreg2.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

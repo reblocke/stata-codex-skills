@@ -1,45 +1,74 @@
 slug: reghdfe
 skill: packages
 section: Estimation Packages
-title: 'reghdfe: High-Dimensional Fixed Effects Regression'
-trigger: Use when the user asks about reghdfe or a related community-package workflow.
+order: 170
+title: "reghdfe: High-Dimensional Fixed Effects"
+trigger: Use when the user asks for reghdfe, absorb(), multiple high-dimensional fixed effects, interacted fixed effects, singleton handling, multi-way clustering, absorbed-effect recovery, or fast within-transformation. Route instrumental-variable models with ivreghdfe to the ivreg2 reference.
+aliases:
+- reghdfe
+- ftools
+- require
+- absorb
+- high-dimensional fixed effects
+- multi-way fixed effects
+- HDFE
 commands:
 - reghdfe
-- ivreghdfe
+- ftools
+- require
 source_topics:
 - reghdfe
-- ivreghdfe
-syntax_patterns: []
+- ftools
+- require
+syntax_patterns:
+- reghdfe depvar indepvars, absorb(firm_id year) vce(cluster firm_id)
+- reghdfe depvar indepvars, absorb(worker_id firm_id industry#year) keepsingletons
+- reghdfe depvar indepvars, absorb(firm_id year, savefe) residuals(residvar)
+assumptions:
+- Regressors retain identifying variation after absorption and the fixed-effects structure matches the design.
+- Cluster dimensions capture the relevant within-cluster dependence and include enough independent clusters for the requested inference.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- Fixed effects and cluster dimensions answer different dependence problems; absorbing year effects does not substitute for clustering at the treatment-assignment level.
+- Singleton removal and nested fixed effects can change the estimation sample and degrees of freedom. Inspect the reported counts and e(sample).
+- Instrumental-variable HDFE models use ivreghdfe and its additional ivreg2/ranktest dependencies; route those tasks to the ivreg2 reference.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises reghdfe and inspect the resulting log.
+- Preflight all requested commands and ado describe their packages; ask before changing a user's installed dependency stack.
+- Verify identifiers and within-group variation, fit the smallest model, add absorbed effects and clustering deliberately, then inspect convergence and sample changes.
+- Use the immutable ftools/reghdfe sources for isolated validation; follow the related ivreg2 reference when the requested model is instrumental-variable HDFE.
+validation_case: Fit a two-way absorbed wage model in nlswork, cluster by worker, verify positive e(N) and nonempty coefficient results, and require an error-free log.
+validation_mode: stata
 related_refs:
 - linear-regression
 - panel-data
 - ivreg2
+preflight_commands:
+- which require
+- which ftools
+- which reghdfe
+- ado describe require
+- ado describe ftools
+- ado describe reghdfe
 install_commands:
-- net install require, from("https://raw.githubusercontent.com/sergiocorreia/stata-require/master/src/")
-  replace
-- net install ftools, from("https://raw.githubusercontent.com/sergiocorreia/ftools/master/src/")
-  replace
+- net install require, from("https://raw.githubusercontent.com/sergiocorreia/stata-require/7ee750b12f9c51ec8a879445cbf39357c308bdee/src/")
+- net install ftools, from("https://raw.githubusercontent.com/sergiocorreia/ftools/7b3663e49ea5c5b81638c55be29edf416e68e8b7/src/")
 - ftools, compile
-- 'mata: mata mlib index'
-- net install reghdfe, from("https://raw.githubusercontent.com/sergiocorreia/reghdfe/master/src/")
-  replace
+- "mata: mata mlib index"
+- net install reghdfe, from("https://raw.githubusercontent.com/sergiocorreia/reghdfe/29b2b203f534413369d675d0c0f674d61291f536/src/")
 - capture noisily reghdfe, compile
-smoke_test: 'webuse nlswork, clear
-
-  reghdfe ln_wage tenure ttl_exp, absorb(idcode year)'
+smoke_test: |
+  webuse nlswork, clear
+  reghdfe ln_wage tenure ttl_exp, absorb(idcode year) vce(cluster idcode)
+  assert e(N) > 0
+  assert colsof(e(b)) > 0
+  assert !missing(_b[tenure])
 provenance:
+  reviewed: true
   local_help_topics:
   - reghdfe
-  - ivreghdfe
+  - ftools
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/reghdfe.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

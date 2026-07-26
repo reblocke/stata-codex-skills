@@ -1,39 +1,45 @@
 slug: limited-dependent-variables
 skill: core
 section: Statistics and Econometrics
-title: Limited Dependent Variable Models in Stata
-trigger: Use when the user needs built-in Stata help with limited dependent variable models in stata.
-commands: &id001
-- logit
-- probit
-- mlogit
-- ologit
-- poisson
-- nbreg
-- tobit
-source_topics: *id001
-syntax_patterns: []
+order: 260
+title: Binary, Ordinal, Multinomial, Count, and Censored Models
+trigger: >-
+  Use for binary, ordinal, multinomial, count, overdispersed-count, and censored outcomes with logit,
+  probit, ologit, mlogit, poisson, nbreg, tobit, margins, and predicted probabilities.
+commands: [logit, logistic, probit, ologit, mlogit, poisson, nbreg, tobit, margins, predict]
+aliases: [logistic regression, ordinal regression, multinomial logit, count model, negative binomial, censored regression]
+source_topics: [logit, probit, mlogit, ologit, poisson, nbreg, tobit]
+syntax_patterns:
+- logit binary_outcome c.exposure##i.group covariates, vce(robust)
+- margins group, at(exposure=(0 1))
+- poisson count_outcome exposure covariates, exposure(person_time) vce(robust)
+- tobit outcome exposure covariates, ll(0)
+assumptions:
+- Outcome support, censoring or count process, and link function match the selected likelihood or mean model.
+- Observations are independent at the variance unit and included predictors define the intended conditional contrast.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Coefficients are on link-function scales; report probabilities, marginal effects, rate ratios, or other estimand-aligned contrasts.
+- Separation, sparse outcome categories, and perfect prediction can make binary or multinomial estimates unstable.
+- Poisson consistency for the conditional mean differs from equality of mean and variance; choose variance and model checks deliberately.
+- Tobit assumes a latent Gaussian outcome and censoring, which is different from truncation or a structural mass at the limit.
 workflows:
-- Start with the official help topics attached to Limited Dependent Variable Models in Stata, then tailor
-  the syntax to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises logit and inspect the resulting log.
-related_refs:
-- linear-regression
-- maximum-likelihood
+- Identify the outcome support and sampling process, select the likelihood/link, and prespecify the reported contrast.
+- Inspect sparse cells and model fit, calculate margins on clinically meaningful scales, and state the estimation denominator.
+validation_case: >-
+  Fit a binary logit model to bundled data, compute adjusted probabilities by group, and verify predictions remain in [0,1].
+validation_mode: stata
+related_refs: [linear-regression, maximum-likelihood]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  sysuse auto, clear
+  logit foreign c.mpg weight
+  margins, at(mpg=(15 25 35))
+  predict double probability, pr
+  assert inrange(probability, 0, 1)
 provenance:
-  local_help_topics:
-  - logit
-  - probit
-  - mlogit
-  - ologit
-  - poisson
-  - nbreg
-  - tobit
+  local_help_topics: [logit, probit, mlogit, ologit, poisson, nbreg, tobit]
+  local_help_globs: []
   local_help_files:
   - ado/base/l/logit.sthlp
   - ado/base/p/probit.sthlp
@@ -45,3 +51,5 @@ provenance:
   upstream_files:
   - plugins/stata/skills/stata/references/limited-dependent-variables.md
   upstream_only: false
+  package_only: false
+  reviewed: true

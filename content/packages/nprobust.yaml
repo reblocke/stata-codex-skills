@@ -1,9 +1,17 @@
 slug: nprobust
 skill: packages
 section: Estimation Packages
-title: 'nprobust: Local Polynomial and Kernel-Based Nonparametric Estimation'
-trigger: Use when the user asks about nprobust, lprobust, kdrobust, or a related community-package
-  workflow.
+order: 140
+title: "nprobust Suite: Robust Nonparametric Estimation"
+trigger: Use when the user asks for nprobust, lprobust, lpbwselect, kdrobust, kdbwselect, local-polynomial regression, kernel-density inference, robust bias correction, derivative estimation, or data-driven nonparametric bandwidths.
+aliases:
+- nprobust
+- lprobust
+- lpbwselect
+- kdrobust
+- kdbwselect
+- local polynomial
+- robust bias correction
 commands:
 - lprobust
 - lpbwselect
@@ -11,29 +19,51 @@ commands:
 - kdbwselect
 source_topics:
 - nprobust
-syntax_patterns: []
+- lprobust
+- lpbwselect
+- kdrobust
+- kdbwselect
+syntax_patterns:
+- lprobust depvar indepvar, p(1) q(2) bwselect(ce-dpi)
+- lprobust depvar indepvar, deriv(1) vce(cluster clustvar)
+- kdrobust varname, kernel(epanechnikov) genvars
+- lpbwselect depvar indepvar, p(1) bwselect(all)
+assumptions:
+- The outcome/running variable has adequate local support over the requested evaluation grid.
+- Polynomial order, derivative, kernel, bandwidth objective, and VCE correspond to a prespecified inferential target.
 gotchas:
-- Package syntax and dependencies vary across versions; verify the installed help file before finalizing
-  code.
+- Polynomial order p(), bias-correction order q(), derivative order, and bandwidth criterion jointly determine the target and inference; report all of them.
+- Generated result variables use fixed prefixes and can collide with earlier runs. Drop or rename them deliberately before requesting genvars.
+- Boundary behavior and sparse evaluation regions can dominate nonparametric results; inspect effective sample sizes and support rather than relying only on a smooth plot.
 workflows:
-- Confirm the package and any dependencies are installed on the active adopath before writing code that
-  uses it.
-- Pair the package command with a small reproducible example before folding it into a larger do-file.
-validation_case: Run a small batch-mode example that exercises lprobust or kdrobust and inspect the
-  resulting log.
+- Run which lprobust, which kdrobust, and ado describe nprobust before use; obtain authorization before installing the pinned source.
+- Choose the estimand and derivative, inspect support, select bandwidths, then fit and visualize using the same evaluation grid.
+- Compare reasonable kernels/bandwidth criteria as sensitivity analyses while keeping the inferential target fixed.
+validation_case: Run lprobust for mpg on weight in auto.dta from the immutable source, verify it produces estimates without r() errors, and keep generated artifacts inside the temporary work directory.
+validation_mode: stata
 related_refs:
 - nonparametric-methods
 - graphics
+preflight_commands:
+- which lprobust
+- which kdrobust
+- ado describe nprobust
 install_commands:
-- net install nprobust, from("https://raw.githubusercontent.com/nppackages/nprobust/master/stata")
-  replace
-smoke_test: 'sysuse auto, clear
-
-  lprobust price mpg'
+- net install nprobust, from("https://raw.githubusercontent.com/nppackages/nprobust/dfcb562d34822c75528c1c2d8a5a153be6b3a683/stata")
+smoke_test: |
+  sysuse auto, clear
+  lprobust mpg weight
 provenance:
+  reviewed: true
   local_help_topics:
   - nprobust
+  - lprobust
+  - lpbwselect
+  - kdrobust
+  - kdbwselect
+  local_help_globs: []
   local_help_files: []
   upstream_files:
   - plugins/stata/skills/stata/packages/nprobust.md
-  upstream_only: true
+  package_only: true
+  upstream_only: false

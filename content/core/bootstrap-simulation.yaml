@@ -1,31 +1,42 @@
 slug: bootstrap-simulation
 skill: core
 section: Statistics and Econometrics
-title: Bootstrap and Simulation Methods in Stata
-trigger: Use when the user needs built-in Stata help with bootstrap and simulation methods in stata.
-commands: &id001
-- bootstrap
-- simulate
-- permute
-source_topics: *id001
-syntax_patterns: []
+order: 270
+title: Bootstrap, Monte Carlo Simulation, and Permutation Tests
+trigger: >-
+  Use for resampling standard errors or confidence intervals, Monte Carlo studies, repeated data generation,
+  and randomization inference with bootstrap, simulate, permute, postfile, and seeded random draws.
+commands: [bootstrap, bstat, simulate, permute, postfile, set seed]
+aliases: [bootstrap, resampling, Monte Carlo, simulation study, permutation test, randomization inference]
+source_topics: [bootstrap, simulate, permute]
+syntax_patterns:
+- "bootstrap mean=r(mean), reps(1000) seed(271828): summarize outcome"
+- "simulate estimate=r(estimate), reps(1000) seed(271828): simulation_program"
+- "permute treatment statistic=r(stat), reps(1000) seed(271828): test_program"
+assumptions:
+- The resampling or permutation unit reflects the actual assignment and dependence structure.
+- The data-generating process and returned statistic represent the estimand and scenarios the simulation is meant to study.
 gotchas:
-- Check missing-value behavior, option defaults, and stored results before chaining commands.
+- Resample at the independent sampling unit; observation-level resampling is invalid for clustered or repeated data.
+- Too few replications make Monte Carlo error visible in standard errors, percentiles, and p-values.
+- Each simulation replication must return the intended statistic and reset all mutable state.
 workflows:
-- Start with the official help topics attached to Bootstrap and Simulation Methods in Stata, then tailor
-  the syntax to the current dataset.
-- Prefer a small batch-mode smoke test before applying the command sequence to a large dataset.
-validation_case: Run a small batch-mode example that exercises bootstrap and inspect the resulting log.
-related_refs:
-- linear-regression
-- maximum-likelihood
+- Define the sampling unit, statistic, replication count, seed, and confidence-interval method before running a bootstrap.
+- Test a simulation program once, run a small seeded batch, inspect failures and bias, then scale to the planned replications.
+validation_case: >-
+  Bootstrap a bundled-data mean with a fixed seed and small replication count, verify the replication count,
+  and confirm the original sample remains available.
+validation_mode: stata
+related_refs: [mathematical-functions, linear-regression]
 install_commands: []
-smoke_test: null
+smoke_test: |-
+  clear all
+  sysuse auto, clear
+  bootstrap mean=r(mean), reps(10) seed(271828) nodots: summarize price
+  assert e(N_reps) == 10
 provenance:
-  local_help_topics:
-  - bootstrap
-  - simulate
-  - permute
+  local_help_topics: [bootstrap, simulate, permute]
+  local_help_globs: []
   local_help_files:
   - ado/base/b/bootstrap.sthlp
   - ado/base/s/simulate.sthlp
@@ -33,3 +44,5 @@ provenance:
   upstream_files:
   - plugins/stata/skills/stata/references/bootstrap-simulation.md
   upstream_only: false
+  package_only: false
+  reviewed: true
