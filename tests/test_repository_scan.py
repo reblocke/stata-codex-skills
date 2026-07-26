@@ -177,6 +177,36 @@ class RepositoryScanTests(unittest.TestCase):
 
         self.assertTrue(any("GitHub token" in error for error in errors))
 
+    def test_long_secret_crossing_boundary_uses_bounded_state(self) -> None:
+        with TemporaryDirectory(prefix="repo-scan-long-secret-") as temp_root:
+            root = Path(temp_root)
+            secret = b"ghp_" + b"A" * 2048
+            prefix_size = scan_repository.READ_CHUNK_BYTES - 100
+            (root / "config.md").write_bytes(
+                b"x" * prefix_size + b"\n" + secret + b"\n"
+            )
+
+            errors = scan_repository.scan_paths(root, [Path("config.md")])
+
+        self.assertTrue(any("GitHub token" in error for error in errors))
+
+    def test_retained_prefix_context_does_not_invent_word_boundary(self) -> None:
+        with TemporaryDirectory(prefix="repo-scan-left-boundary-") as temp_root:
+            root = Path(temp_root)
+            prefix_start = scan_repository.READ_CHUNK_BYTES - 512
+            payload = (
+                b"z" * (prefix_start - 1)
+                + b"x"
+                + b"ghp_"
+                + b"A" * 40
+            )
+            payload += b" " * (scan_repository.READ_CHUNK_BYTES - len(payload))
+            (root / "config.md").write_bytes(payload + b"\n")
+
+            errors = scan_repository.scan_paths(root, [Path("config.md")])
+
+        self.assertFalse(any("GitHub token" in error for error in errors))
+
     def test_oversized_source_is_rejected_before_content_read(self) -> None:
         with TemporaryDirectory(prefix="repo-scan-oversized-") as temp_root:
             root = Path(temp_root)
@@ -337,6 +367,28 @@ class RepositoryScanTests(unittest.TestCase):
             errors = scan_repository.scan_paths(root, sources)
 
         self.assertEqual([], errors)
+
+    def test_unsafe_relative_path_is_rejected_before_root_discovery(self) -> None:
+        with TemporaryDirectory(prefix="repo-scan-unsafe-path-") as temp_root:
+            root = Path(temp_root)
+            with patch.object(
+                scan_repository,
+                "is_under_forbidden_root",
+                side_effect=AssertionError("unsafe path reached root discovery"),
+            ) as root_check:
+                errors = scan_repository.scan_paths(
+                    root,
+                    [Path("../outside.md")],
+                )
+
+        root_check.assert_not_called()
+        self.assertEqual(
+            [
+                "../outside.md: unsafe or missing source file: "
+                "unsafe relative path"
+            ],
+            errors,
+        )
 
     def test_symlinked_file_is_rejected_without_reading_external_bytes(self) -> None:
         with TemporaryDirectory(prefix="repo-scan-") as temp_root:

@@ -33,6 +33,7 @@ UPSTREAM_REPO_URL = "https://github.com/dylantmoore/stata-skill.git"
 UPSTREAM_REPO_DIR = RAW_ROOT / "upstream" / "stata-skill"
 STATA_ROOT = Path("/Applications/Stata")
 STATA_ADO_BASE = STATA_ROOT / "ado" / "base"
+STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS = 5
 
 
 class _UniqueKeySafeLoader(yaml.SafeLoader):
@@ -484,6 +485,137 @@ def _signal_process_group(
         os.killpg(process.pid, process_signal)
     except ProcessLookupError:
         pass
+    except PermissionError:
+        # macOS can report EPERM for a vanished group after its leader is
+        # already reaped. A live leader remains a real cleanup failure.
+        if process.poll() is None:
+            raise
+
+
+def _normalize_process_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _merge_process_text(
+    first: str | bytes | None,
+    second: str | bytes | None,
+) -> str:
+    first_text = _normalize_process_text(first)
+    second_text = _normalize_process_text(second)
+    if not first_text:
+        return second_text
+    if not second_text:
+        return first_text
+    if second_text.startswith(first_text):
+        return second_text
+    if first_text.startswith(second_text):
+        return first_text
+    return f"{first_text}\n{second_text}"
+
+
+def _close_process_pipes(
+    process: subprocess.Popen[str],
+    *,
+    suppress_base_exceptions: bool = False,
+) -> None:
+    for stream in (process.stdout, process.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except (OSError, ValueError):
+                pass
+            except BaseException:
+                if not suppress_base_exceptions:
+                    raise
+
+
+def _bounded_process_wait(process: subprocess.Popen[str]) -> bool:
+    try:
+        process.wait(timeout=STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return True
+
+
+def _force_cleanup_process(process: subprocess.Popen[str]) -> None:
+    """Best-effort cleanup that never replaces an active caller exception."""
+
+    try:
+        _signal_process_group(process, signal.SIGKILL)
+    except BaseException:
+        pass
+    try:
+        _close_process_pipes(
+            process,
+            suppress_base_exceptions=True,
+        )
+    except BaseException:
+        pass
+    try:
+        _bounded_process_wait(process)
+    except BaseException:
+        pass
+
+
+def _stop_process_group(
+    process: subprocess.Popen[str],
+) -> tuple[str, str, str]:
+    """Stop one group and collect output without trusting inherited pipe EOF."""
+
+    try:
+        _signal_process_group(process, signal.SIGTERM)
+        try:
+            stdout, stderr = process.communicate(
+                timeout=STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS
+            )
+        except subprocess.TimeoutExpired as first_timeout:
+            _signal_process_group(process, signal.SIGKILL)
+            try:
+                stdout, stderr = process.communicate(
+                    timeout=STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS
+                )
+            except subprocess.TimeoutExpired as second_timeout:
+                stdout = _merge_process_text(
+                    first_timeout.output,
+                    second_timeout.output,
+                )
+                stderr = _merge_process_text(
+                    first_timeout.stderr,
+                    second_timeout.stderr,
+                )
+                _close_process_pipes(process)
+                reaped = _bounded_process_wait(process)
+                note = (
+                    "Post-kill pipe closure timed out; closed local pipes and "
+                    "used a bounded process reap."
+                )
+                if not reaped:
+                    note += (
+                        " Could not confirm process reap within the bounded "
+                        "cleanup window."
+                    )
+                return stdout, stderr, note
+            return (
+                _merge_process_text(first_timeout.output, stdout),
+                _merge_process_text(first_timeout.stderr, stderr),
+                "",
+            )
+        else:
+            # A descendant can ignore SIGTERM and close inherited pipes,
+            # allowing communicate() to return after only the leader exits.
+            _signal_process_group(process, signal.SIGKILL)
+            return (
+                _normalize_process_text(stdout),
+                _normalize_process_text(stderr),
+                "",
+            )
+    except BaseException:
+        _force_cleanup_process(process)
+        raise
 
 
 def run_stata_do(
@@ -519,36 +651,29 @@ def run_stata_do(
     timed_out = False
     stopped_after_marker = False
     deadline = time.monotonic() + timeout_seconds
-    while True:
-        if log_path.exists():
-            log_text = read_text(log_path)
-            marker_found = any(
-                line.strip() == completion_marker for line in log_text.splitlines()
-            )
-            if marker_found:
+    try:
+        while True:
+            if log_path.exists():
+                log_text = read_text(log_path)
+                marker_found = any(
+                    line.strip() == completion_marker
+                    for line in log_text.splitlines()
+                )
+                if marker_found:
+                    break
+            if process.poll() is not None:
                 break
-        if process.poll() is not None:
-            break
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            timed_out = True
-            break
-        time.sleep(min(0.1, remaining))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            time.sleep(min(0.1, remaining))
+    except BaseException:
+        _force_cleanup_process(process)
+        raise
 
     stopped_after_marker = marker_found and process.poll() is None
-    _signal_process_group(process, signal.SIGTERM)
-    try:
-        stdout, stderr = process.communicate(timeout=5)
-    except subprocess.TimeoutExpired:
-        _signal_process_group(process, signal.SIGKILL)
-        stdout, stderr = process.communicate(timeout=5)
-    except BaseException:
-        _signal_process_group(process, signal.SIGKILL)
-        raise
-    else:
-        # A descendant can ignore SIGTERM and close inherited pipes, allowing
-        # communicate() to return after only the group leader exits.
-        _signal_process_group(process, signal.SIGKILL)
+    stdout, stderr, cleanup_note = _stop_process_group(process)
 
     log_text = read_text(log_path) if log_path.exists() else ""
     marker_found = any(line.strip() == completion_marker for line in log_text.splitlines())
@@ -571,7 +696,7 @@ def run_stata_do(
     else:
         effective_returncode = 0
 
-    stderr_parts = [stderr or "", *diagnostics]
+    stderr_parts = [stderr or "", cleanup_note, *diagnostics]
     effective_stderr = "\n".join(part for part in stderr_parts if part).strip()
     result = subprocess.CompletedProcess(
         process.args,

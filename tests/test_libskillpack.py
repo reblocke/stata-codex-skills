@@ -102,6 +102,36 @@ class MarkerThenNonexitProcess:
         return "", ""
 
 
+class InterruptingPipe:
+    def __init__(self, *, interrupt: bool = False) -> None:
+        self.interrupt = interrupt
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+        if self.interrupt:
+            raise KeyboardInterrupt("pipe close")
+
+
+class PollingFailureProcess:
+    def __init__(self) -> None:
+        self.args = ["stata"]
+        self.pid = 999_999_994
+        self.returncode: int | None = None
+        self.stdout = InterruptingPipe(interrupt=True)
+        self.stderr = InterruptingPipe()
+        self.wait_called = False
+
+    def poll(self) -> None:
+        return None
+
+    def wait(self, timeout: int | float | None = None) -> int:
+        del timeout
+        self.wait_called = True
+        self.returncode = -9
+        return self.returncode
+
+
 class RunStataDoTests(unittest.TestCase):
     def setUp(self) -> None:
         killpg_patcher = patch.object(
@@ -381,6 +411,41 @@ class RunStataDoTests(unittest.TestCase):
             self.assertEqual(2, process.communicate_calls)
             self.assertEqual(cwd / "smoke.log", log_path)
 
+    def test_polling_exception_survives_interrupting_pipe_cleanup(self) -> None:
+        with TemporaryDirectory(prefix="stata-run-") as temp_root:
+            cwd = Path(temp_root) / "work"
+            do_file = self._make_do_file(cwd)
+            process = PollingFailureProcess()
+            original = KeyboardInterrupt("polling failure")
+
+            def fake_popen(*args, **kwargs) -> PollingFailureProcess:
+                del args, kwargs
+                (cwd / "smoke.log").write_text("polling\n", encoding="utf-8")
+                return process
+
+            with patch.object(
+                libskillpack.subprocess,
+                "Popen",
+                side_effect=fake_popen,
+            ), patch.object(
+                libskillpack,
+                "read_text",
+                side_effect=original,
+            ):
+                with self.assertRaises(KeyboardInterrupt) as caught:
+                    libskillpack.run_stata_do(
+                        Path("/fake/stata"),
+                        do_file,
+                        cwd,
+                        completion_marker="VALIDATION COMPLETE: expected",
+                        timeout_seconds=1,
+                    )
+
+            self.assertIs(original, caught.exception)
+            self.assertTrue(process.stdout.closed)
+            self.assertTrue(process.stderr.closed)
+            self.assertTrue(process.wait_called)
+
 
 class RunStataDescendantCleanupTests(unittest.TestCase):
     def _assert_process_gone(self, pid: int) -> None:
@@ -440,6 +505,134 @@ class RunStataDescendantCleanupTests(unittest.TestCase):
     @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
     def test_timeout_removes_descendants(self) -> None:
         self.assertEqual(124, self._run_stub(write_marker=False, timeout_seconds=1))
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
+    def test_keyboard_interrupt_during_polling_cleans_and_reaps_group(self) -> None:
+        with TemporaryDirectory(prefix="stata-interrupt-") as temp_root:
+            cwd = Path(temp_root) / "work"
+            cwd.mkdir()
+            do_file = cwd / "smoke.do"
+            do_file.write_text("clear all\n", encoding="utf-8")
+            stub = Path(temp_root) / "stata-stub"
+            stub.write_text(
+                "#!/bin/sh\n"
+                "(trap '' TERM; exec sleep 30) >/dev/null 2>&1 &\n"
+                "child_pid=$!\n"
+                "printf '%s\\n' \"$child_pid\" > child.pid\n"
+                "printf '%s\\n' 'polling' > smoke.log\n"
+                'wait "$child_pid"\n',
+                encoding="utf-8",
+            )
+            stub.chmod(0o755)
+            real_popen = libskillpack.subprocess.Popen
+            leaders = []
+
+            def capture_popen(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                leaders.append(process)
+                return process
+
+            with patch.object(
+                libskillpack.subprocess,
+                "Popen",
+                side_effect=capture_popen,
+            ), patch.object(
+                libskillpack,
+                "read_text",
+                side_effect=KeyboardInterrupt,
+            ), patch.object(
+                libskillpack,
+                "STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS",
+                0.2,
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    libskillpack.run_stata_do(
+                        stub,
+                        do_file,
+                        cwd,
+                        completion_marker="VALIDATION COMPLETE: interrupt",
+                        timeout_seconds=2,
+                    )
+
+            child_pid = int((cwd / "child.pid").read_text(encoding="utf-8"))
+            self._assert_process_gone(child_pid)
+            self.assertEqual(1, len(leaders))
+            self.assertIsNotNone(leaders[0].returncode)
+            self.assertTrue(leaders[0].stdout.closed)
+            self.assertTrue(leaders[0].stderr.closed)
+
+    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
+    def test_escaped_child_holding_pipes_cannot_escape_bounded_timeout(self) -> None:
+        with TemporaryDirectory(prefix="stata-escaped-pipes-") as temp_root:
+            cwd = Path(temp_root) / "work"
+            cwd.mkdir()
+            do_file = cwd / "smoke.do"
+            do_file.write_text("clear all\n", encoding="utf-8")
+            stub = Path(temp_root) / "stata-stub"
+            stub.write_text(
+                "#!/usr/bin/env python3\n"
+                "import subprocess\n"
+                "import sys\n"
+                "import time\n"
+                "child = subprocess.Popen(\n"
+                "    [sys.executable, '-c', 'import time; time.sleep(30)'],\n"
+                "    start_new_session=True,\n"
+                ")\n"
+                "with open('escaped.pid', 'w', encoding='utf-8') as handle:\n"
+                "    handle.write(str(child.pid))\n"
+                "while True:\n"
+                "    time.sleep(1)\n",
+                encoding="utf-8",
+            )
+            stub.chmod(0o755)
+            real_popen = libskillpack.subprocess.Popen
+            leaders = []
+
+            def capture_popen(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                leaders.append(process)
+                return process
+
+            escaped_pid: int | None = None
+            started = time.monotonic()
+            try:
+                with patch.object(
+                    libskillpack.subprocess,
+                    "Popen",
+                    side_effect=capture_popen,
+                ), patch.object(
+                    libskillpack,
+                    "STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS",
+                    0.1,
+                ):
+                    result, _ = libskillpack.run_stata_do(
+                        stub,
+                        do_file,
+                        cwd,
+                        completion_marker="VALIDATION COMPLETE: never",
+                        timeout_seconds=1,
+                    )
+                escaped_pid = int(
+                    (cwd / "escaped.pid").read_text(encoding="utf-8")
+                )
+            finally:
+                if escaped_pid is None and (cwd / "escaped.pid").exists():
+                    escaped_pid = int(
+                        (cwd / "escaped.pid").read_text(encoding="utf-8")
+                    )
+                if escaped_pid is not None:
+                    try:
+                        os.kill(escaped_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+            self.assertEqual(124, result.returncode)
+            self.assertLess(time.monotonic() - started, 3)
+            self.assertIn("Post-kill pipe closure timed out", result.stderr)
+            self.assertEqual(1, len(leaders))
+            self.assertIsNotNone(leaders[0].returncode)
+            self.assertTrue(leaders[0].stdout.closed)
+            self.assertTrue(leaders[0].stderr.closed)
 
 
 class StrictYamlTests(unittest.TestCase):
