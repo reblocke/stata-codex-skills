@@ -12,7 +12,7 @@ from tempfile import TemporaryDirectory
 import sys
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -87,8 +87,8 @@ class MarkerThenNonexitProcess:
         self.terminate_called = False
         self.kill_called = False
 
-    def poll(self) -> None:
-        return None
+    def poll(self) -> int | None:
+        return self.returncode
 
     def terminate(self) -> None:
         self.terminate_called = True
@@ -376,6 +376,37 @@ class RunStataDoTests(unittest.TestCase):
             self.assertEqual(0, result.returncode)
             self.assertTrue(process.terminate_called)
             self.assertFalse(process.kill_called)
+            self.assertEqual(
+                [call(process.pid, signal.SIGTERM)],
+                self.killpg.call_args_list,
+            )
+
+    def test_already_reaped_process_group_is_never_signaled(self) -> None:
+        with TemporaryDirectory(prefix="stata-run-") as temp_root:
+            cwd = Path(temp_root) / "work"
+            do_file = self._make_do_file(cwd)
+            marker = "VALIDATION COMPLETE: already-reaped"
+
+            def fake_popen(*args, **kwargs) -> ImmediateProcess:
+                del args, kwargs
+                (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
+                return ImmediateProcess(returncode=0)
+
+            with patch.object(
+                libskillpack.subprocess,
+                "Popen",
+                side_effect=fake_popen,
+            ):
+                result, _ = libskillpack.run_stata_do(
+                    Path("/fake/stata"),
+                    do_file,
+                    cwd,
+                    completion_marker=marker,
+                    timeout_seconds=1,
+                )
+
+            self.assertEqual(0, result.returncode)
+            self.killpg.assert_not_called()
 
     def test_wrong_marker_fails(self) -> None:
         with TemporaryDirectory(prefix="stata-run-") as temp_root:

@@ -499,6 +499,10 @@ def _signal_process_group(
     process: subprocess.Popen[str],
     process_signal: signal.Signals,
 ) -> bool:
+    # poll() either confirms the leader is still unreaped (so its PID cannot
+    # yet be reused) or reaps it and lets us avoid signaling a stale PGID.
+    if process.poll() is not None:
+        return True
     try:
         os.killpg(process.pid, process_signal)
     except ProcessLookupError:
@@ -588,7 +592,7 @@ def _stop_process_group(
     """Stop one group and collect output without trusting inherited pipe EOF."""
 
     try:
-        _signal_process_group(process, signal.SIGTERM)
+        term_confirmed = _signal_process_group(process, signal.SIGTERM)
         try:
             stdout, stderr = process.communicate(
                 timeout=STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS
@@ -643,15 +647,9 @@ def _stop_process_group(
                 cleanup_confirmed=kill_confirmed,
             )
         else:
-            # A descendant can ignore SIGTERM and close inherited pipes,
-            # allowing communicate() to return after only the leader exits.
-            cleanup_confirmed = _signal_process_group(
-                process,
-                signal.SIGKILL,
-            )
             diagnostic = (
                 ""
-                if cleanup_confirmed
+                if term_confirmed
                 else (
                     "Could not confirm process-group termination after the "
                     "leader exited."
@@ -661,7 +659,7 @@ def _stop_process_group(
                 stdout=_normalize_process_text(stdout),
                 stderr=_normalize_process_text(stderr),
                 diagnostic=diagnostic,
-                cleanup_confirmed=cleanup_confirmed,
+                cleanup_confirmed=term_confirmed,
             )
     except BaseException:
         _force_cleanup_process(process)
