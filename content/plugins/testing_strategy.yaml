@@ -17,6 +17,13 @@ aliases:
 - runtest
 - return codes
 - exact completion marker
+routing_terms:
+- batch smoke test for a Stata plugin
+- compare plugin output with a pinned reference
+- isolate plugin crash and error-path tests
+- cross-platform native-plugin validation
+- require a run-specific completion marker
+- stress-test compiled Stata code
 commands:
 - Stata batch mode
 - assert

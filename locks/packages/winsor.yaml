@@ -1,0 +1,16 @@
+schema_version: 1
+slug: winsor
+distributions:
+- source: http://fmwww.bc.edu/repec/bocode/w
+  descriptor: winsor.pkg
+  distribution_date: '20060809'
+  files:
+    w/winsor.ado: 6b93f4ac55228245ae8cdfb64268c90dfe87c33b1d48ea3690d84f3d61307664
+    w/winsor.hlp: d6fb45f313cfbcf2ae61fc8f0c84b1d4fceec91e1eba8ce39c59ea9dd8330598
+- source: http://fmwww.bc.edu/repec/bocode/w
+  descriptor: winsor2.pkg
+  distribution_date: '20201125'
+  files:
+    w/winsor2.ado: 91bb976b40aa6769215e8a5ff66dde65d9bb8a32e4f4f380af3419f9bb855c97
+    w/winsor2.sthlp: 1d60a3d665d1b34b5fcbca97f2c6e6f72da4c8e9157d4a1580cb8411e018e0d0
+generated_files: {}

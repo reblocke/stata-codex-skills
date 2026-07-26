@@ -18,6 +18,15 @@ commands:
 - collapse
 - egen
 aliases: [merge data, join data, append data, reshape data, collapse data, duplicate keys, data cleaning]
+routing_terms:
+- merge 1:1 key
+- merge m:1 key
+- append using datasets
+- reshape long to wide
+- reshape wide to long
+- collapse by group
+- isid key validation
+- duplicates report
 source_topics:
 - generate
 - merge

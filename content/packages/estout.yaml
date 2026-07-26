@@ -11,6 +11,13 @@ aliases:
 - estadd
 - regression table
 - stored estimates
+routing_terms:
+- regression table
+- esttab stored-model table
+- eststo model collection
+- estadd custom model statistics
+- export stored estimates to LaTeX or RTF
+- side-by-side regression models from estimates
 commands:
 - estout
 - esttab

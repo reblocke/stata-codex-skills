@@ -1,0 +1,13 @@
+schema_version: 1
+slug: tabout
+distributions:
+- source: http://fmwww.bc.edu/repec/bocode/t
+  descriptor: tabout.pkg
+  distribution_date: '20190316'
+  files:
+    f/figout.ado: 517fb7434fa9ab0ce455bbbf429856b2ed5573abbf93128980d2918536a7d9af
+    f/figout.hlp: 26b6f64bb34699bed0d32228a122fa19c867ffac1ed71ee961c5b710bd3e2c53
+    t/tabout.ado: e2ed86d1f1ac1c685e8c0e3d42e1826b861d4a7ed77ebdd0750ec8402a323d29
+    t/tabout.hlp: b7be2bae27b4feec4cdc5e97ebe28733add7519ad7a7a95ada22e760f9d9e75f
+    t/tabstatout.ado: 9fbb7840f45c7331386fdea9b4d09bb47e450772a51681b65eb143343c699cdc
+generated_files: {}

@@ -15,6 +15,10 @@ import secrets
 import stat
 import sys
 
+from runtime_guard import require_supported_runtime
+
+require_supported_runtime()
+
 from libskillpack import BUILD_ROOT, REPO_ROOT
 from release_state import (
     CANONICAL_DIRECTORY_MODE,

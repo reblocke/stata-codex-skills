@@ -8,6 +8,14 @@ trigger: >-
   log-rank tests, Cox regression, proportional-hazards diagnostics, and stset validation.
 commands: [stset, stdescribe, stsum, sts graph, sts test, stcox, estat phtest]
 aliases: [survival analysis, time to event, Kaplan-Meier, Cox regression, hazard ratio, censoring]
+routing_terms:
+- stset survival data
+- Kaplan-Meier with sts graph
+- log-rank test with sts test
+- Cox model with stcox
+- proportional hazards test
+- delayed entry survival data
+- multiple-record survival data
 source_topics: [stset, stcox, sts]
 syntax_patterns:
 - stset followup_time, failure(event == 1) id(patient_id) enter(time entry_time)

@@ -11,6 +11,12 @@ aliases:
 - Sun-Abraham
 - event study
 - leads and lags
+routing_terms:
+- eventstudyinteract Sun-Abraham estimator
+- eventdd lead-lag plot
+- event_plot dynamic treatment effects
+- staggered-adoption event-study coefficients
+- pretrend test with endpoint binning
 commands:
 - eventstudyinteract
 - eventdd

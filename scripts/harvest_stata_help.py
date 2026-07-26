@@ -4,6 +4,10 @@ from __future__ import annotations
 from pathlib import Path
 import argparse
 
+from runtime_guard import require_supported_runtime
+
+require_supported_runtime()
+
 from libskillpack import (
     CONTENT_ROOT,
     RAW_ROOT,

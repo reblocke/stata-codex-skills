@@ -8,6 +8,13 @@ trigger: >-
   instrumental-variables regression, adjusted predictions, marginal effects, and fitted values.
 commands: [regress, ivregress, margins, marginsplot, predict]
 aliases: [reg, OLS, linear regression, 2SLS, IV regression, robust standard errors, clustered standard errors]
+routing_terms:
+- ordinary least squares with regress
+- ivregress 2sls
+- robust standard errors after regress
+- clustered standard errors after regress
+- factor-variable interaction in OLS
+- marginal effects after linear regression
 source_topics: [regress, ivregress, margins, predict]
 syntax_patterns:
 - regress outcome c.exposure##i.group covariates, vce(robust)

@@ -18,6 +18,12 @@ aliases:
 - sysdir
 - which
 - net set ado
+routing_terms:
+- community-package lifecycle in Stata
+- isolated PLUS package installation
+- pin and verify an ado package source
+- troubleshoot adopath and which results
+- inspect update or uninstall an SSC package
 commands:
 - findit
 - search

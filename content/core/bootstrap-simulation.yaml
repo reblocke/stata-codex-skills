@@ -8,6 +8,13 @@ trigger: >-
   and randomization inference with bootstrap, simulate, permute, postfile, and seeded random draws.
 commands: [bootstrap, bstat, simulate, permute, postfile, set seed]
 aliases: [bootstrap, resampling, Monte Carlo, simulation study, permutation test, randomization inference]
+routing_terms:
+- bootstrap prefix
+- bstat confidence interval
+- Monte Carlo with simulate
+- permutation test with permute
+- seeded simulation study
+- randomization inference in Stata
 source_topics: [bootstrap, simulate, permute]
 syntax_patterns:
 - "bootstrap mean=r(mean), reps(1000) seed(271828): summarize outcome"

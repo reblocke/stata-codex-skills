@@ -16,6 +16,15 @@ commands:
 - inrange()
 - if
 aliases: [variable type, missing value, generate variable, replace variable, logical operator, factor variable]
+routing_terms:
+- generate expression
+- factor-variable notation
+- missing values sort above numbers
+- storage type with recast
+- compress variable storage
+- logical operators in Stata
+- inlist() and inrange()
+- observation subscripting in Stata
 source_topics:
 - generate
 - missing

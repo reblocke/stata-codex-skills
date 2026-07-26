@@ -16,6 +16,13 @@ aliases:
 - g++
 - clang
 - clang++
+routing_terms:
+- wrap a C++ backend for Stata
+- extern C stata_call boundary
+- debug plugin symbol name mangling
+- separate C and C++ plugin compilation
+- contain C++ exceptions inside stata_call
+- choose platform-specific plugin linker flags
 commands:
 - extern "C"
 - stata_call
@@ -27,8 +34,8 @@ source_topics:
 - plugin
 syntax_patterns:
 - 'extern "C" { STDLL stata_call(int argc, char *argv[]) { return 0; } }'
-- gcc -c -O3 -fPIC -DSYSTEM=APPLEMAC stplugin.c -o stplugin.o
-- g++ -O3 -std=c++17 -fPIC -DSYSTEM=APPLEMAC -bundle wrapper.cpp stplugin.o -o myplugin.plugin
+- 'gcc -c -O3 -fPIC -DSYSTEM=APPLEMAC stplugin.c -o stplugin.o # macOS SDK object'
+- 'g++ -O3 -std=c++17 -fPIC -DSYSTEM=APPLEMAC -bundle wrapper.cpp stplugin.o -o myplugin.plugin # macOS plugin bundle'
 - 'try { return run_plugin(argc, argv); } catch (const std::exception &e) { char message[512]; snprintf(message, sizeof(message), "plugin: %s\n", e.what()); SF_error(message); return 909; }'
 assumptions:
 - The wrapped backend's exact version and license are recorded, and its public API can be called without embedding a Python/R runtime.

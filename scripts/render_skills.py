@@ -18,6 +18,10 @@ import sys
 import uuid
 from typing import Iterator
 
+from runtime_guard import require_supported_runtime
+
+require_supported_runtime()
+
 from jinja2 import DictLoader, Environment, StrictUndefined
 import yaml
 
@@ -126,6 +130,7 @@ class RenderInputSnapshot:
     content_entries: tuple[RenderContentEntry, ...]
     template_files: tuple[tuple[str, RenderInputFile], ...]
     lock_files: tuple[tuple[str, RenderInputFile | None], ...]
+    package_lock_directory_version: tuple[int, int, int, int]
 
 
 REQUIRED_SKILL_KEYS = ("core", "packages", "plugins")
@@ -138,12 +143,34 @@ RENDER_TEMPLATE_NAMES = (
     "provenance.md.j2",
     "openai.yaml.j2",
 )
-RENDER_LOCK_NAMES = (
+RENDER_STATIC_LOCK_NAMES = (
     "upstream.yaml",
     "stata-help.yaml",
-    "packages.yaml",
     "plugin-sdk.yaml",
 )
+
+
+def _render_lock_names() -> tuple[str, ...]:
+    package_names = tuple(
+        path.relative_to(LOCK_ROOT).as_posix()
+        for path in sorted((LOCK_ROOT / "packages").glob("*.yaml"))
+    )
+    return (*RENDER_STATIC_LOCK_NAMES, *package_names)
+
+
+def _package_lock_directory_version() -> tuple[int, int, int, int]:
+    package_root = LOCK_ROOT / "packages"
+    metadata = package_root.lstat()
+    if not stat.S_ISDIR(metadata.st_mode):
+        raise ValueError(
+            f"renderer package lock root is not a real directory: {package_root}"
+        )
+    return (
+        metadata.st_dev,
+        metadata.st_ino,
+        metadata.st_mtime_ns,
+        metadata.st_ctime_ns,
+    )
 
 
 def _close_descriptor_list(
@@ -404,14 +431,17 @@ def capture_render_inputs(
         )
         for name in RENDER_TEMPLATE_NAMES
     )
+    package_lock_directory_version = _package_lock_directory_version()
     lock_files: list[tuple[str, RenderInputFile | None]] = []
-    for name in RENDER_LOCK_NAMES:
+    for name in _render_lock_names():
         path = LOCK_ROOT / name
         try:
             source = _capture_render_input_file(path)
         except FileNotFoundError:
             source = None
         lock_files.append((name, source))
+    if _package_lock_directory_version() != package_lock_directory_version:
+        raise ValueError("renderer package lock directory changed during capture")
     return RenderInputSnapshot(
         config=config,
         config_file=config_file,
@@ -419,6 +449,7 @@ def capture_render_inputs(
         content_entries=tuple(content_entries),
         template_files=template_files,
         lock_files=tuple(lock_files),
+        package_lock_directory_version=package_lock_directory_version,
     )
 
 
@@ -430,6 +461,14 @@ def verify_render_inputs(snapshot: RenderInputSnapshot) -> None:
         for entry in snapshot.content_entries
     )
     try:
+        if (
+            _package_lock_directory_version()
+            != snapshot.package_lock_directory_version
+        ):
+            raise ValueError("renderer package lock directory changed")
+        expected_lock_names = tuple(name for name, _ in snapshot.lock_files)
+        if _render_lock_names() != expected_lock_names:
+            raise ValueError("renderer lock file membership changed")
         observed_content_paths = _content_source_paths(
             snapshot.config,
             snapshot.content_root,
@@ -473,7 +512,12 @@ def validate_render_inputs(
 ) -> None:
     """Apply the linter's path/schema checks before constructing output paths."""
 
-    from lint_skill_pack import lint_config, lint_entry, lint_route_aliases
+    from lint_skill_pack import (
+        lint_config,
+        lint_entry,
+        lint_route_aliases,
+        lint_routing_collisions,
+    )
 
     errors = lint_config(config)
     if errors:
@@ -481,10 +525,12 @@ def validate_render_inputs(
 
     slug_to_skill: dict[str, str] = {}
     route_paths: set[str] = set()
+    raw_entries: list[tuple[str, Path, dict]] = []
     for content_entry in content_entries:
         skill_key = content_entry.skill_key
         path = content_entry.path
         entry = content_entry.entry
+        raw_entries.append((skill_key, path, entry))
         skill = config["skills"][skill_key]
         errors.extend(lint_entry(skill_key, path, entry, skill))
         if not isinstance(entry, dict):
@@ -496,8 +542,66 @@ def validate_render_inputs(
                 f"{skill['name']}/{skill['route_dir']}/{slug}.md"
             )
     errors.extend(lint_route_aliases(config, slug_to_skill, route_paths))
+    errors.extend(lint_routing_collisions(config, raw_entries))
     if errors:
         raise ValueError("render input validation failed: " + "; ".join(errors))
+
+
+def validate_package_lock_inputs(
+    content_entries: tuple[RenderContentEntry, ...],
+    lock_files: tuple[tuple[str, RenderInputFile | None], ...],
+) -> None:
+    """Bind captured per-package locks to validated installable content."""
+
+    from lint_skill_pack import lint_package_lock_payload
+
+    expected_names = {
+        f"packages/{entry.entry['slug']}.yaml"
+        for entry in content_entries
+        if (
+            entry.skill_key == "packages"
+            and isinstance(entry.entry, dict)
+            and entry.entry.get("install_commands")
+        )
+    }
+    package_sources = {
+        name: source
+        for name, source in lock_files
+        if name.startswith("packages/")
+    }
+    observed_names = set(package_sources)
+    errors: list[str] = []
+    missing = sorted(expected_names - observed_names)
+    extra = sorted(observed_names - expected_names)
+    if missing:
+        errors.append(
+            "missing captured package locks: " + ", ".join(missing)
+        )
+    if extra:
+        errors.append(
+            "orphan captured package locks: " + ", ".join(extra)
+        )
+
+    for name, source in sorted(package_sources.items()):
+        if source is None:
+            errors.append(f"{LOCK_ROOT / name}: package lock disappeared during capture")
+            continue
+        try:
+            package = _parse_yaml_input(source)
+        except ValueError as error:
+            errors.append(str(error))
+            continue
+        errors.extend(
+            lint_package_lock_payload(
+                source.path,
+                Path(name).stem,
+                package,
+            )
+        )
+    if errors:
+        raise ValueError(
+            "render package lock validation failed: " + "; ".join(errors)
+        )
 
 
 def _safe_render_relative_path(*parts: str | Path) -> Path:
@@ -1934,14 +2038,6 @@ def prepare_catalog(
             slug = entry["slug"]
             if slug in by_slug:
                 raise ValueError(f"duplicate canonical slug: {slug}")
-            routing_aliases: list[str] = []
-            seen_aliases: set[str] = set()
-            for alias in [*entry["aliases"], *entry["commands"]]:
-                normalized_alias = alias.casefold()
-                if normalized_alias not in seen_aliases:
-                    seen_aliases.add(normalized_alias)
-                    routing_aliases.append(alias)
-            entry["routing_aliases"] = routing_aliases
             entry.setdefault("preflight_commands", [])
             entry.setdefault("install_commands", [])
             entry.setdefault("smoke_test", None)
@@ -2022,11 +2118,14 @@ def embedded_lock_index(
     labels = {
         "upstream.yaml": "Upstream repository",
         "stata-help.yaml": "Local Stata help",
-        "packages.yaml": "Community package distributions",
         "plugin-sdk.yaml": "Plugin SDK",
     }
+    package_sources: list[tuple[str, RenderInputFile]] = []
     for filename, source in lock_files:
         if source is None:
+            continue
+        if filename.startswith("packages/"):
+            package_sources.append((filename, source))
             continue
         data = _parse_yaml_input(source)
         if not isinstance(data, dict):
@@ -2039,8 +2138,6 @@ def embedded_lock_index(
                 f"{release.get('edition', 'unknown')} "
                 f"{release.get('bundle_version', 'unknown')}"
             )
-        elif filename == "packages.yaml":
-            identity = f"{len(data.get('packages', {}))} locked package workflows"
         else:
             identity = f"{len(data.get('sources', []))} locked SDK sources"
         index.append(
@@ -2048,6 +2145,20 @@ def embedded_lock_index(
                 "label": labels[filename],
                 "identity": identity,
                 "sha256": source.sha256,
+            }
+        )
+    if package_sources:
+        digest = hashlib.sha256()
+        for filename, source in package_sources:
+            digest.update(filename.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(source.data)
+            digest.update(b"\0")
+        index.append(
+            {
+                "label": "Community package distributions",
+                "identity": f"{len(package_sources)} locked package workflows",
+                "sha256": digest.hexdigest(),
             }
         )
     return index
@@ -2270,6 +2381,14 @@ def _render_tree(
             for name, section_entries in sections.items()
             if section_entries
         ]
+        routing_boundaries = [
+            boundary
+            for boundary in config.get("routing_boundaries", [])
+            if any(
+                route.startswith(f"{skill_key}/")
+                for route in boundary.get("routes", [])
+            )
+        ]
         _write_staged_text(
             parent,
             output_root,
@@ -2280,6 +2399,7 @@ def _render_tree(
                 skill_template.render(
                     skill=skill,
                     sections=section_payload,
+                    routing_boundaries=routing_boundaries,
                     route_aliases=route_aliases,
                 )
             ),
@@ -4406,6 +4526,10 @@ def render_all(
         )
         config = render_inputs.config
         validate_render_inputs(config, render_inputs.content_entries)
+        validate_package_lock_inputs(
+            render_inputs.content_entries,
+            render_inputs.lock_files,
+        )
         grouped, by_slug = prepare_catalog(
             config,
             render_inputs.content_entries,

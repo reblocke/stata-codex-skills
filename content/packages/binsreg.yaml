@@ -13,6 +13,12 @@ aliases:
 - binspwc
 - binsregselect
 - binscatter
+routing_terms:
+- binsreg binned regression
+- binscatter with statistical inference
+- data-driven bin selection
+- compare binned relationships across groups
+- specification test for a binned fit
 commands:
 - binsreg
 - binslogit

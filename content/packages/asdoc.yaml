@@ -9,6 +9,12 @@ aliases:
 - automatic document creation
 - prefix table export
 - Word table
+routing_terms:
+- asdoc sequential report
+- regression table
+- prefix-command document export
+- append Stata results to one document
+- asdoc table replacement or append
 commands:
 - asdoc
 source_topics:

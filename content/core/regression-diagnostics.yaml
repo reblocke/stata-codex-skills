@@ -8,6 +8,14 @@ trigger: >-
   leverage, and influence checks with estat vif, estat hettest, estat ovtest, linktest, rvfplot, and predict.
 commands: [estat vif, estat hettest, estat ovtest, linktest, rvfplot, predict]
 aliases: [VIF, variance inflation factor, Breusch-Pagan test, Cook-Weisberg test, RESET test, residual plot]
+routing_terms:
+- estat vif
+- estat hettest
+- estat ovtest
+- linktest specification check
+- rvfplot residual-versus-fitted
+- leverage and influence after regress
+- Cook-Weisberg heteroskedasticity test
 source_topics: [regress_postestimation, regress_postestimation_plots, linktest]
 syntax_patterns:
 - estat hettest, rhs

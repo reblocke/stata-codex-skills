@@ -1,0 +1,17 @@
+schema_version: 1
+slug: psmatch2
+distributions:
+- source: http://fmwww.bc.edu/repec/bocode/p
+  descriptor: psmatch2.pkg
+  distribution_date: '20180201'
+  files:
+    d/density2.ado: 90691c0b2651bd3772b33f48afe31d7dfce0cc883ea52112d6a3e370859222ba
+    p/psgraph.ado: 68a74abd8389e15610428173e1d8bba45d31019b2915b63c5b34ac5b1dcd305b
+    p/psgraph.sthlp: b2ceb5a00fccfb73f2e9c88f777cffae8c50487c1c168bb5719a792b8af7ab3b
+    p/psmatch2.ado: d8ea98dbd1a6c8514dc8086d32aaa8f0f5af3842657a88ad91de60547d125ed5
+    p/psmatch2.dlg: b291fe1a13d1c79e59cde68557617bde5d0ff3b67669b26ac3164a950b5a74f3
+    p/psmatch2.sthlp: d36e2282883d7b6f490daa457401877a3fd09e6fa7d2258b816ec93224b7f581
+    p/pstest.ado: f237a82605d900a7a188a124693cc4ab6c208153d5ef5e9fe2be372774ab8bd4
+    p/pstest.sthlp: bc1b7b997752dae124321d909ac7625029306aead842d293a3b2daa3bc1d2863
+    p/pstest2.ado: 4d17503db43ec5662a1096fb4f031069b9ab964d98a1dc675a843d235607fce7
+generated_files: {}

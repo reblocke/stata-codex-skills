@@ -1,0 +1,17 @@
+schema_version: 1
+slug: nprobust
+distributions:
+- source: https://raw.githubusercontent.com/nppackages/nprobust/dfcb562d34822c75528c1c2d8a5a153be6b3a683/stata
+  descriptor: nprobust.pkg
+  distribution_date: '20260517'
+  files:
+    k/kdbwselect.ado: 4044680c7cbb11ae0a5cfebf98dd66081cb999b538fb0bf867b129c2fb331052
+    k/kdbwselect.sthlp: a3f737258b4ed162e648a11b928dfc1e026617f71777d340c8cc025d3ce1f515
+    k/kdrobust.ado: fc677e7c59e1dd492689859aa18da694fed653c6fbb9655767f3008a7eadafe6
+    k/kdrobust.sthlp: d20b197ea66bc553a90c3356523c54534277387f1759f73ca6030a03e94f6bff
+    l/lnprobust.mlib: 1febee5d14c91da1455585fe6de1e5e74b8b22f82ecebe582237518f6ec7aa45
+    l/lpbwselect.ado: 4c40dc792572b87859a1cc95407afe71b98e27f524949b91b4ef4193c892ab69
+    l/lpbwselect.sthlp: 6b936594b19aea570c32897049bfa76d63e35bed931681b46d3b6270a40d90b3
+    l/lprobust.ado: 335ce5bd9064c100b5b2a84585b1d68ef44ac4e81ebe7a4b303f99ddd8363b6e
+    l/lprobust.sthlp: b1ce5be3e49b7ced667402f5fd5ddcd883b2a8d870aefa7f3274a87eb2f00a88
+generated_files: {}

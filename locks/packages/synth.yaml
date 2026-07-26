@@ -1,0 +1,13 @@
+schema_version: 1
+slug: synth
+distributions:
+- source: http://fmwww.bc.edu/repec/bocode/s
+  descriptor: synth.pkg
+  distribution_date: '20260430'
+  files:
+    l/lsynth_mata_subr.mlib: 160c45f5fc32e75d94840bb8655ac56947f59cbd6d51b461283b0cb264f65f00
+    s/synth.ado: dd9f909121ff95ae70c8af4b9989656b790133d54e4c9da5274c964ef5959b8e
+    s/synth.sthlp: 26b2725287cf9f6cfd71c8e56e1b04bbe8c402260254a5e275560d5c0773812e
+    s/synth_ll.ado: 5b26f9ffc961fd39ca04021797b117c15cac1da48060eccad51213a88f84edb2
+    s/synthopt.plugin: 49973a8f93ed8ed3631767e1bd7fc9ce4009b39198eb8e5df1c990e5ff0dc298
+generated_files: {}

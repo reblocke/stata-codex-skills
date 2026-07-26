@@ -48,7 +48,7 @@ build: lock-check
 render: build
 
 prompt-check:
-	$(UV_RUN) python scripts/render_prompt_cases.py --check
+	$(UV_RUN) python scripts/lint_skill_pack.py --no-generated-check
 
 lint: build
 	$(UV_RUN) python scripts/lint_skill_pack.py
@@ -63,7 +63,6 @@ scan:
 	$(UV_RUN) python scripts/scan_repository.py
 
 check: build
-	$(UV_RUN) python scripts/render_prompt_cases.py --check
 	$(UV_RUN) python scripts/lint_skill_pack.py
 	$(UV_RUN) python -m unittest discover -s tests -v
 	$(UV_RUN) python scripts/check_determinism.py

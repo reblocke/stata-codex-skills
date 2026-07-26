@@ -8,6 +8,14 @@ trigger: >-
   derivative estimation, and visual assessment of nonlinear relationships with lowess and npregress.
 commands: [lowess, npregress kernel, npregress series, margins, marginsplot]
 aliases: [nonparametric regression, LOWESS, LOESS, kernel regression, local polynomial, smoother]
+routing_terms:
+- lowess smoother
+- npregress kernel
+- npregress series
+- local polynomial regression
+- local polynomial smoothing
+- bandwidth selection for kernel regression
+- derivative after nonparametric regression
 source_topics: [npregress, lowess]
 syntax_patterns:
 - lowess outcome exposure, bwidth(0.8) nograph

@@ -13,6 +13,11 @@ import signal
 import stat
 import subprocess
 import sys
+
+from runtime_guard import require_supported_runtime
+
+require_supported_runtime()
+
 import yaml
 
 from libskillpack import (

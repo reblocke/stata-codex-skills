@@ -8,6 +8,13 @@ trigger: >-
   robust weighting matrices, overidentification tests, and postestimation with gmm.
 commands: [gmm, estat overid, predict]
 aliases: [GMM, generalized method of moments, moment conditions, instruments, overidentification]
+routing_terms:
+- gmm command
+- moment conditions in Stata
+- two-step GMM weighting
+- estat overid after gmm
+- nonlinear GMM evaluator
+- instrument equations in gmm
 source_topics: [gmm, gmm_postestimation]
 syntax_patterns:
 - gmm (outcome - {b1}*x1 - {b2}*x2 - {b0}), instruments(x1 x2)

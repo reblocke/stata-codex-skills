@@ -8,6 +8,13 @@ trigger: >-
   inspecting objects, clearing the workspace, and deciding when Mata is preferable to Stata commands.
 commands: [mata, mata describe, mata clear, rows(), cols(), mean(), st_matrix()]
 aliases: [Mata basics, Mata workspace, matrix language, colon operators]
+routing_terms:
+- enter Mata interactive mode
+- mata describe workspace
+- colon operators in Mata
+- Mata scalar and matrix types
+- rows() and cols() in Mata
+- transfer a matrix with st_matrix()
 source_topics: [mata, m2_intro]
 syntax_patterns:
 - "mata: x = (1, 2, 3)"

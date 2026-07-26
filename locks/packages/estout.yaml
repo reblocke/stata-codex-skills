@@ -1,0 +1,20 @@
+schema_version: 1
+slug: estout
+distributions:
+- source: http://fmwww.bc.edu/repec/bocode/e
+  descriptor: estout.pkg
+  distribution_date: '20260413'
+  files:
+    _/_eststo.ado: c7d12cf1c1ef2388becfc8a17f90fcf197f41d77d9170373d01d6a87591a4a50
+    _/_eststo.hlp: 422a3a6bbe4c9d9b670af1eb159ce8af43af5a2d78a3c6d2de10f2a31d56ec8f
+    e/estadd.ado: 215bb477394db489bdcb4dcf44011863ebb11d34b730503969b084b87c4f18ea
+    e/estadd.hlp: 7699b78be5b6c44923d1958a5c49b1e3eaa5b9acf13ea637665f7bb940198ae0
+    e/estout.ado: cc57869d2e78033d8dd4d436f85f4457ebfbac67553c8a2fb6c606a05ac6c392
+    e/estout.hlp: cf6d2d213ccfbbd4c6f8e19d5a66753324ae217e3803bf13bf9d55d1459bbc37
+    e/estpost.ado: 7b2d0839a787ce0994fe30595bc84f03a14746d329f0d92aae6cd734a36867f9
+    e/estpost.hlp: 7f698093c2fbe2326df813d28d662ff4e3a6e4eff7ace360bc39a3b8c142f4b3
+    e/eststo.ado: 8abde23b7a1085ea415d83cbe8be34e31236fd180dc4386b7b6435b06c69cd3a
+    e/eststo.hlp: 9b4a1714e22ba895c2f7df0eb1b044a0e0a993f8c6aa2535b64073f91b1ba9a5
+    e/esttab.ado: d198b138f5d96d5d88d0cfdd8e48efa8d4bf524c4b623f6a371d094e51889233
+    e/esttab.hlp: 486c7cd8c05b8497f7cbb7d9e8fad133489ea55391a6cb6b86d09c5c9c002d77
+generated_files: {}

@@ -8,6 +8,14 @@ trigger: >-
   parameter constraints, starting values, evaluator programs, and likelihood-based inference.
 commands: [ml model, ml check, ml search, ml maximize, mlexp, constraint]
 aliases: [maximum likelihood, MLE, likelihood evaluator, custom likelihood, ml program]
+routing_terms:
+- ml model lf
+- mlexp likelihood expression
+- ml check evaluator
+- ml maximize custom likelihood
+- likelihood evaluator program
+- constrained maximum likelihood
+- starting values for ml
 source_topics: [ml, mlexp]
 syntax_patterns:
 - mlexp (ln(normalden(outcome, {xb:covariates _cons}, exp({lnsigma}))))

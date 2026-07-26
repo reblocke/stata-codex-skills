@@ -8,6 +8,13 @@ trigger: >-
   subpopulation analyses, design-based means or proportions, and svy-prefixed regression.
 commands: [svyset, svydescribe, svy, subpop(), estat effects]
 aliases: [survey weights, pweights, complex survey, design-based analysis, PSU, strata, subpopulation]
+routing_terms:
+- svyset survey design
+- svy prefix estimation
+- subpop() domain analysis
+- primary sampling unit specification
+- finite population correction in Stata
+- estat effects after svy
 source_topics: [svyset, svy, svy_estimation]
 syntax_patterns:
 - svyset psu [pweight=weight], strata(stratum) fpc(fpc)

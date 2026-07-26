@@ -12,6 +12,13 @@ aliases:
 - did_imputation
 - bacondecomp
 - staggered difference-in-differences
+routing_terms:
+- difference in differences
+- csdid group-time treatment effects
+- staggered-adoption difference in differences
+- not-yet-treated comparison group
+- did_multiplegt heterogeneous timing
+- did_imputation dynamic treatment effects
 commands:
 - csdid
 - csdid_plot

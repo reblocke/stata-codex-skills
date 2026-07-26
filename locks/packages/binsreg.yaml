@@ -1,0 +1,25 @@
+schema_version: 1
+slug: binsreg
+distributions:
+- source: https://raw.githubusercontent.com/nppackages/binsreg/1f0dbb8bc0b477fc24f300c538810a696df0792e/stata
+  descriptor: binsreg.pkg
+  distribution_date: '20260527'
+  files:
+    b/binslogit.ado: 01149d061c49c7a9de38a08b60fd82f942e83f25041c68f28cd293e8ebec323c
+    b/binslogit.sthlp: e9ab8009791820248fd9ad70f7e3e9c586e1283ea1407b093bd650f91f78d33e
+    b/binsprobit.ado: 74aec5a52c163bfb19d9b0409189de3413fb4faacd573d2d438b64b71525efbd
+    b/binsprobit.sthlp: ef6745ff678d173a619a27a7ba1b519a4bbe597292b27713425453ebcdd0da85
+    b/binspwc.ado: 110dc01b46bea81b2b03c053d9b0e36ab450861a404667bd4ab5115f8d88bfcc
+    b/binspwc.sthlp: 60febf87cbaee2e0f1ebbae9efda9dac75ab8d6242ba7f0b1b489d6c4c1e4b0a
+    b/binsqreg.ado: cf51af2b4fb8a71b13eecf1f0d091c9d86e4e0f5f9ef8e469353ccd902d48cc2
+    b/binsqreg.sthlp: ab7ea64aade80bbce4e5bf9cf5f0002ff1cbf7978aa631a173ef362bc946f555
+    b/binsreg.ado: 4e25451b4effcddfd9121ba7b7511c2a66ab23da4f512f156abfed22f90aba68
+    b/binsreg.sthlp: 8b5654343e52f604ed9179b8852be3375feee3b39e33dd8fec08c30b1d978700
+    b/binsreg_irecode.ado: b2cd7d3d99db02afa4fdb9c2b18e9a8affe4596c6d07aceac4883de444d1e67b
+    b/binsreg_pctile.ado: 16b0144e37ad9c0a322134f553de6c2df8d80678fc61c2b102c2e4bf19842c9e
+    b/binsregselect.ado: 02540878c7662e8e0c86c6ecfe8ce47cec9d31359c0e282f7b03505c673e732b
+    b/binsregselect.sthlp: 6e7b7ab6171e16764ad92fffb6e8e6985f5d4259bb50ba5e3a6509e3d5ced517
+    b/binstest.ado: 6feab96816a8c00da900bf8486c02f1a68ce0e11b40e4c2eaba228f015019c99
+    b/binstest.sthlp: 075b7bf315661cd5e0fcb9445c3b75c742cb499a53fdfb73a6c87362c9cdc302
+    l/lbinsreg.mlib: 6e9f13fd7b5481154ce9066f578cd4cb7daea6e0d2f31d586861bc4dcc48a302
+generated_files: {}

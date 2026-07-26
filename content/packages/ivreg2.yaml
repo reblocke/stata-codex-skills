@@ -12,6 +12,12 @@ aliases:
 - weak instruments
 - LIML
 - instrumental variables
+routing_terms:
+- ivreg2 weak-instrument diagnostics
+- ivreghdfe instrumental-variable model
+- LIML or GMM instrumental-variable estimation
+- Kleibergen-Paap rank test
+- overidentification diagnostics after ivreg2
 commands:
 - ivreg2
 - xtivreg2

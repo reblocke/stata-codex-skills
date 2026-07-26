@@ -10,6 +10,12 @@ aliases:
 - donor weights
 - placebo gaps
 - RMSPE
+routing_terms:
+- synth synthetic-control estimator
+- donor and predictor weights
+- placebo-gap inference for synthetic control
+- pre-treatment RMSPE assessment
+- leave-one-out donor sensitivity
 commands:
 - synth
 source_topics:

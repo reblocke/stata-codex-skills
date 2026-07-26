@@ -8,6 +8,15 @@ trigger: >-
   assertions, error handling, modular execution, clean-session reproduction, and artifact separation.
 commands: [version, pwd, cd, log using, do, run, assert, tempfile, set seed, exit]
 aliases: [reproducible workflow, Stata project, do-file organization, batch mode, logging, clean run]
+routing_terms:
+- batch-mode Stata run
+- project-relative Stata paths
+- versioned analysis do-file
+- log using in batch
+- clean-session reproduction
+- deterministic project seed
+- separate raw and derived data
+- assert pipeline invariants
 source_topics: [log, version, cd]
 syntax_patterns:
 - cd "`project_root'"

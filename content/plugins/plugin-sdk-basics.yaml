@@ -16,6 +16,12 @@ aliases:
 - SF_error
 - program plugin
 - native plugin
+routing_terms:
+- Stata plugin SDK entry point
+- minimal stata_call plugin
+- read and write data with SF_vdata and SF_vstore
+- compile and load a native plugin binary
+- decide whether a task needs native Stata code
 commands:
 - program ..., plugin
 - stata_call
@@ -31,7 +37,7 @@ syntax_patterns:
 - "STDLL stata_call(int argc, char *argv[])"
 - "if (SF_vdata(var_index, obs_index, &value)) return 459;"
 - "if (SF_vstore(var_index, obs_index, value)) return 459;"
-- clang -bundle -DSYSTEM=APPLEMAC stplugin.c plugin.c -o plugin.plugin
+- 'clang -bundle -DSYSTEM=APPLEMAC stplugin.c plugin.c -o plugin.plugin # macOS (Apple Clang)'
 assumptions:
 - The plugin SDK files are pinned and verified, the target Stata release and architecture are known, and a pure ado/Mata implementation is insufficient for the workload.
 - The ado wrapper has already validated syntax, variable types, if/in sample, output storage, and argument count before invoking native code.

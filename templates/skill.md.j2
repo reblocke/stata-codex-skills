@@ -21,20 +21,32 @@ description: "{{ skill.description }}"
 {% endfor %}
 {% endif %}
 
-## Routing by aliases and task intent
+## Routing by terms, names, and task intent
 
-Choose a route only when both its aliases and task intent fit the request.
+Curated terms and task intent control routing. Supported aliases and commands
+help recognize explicit requests, but never override task intent or the
+clarification boundaries below.
 
 {% for section in sections %}
 ### {{ section.name }}
 
-| Route | Aliases | Task intent |
-|---|---|---|
+| Route | Curated terms | Supported aliases and commands | Task intent |
+|---|---|---|---|
 {% for entry in section.entries %}
-| `{{ entry.route_path }}` | {{ entry.routing_aliases | join(", ") }} | {{ entry.trigger }} |
+| `{{ entry.route_path }}` | {{ entry.routing_terms | join(", ") }} | {{ (entry.aliases + entry.commands) | unique | join(", ") }} | {{ entry.trigger }} |
 {% endfor %}
 
 {% endfor %}
+{% if routing_boundaries %}
+### Terms that require clarification
+
+Do not choose a route from these terms alone:
+
+{% for boundary in routing_boundaries %}
+- `{{ boundary.term }}`: {{ boundary.guidance }}
+{% endfor %}
+
+{% endif %}
 {% if route_aliases %}
 ### Compatibility aliases
 

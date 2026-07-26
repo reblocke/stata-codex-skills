@@ -16,6 +16,14 @@ commands:
 - format %td
 - format %tc
 aliases: [Stata date, Stata datetime, timestamp conversion, date arithmetic, elapsed time]
+routing_terms:
+- daily() date conversion
+- clock() timestamp conversion
+- "%td date format"
+- "%tc datetime format"
+- monthly date arithmetic
+- mofd() and dofm()
+- extract year and month
 source_topics:
 - datetime
 - datetime_conversion

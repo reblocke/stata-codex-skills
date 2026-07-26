@@ -8,6 +8,14 @@ trigger: >-
   probit, ologit, mlogit, poisson, nbreg, tobit, margins, and predicted probabilities.
 commands: [logit, logistic, probit, ologit, mlogit, poisson, nbreg, tobit, margins, predict]
 aliases: [logistic regression, ordinal regression, multinomial logit, count model, negative binomial, censored regression]
+routing_terms:
+- binary outcome with logit
+- predicted probabilities after probit
+- ordinal logit with ologit
+- multinomial logit with mlogit
+- poisson count regression
+- overdispersed count with nbreg
+- censored outcome with tobit
 source_topics: [logit, probit, mlogit, ologit, poisson, nbreg, tobit]
 syntax_patterns:
 - logit binary_outcome c.exposure##i.group covariates, vce(robust)

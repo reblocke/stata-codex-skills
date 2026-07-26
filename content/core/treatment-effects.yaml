@@ -8,6 +8,14 @@ trigger: >-
   models, overlap, potential-outcome means, robust inference, and postestimation balance.
 commands: [teffects ra, teffects ipw, teffects aipw, teffects ipwra, tebalance, predict]
 aliases: [treatment effects, ATE, ATET, regression adjustment, inverse probability weighting, IPWRA, doubly robust]
+routing_terms:
+- teffects ra
+- teffects ipw
+- teffects aipw
+- teffects ipwra
+- doubly robust ATE in Stata
+- overlap after treatment weighting
+- potential-outcome means
 source_topics: [teffects, teffects_ra, teffects_ipw, teffects_ipwra]
 syntax_patterns:
 - teffects ra (outcome covariates) (treated), ate

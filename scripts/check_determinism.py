@@ -6,6 +6,10 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 
+from runtime_guard import require_supported_runtime
+
+require_supported_runtime()
+
 from release_state import tree_digest, validate_complete_skill_tree
 from render_skills import _retained_workspace_scope, render_all
 

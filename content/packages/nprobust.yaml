@@ -12,6 +12,13 @@ aliases:
 - kdbwselect
 - local polynomial
 - robust bias correction
+routing_terms:
+- lprobust local-polynomial regression
+- nprobust robust bias correction
+- local polynomial regression
+- lpbwselect nonparametric bandwidth
+- kdrobust kernel-density inference
+- local-polynomial derivative estimation
 commands:
 - lprobust
 - lpbwselect

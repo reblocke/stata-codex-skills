@@ -9,6 +9,15 @@ trigger: >-
   density inspection, and covariate-continuity checks. Route robust bias-corrected inference to rdrobust.
 commands: [regress, ivregress 2sls, lpoly, twoway scatter, twoway lfit, histogram]
 aliases: [regression discontinuity, regression-discontinuity, RD, RDD, cutoff design, local linear regression]
+routing_terms:
+- regression discontinuity
+- manual built-in RD workflow
+- sharp cutoff with local linear slopes
+- fuzzy cutoff with ivregress 2sls
+- placebo cutoff check
+- covariate continuity at cutoff
+- density inspection around cutoff
+- bandwidth sensitivity for RD
 source_topics: [regress, lpoly, graph_twoway, twoway_lpoly]
 syntax_patterns:
 - generate double centered = running - cutoff

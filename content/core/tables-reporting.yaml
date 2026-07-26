@@ -8,6 +8,15 @@ trigger: >-
   previewing results, and exporting controlled outputs with collect, putexcel, putdocx, or putpdf.
 commands: [table, etable, collect, collect preview, collect layout, collect export, putexcel, putdocx, putpdf]
 aliases: [reporting table, publication table, etable, collect, Excel export, Word export]
+routing_terms:
+- regression table
+- collect layout
+- collect export
+- etable regression table
+- putexcel workbook
+- putdocx report
+- putpdf report
+- style a Stata collection
 source_topics: [etable, collect_preview, table, putexcel]
 syntax_patterns:
 - table group, statistic(n outcome) statistic(mean outcome) statistic(sd outcome)

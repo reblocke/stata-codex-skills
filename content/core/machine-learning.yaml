@@ -9,6 +9,14 @@ trigger: >-
   selection with dsregress.
 commands: [lasso, elasticnet, lassocoef, lassogof, predict, dsregress, h2o init, _h2oframe put, h2oml rfregress, h2oml gbregress]
 aliases: [machine learning, lasso, elastic net, penalized regression, variable selection, double selection, random forest, gradient boosting, h2oml]
+routing_terms:
+- lasso linear
+- elasticnet linear
+- dsregress double selection
+- lassocoef selected variables
+- cross-validation for lasso
+- H2O random forest in Stata
+- h2oml gradient boosting
 source_topics: [lasso, elasticnet, dsregress, h2o_intro, h2oml, h2oml_rf, h2oml_gbm]
 syntax_patterns:
 - lasso linear outcome candidate_predictors, selection(cv, folds(10))

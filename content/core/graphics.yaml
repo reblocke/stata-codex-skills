@@ -8,6 +8,13 @@ trigger: >-
   graph combination, schemes, direct labels, axis control, and deterministic graph export.
 commands: [twoway, scatter, line, histogram, graph combine, graph export, set scheme]
 aliases: [Stata graph, plot, scatterplot, histogram, twoway, figure, graph export]
+routing_terms:
+- twoway scatter plot
+- graph export
+- graph combine
+- confidence interval plot in Stata
+- direct labels on a Stata graph
+- set scheme
 source_topics: [graph, graph_twoway, histogram, scatter]
 syntax_patterns:
 - twoway (scatter outcome exposure) (lfit outcome exposure), legend(off)

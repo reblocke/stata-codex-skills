@@ -1,0 +1,52 @@
+schema_version: 1
+slug: rdrobust
+distributions:
+- source: https://raw.githubusercontent.com/rdpackages/rdrobust/5d7b5cdb7a304b87981736f4d6fa63002a470ee1/stata
+  descriptor: rdrobust.pkg
+  distribution_date: '20260527'
+  files:
+    l/lrdrobust.mlib: 8326368068fab41e1e002c0d3c1c8251ec5b830dbecc912926cc880fd2a2b663
+    r/rdbwselect.ado: 789ff489d79cb92f74da34f82b40de1c5ed2b780ca9e0d90ad296e8c57ec683a
+    r/rdbwselect.sthlp: 8584942234dd5b723881d0557fdfbf476e515faa2d0799caf99eac12a38cc745
+    r/rdplot.ado: 1ab28b4d1e4e5b6a0e2e0563d9b9b399ffb86346467513054977567093f204b5
+    r/rdplot.sthlp: 41aa4f40af4d7f3d9de6cd78e449cf9c2b0e519ebfd20e629e87d85ba669fa74
+    r/rdrobust.ado: c82916177517c9b9bf63b432678ef94fb5fe0883c2b936188903b4875eb5a863
+    r/rdrobust.sthlp: 6bd246cc9c9d3395862c6584bba24e86f355bef012560ac9a3ebbeb17008e7b3
+    r/rdrobustplot.ado: aaa3e2642c2aeebfa74d638429f9663ef783e6565aa4b2595f2f5edd883cea17
+    r/rdrobustplot.sthlp: f2e97a693b83ed0be8f0c9b33cbd2ef054a9d4701ce429c972084d7a8db717e3
+- source: https://raw.githubusercontent.com/rdpackages/rddensity/94a458351c8fb7bbc5bb4648828be4906947ed4c/stata
+  descriptor: rddensity.pkg
+  distribution_date: '20260527'
+  files:
+    l/lrddensity.mlib: 77689520d44946f6e80a9fb294e4c26be1ac60fd34c2de1df6c30a6764c2abc9
+    r/rdbwdensity.ado: 1e5a2ae7435d22fab714734a1738c172f967033870791a66f410f88af4897005
+    r/rdbwdensity.sthlp: 9cdc2160c3ae6e769c1a416c17df9151a595544b244e8fb7c6703a88e020e184
+    r/rddensity.ado: 5fcc419ab5671b2ffd17db96fe2ea6ad08a91ddd1693d1a20c7d752cc4f22ebe
+    r/rddensity.sthlp: 6c0026f34bc54d450636311642bd3f9fc7c5bba4f759271164073b943394c477
+- source: https://raw.githubusercontent.com/rdpackages/rdlocrand/0d96ece47e56c33c0ad8fbc7f72f1d229ed60732/stata
+  descriptor: rdlocrand.pkg
+  distribution_date: '20260527'
+  files:
+    l/lrdlocrand.mlib: cdc5c783432eb36ff10379ddd3b85cf0e1861433ac681e2f9f5389e24157f5b7
+    r/rdrandinf.ado: f8a0ba1dd03eb7c6d31a82cc1aedb74019ea0d0111f50ee9ddfbe24fca98a45f
+    r/rdrandinf.sthlp: a3104a5f7d758602129fd4e219fd17ce7ea1fec6b4155085e2820a60eb08c1eb
+    r/rdrandinf_model.ado: daf840e6c168f25c215d28b2c3d6f23353a87eb26cb3299843a371a9ab8023bd
+    r/rdrbounds.ado: 50e47652722c3ef32cf2c217c277dcabe6c715756873c99a31feb9150246c4ab
+    r/rdrbounds.sthlp: eede5da044d790a29631c7bc50b519d8956bb6162952a5e053c477b086286169
+    r/rdsensitivity.ado: 85b7b1213d5f00b493093a8594a1c5775bffd7e6ceaffaeabbe993673d17acc2
+    r/rdsensitivity.sthlp: c271c2eefdc53ccaf907d18034e124984282bd4004eb360d9f3264849c153c52
+    r/rdwinselect.ado: efd6940e77e74745c02a8bf4489885991efd08419dafb3240070751ddc615f60
+    r/rdwinselect.sthlp: c53307db7549a5f3b806101c9d57552e8ae2d7f2ba1f3bf8b8dcb6eb174b7f99
+    r/rdwinselect_allcovs.ado: 442d80b6d938f013248abaa170753833f15be7e879b31b533e47258eae54d5a2
+- source: https://raw.githubusercontent.com/rdpackages/rdmulti/23b1e7d6e53bb69575d307629985724adbec6e30/stata
+  descriptor: rdmulti.pkg
+  distribution_date: '20260515'
+  files:
+    l/lrdmulti.mlib: b92a94cd2420766dfbf1d776ec6eec9d79c4981e5b67127b0216bf55e00c1aec
+    r/rdmc.ado: e7476d2e210d200dbc7cba8356d6fdcafd61f8ad38c0a6e22f5abf94af1ae9d3
+    r/rdmc.sthlp: 08ca9c00a7705faf3eba173bb503669d3bf8606297cc904368f539ebb402fe85
+    r/rdmcplot.ado: 42d749324eb03bf2b6458d942d9a4f4f2f5613c1d657891d234fe49a22d4b1ae
+    r/rdmcplot.sthlp: c019f279ffe35ee80a537351713698900d5c4b360c1091092ea803b2e313e12d
+    r/rdms.ado: 32e4bfcc548250e2b22afc4799d542e3b15b52b1822fcafec8a5326f413537a5
+    r/rdms.sthlp: 8d2d708b5f49d75e5e436f7b81f9e5408d4d93bbc405b44dcc1b34b1939dd89d
+generated_files: {}

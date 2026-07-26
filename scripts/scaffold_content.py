@@ -11,6 +11,10 @@ from __future__ import annotations
 from pathlib import Path
 import argparse
 
+from runtime_guard import require_supported_runtime
+
+require_supported_runtime()
+
 from libskillpack import (
     CONTENT_ROOT,
     RAW_ROOT,
@@ -29,6 +33,7 @@ EXPECTED_FIELDS = (
     "title",
     "trigger",
     "aliases",
+    "routing_terms",
     "commands",
     "source_topics",
     "syntax_patterns",
@@ -51,7 +56,14 @@ def build_gap_report() -> dict:
         missing = [field for field in EXPECTED_FIELDS if field not in content]
         empty = [
             field
-            for field in ("aliases", "syntax_patterns", "gotchas", "assumptions", "workflows")
+            for field in (
+                "aliases",
+                "routing_terms",
+                "syntax_patterns",
+                "gotchas",
+                "assumptions",
+                "workflows",
+            )
             if field in content and not content[field]
         ]
         entries.append(

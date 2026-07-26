@@ -10,6 +10,12 @@ aliases:
 - summary table
 - table 1
 - survey table
+routing_terms:
+- tabout crosstab export
+- survey-weighted publication table
+- panelled Table 1 with tabout
+- one-way or two-way tabulation export
+- summary-statistic cells in tabout
 commands:
 - tabout
 source_topics:

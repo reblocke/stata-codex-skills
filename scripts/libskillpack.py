@@ -20,11 +20,18 @@ from yaml.constructor import ConstructorError
 from yaml.nodes import MappingNode
 from yaml.resolver import BaseResolver
 
+from runtime_guard import (
+    REQUIRED_PYTHON,
+    REQUIRED_UNICODE_VERSION,
+    require_supported_runtime,
+    runtime_compatibility_error,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONTENT_ROOT = REPO_ROOT / "content"
 CONFIG_ROOT = REPO_ROOT / "config"
 LOCK_ROOT = REPO_ROOT / "locks"
+PACKAGE_LOCK_ROOT = LOCK_ROOT / "packages"
 MANIFEST_ROOT = REPO_ROOT / "manifests"
 RAW_ROOT = REPO_ROOT / "raw"
 BUILD_ROOT = REPO_ROOT / "build" / "generated"

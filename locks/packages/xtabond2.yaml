@@ -1,0 +1,23 @@
+schema_version: 1
+slug: xtabond2
+distributions:
+- source: http://fmwww.bc.edu/repec/bocode/r
+  descriptor: ranktest.pkg
+  distribution_date: '20200929'
+  files:
+    l/livreg2.mlib: a2e917496f21c00c428b43ff77f6036f9e5b9889c867bcff33fbf2a494d84161
+    r/ranktest.ado: 484c00ea5e4781f74419f21e9e4aeb333c00dfa24a3eb85f580b52c923690b28
+    r/ranktest.sthlp: 7c905aa57e8cad4cb12fad483ddec29fbda82ad5b8045bd1fdc822251036edc2
+    r/ranktest11.ado: 3eb940c66df4a840afa0e3f81ea98f9fd84ed4107264705c879749d4882c8328
+    r/ranktest11.sthlp: bef09afb570aad88361f1e18948412284e366bf22d2b1d02e9327eeec228329a
+    r/ranktest9.ado: 2a6ec6a43f2b983ce37086c3147ff42f8ea0c5be7b1632971130ac5111e7e886
+- source: http://fmwww.bc.edu/repec/bocode/x
+  descriptor: xtabond2.pkg
+  distribution_date: '20250209'
+  files:
+    l/lxtabond2.mlib: a67a36be25aeb1119a99c4fd1b70f9d731a23516328543c0b805f0ddebe79541
+    x/xtab2_p.ado: f8366e5a906387320451c1c1490d1f8a647772b591a8225cdbba3dbe3979bca3
+    x/xtabond2.ado: 96a18e5a541b223ed20edf9301eddc4f6688d15cd38385325d910da13abfa66e
+    x/xtabond2.hlp: fc3151be031e32245ef75cdf2a9480f3b8401464357c03766ad53148c9d6dd7d
+    x/xtabond2.mata: 2a97bd6bc9e5ae3ca1f9346f7093d9cd16497029bd16b2598cdc8401b9268ba9
+generated_files: {}

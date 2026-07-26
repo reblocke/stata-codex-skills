@@ -8,6 +8,14 @@ trigger: >-
   spatial lags, cross-sectional spatial autoregression, and spatial-regression diagnostics.
 commands: [spset, spmatrix create, spmatrix summarize, spgenerate, spregress]
 aliases: [spatial analysis, spatial weights, contiguity matrix, inverse distance, spatial lag, SAR]
+routing_terms:
+- spset spatial data
+- spmatrix create contiguity
+- spmatrix create idistance
+- spgenerate spatial lag
+- spregress SAR model
+- spatial weights normalization
+- coordinate-system declaration in Stata
 source_topics: [spset, spmatrix, spregress]
 syntax_patterns:
 - spset area_id, coord(x_coordinate y_coordinate)

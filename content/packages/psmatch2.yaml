@@ -10,6 +10,13 @@ aliases:
 - propensity-score matching
 - nearest-neighbor matching
 - common support
+routing_terms:
+- propensity score matching
+- psmatch2 propensity-score matching
+- pstest matched-sample balance
+- caliper or radius matching
+- Mahalanobis matching with common support
+- ATT ATE or ATU from matched observations
 commands:
 - psmatch2
 - pstest

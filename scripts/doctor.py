@@ -12,6 +12,10 @@ import subprocess
 import sys
 import tomllib
 
+from runtime_guard import require_supported_runtime
+
+require_supported_runtime()
+
 import jinja2
 import yaml
 
@@ -68,8 +72,6 @@ def main() -> int:
     warnings: list[str] = []
     expected_uv: str | None = None
     actual_uv: str | None = None
-    if sys.version_info < (3, 11):
-        errors.append(f"Python 3.11+ required; found {platform.python_version()}")
     for relative in ("pyproject.toml", "uv.lock", "config/skills.yaml"):
         if not (REPO_ROOT / relative).is_file():
             errors.append(f"missing required file: {relative}")

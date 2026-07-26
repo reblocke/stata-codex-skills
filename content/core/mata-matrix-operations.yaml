@@ -8,6 +8,13 @@ trigger: >-
   matrices between Stata and Mata.
 commands: [matrix define, matrix list, matrix rownames, mata, invsym(), qrsolve(), st_matrix()]
 aliases: [matrix algebra, Stata matrix, Mata matrix, linear solve, matrix inverse]
+routing_terms:
+- matrix define in Stata
+- matrix rownames
+- invsym() symmetric inverse
+- qrsolve() linear system
+- transpose and join Mata matrices
+- Stata-to-Mata matrix transfer
 source_topics: [matrix, matrix_operators, mata]
 syntax_patterns:
 - matrix A = (1,2 \ 3,4)

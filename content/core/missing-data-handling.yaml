@@ -8,6 +8,14 @@ trigger: >-
   chained or regression imputation, passive variables, mi estimate, and sensitivity planning.
 commands: [misstable, mi set, mi register, mi impute, mi estimate, mi passive]
 aliases: [missing data, multiple imputation, MICE, chained equations, complete case, MI]
+routing_terms:
+- misstable summarize
+- mi set mlong
+- mi register imputed
+- mi impute chained
+- mi estimate
+- passive variables in multiple imputation
+- complete-case denominator audit
 source_topics: [mi, misstable, mi_impute]
 syntax_patterns:
 - misstable summarize outcome exposure covariates
