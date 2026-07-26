@@ -54,12 +54,36 @@ class _ProcessStopResult:
     stderr: str
     diagnostic: str
     cleanup_confirmed: bool
+    leader_kill_sent: bool
+
+
+@dataclass(frozen=True)
+class _ProcessGroupSignalResult:
+    cleanup_confirmed: bool
+    live_leader_signaled: bool
 
 
 class _ProcessLeaderState(Enum):
     LIVE_ANCHORED = "live-anchored"
     EXITED_ANCHORED = "exited-anchored"
     UNANCHORED = "unanchored"
+
+
+class _DarwinSiginfo(ctypes.Structure):
+    """Darwin siginfo_t layout from <sys/signal.h>."""
+
+    _fields_ = [
+        ("si_signo", ctypes.c_int),
+        ("si_errno", ctypes.c_int),
+        ("si_code", ctypes.c_int),
+        ("si_pid", ctypes.c_int),
+        ("si_uid", ctypes.c_uint),
+        ("si_status", ctypes.c_int),
+        ("si_addr", ctypes.c_void_p),
+        ("si_value", ctypes.c_void_p),
+        ("si_band", ctypes.c_long),
+        ("_pad", ctypes.c_ulong * 7),
+    ]
 
 
 class _UniqueKeySafeLoader(yaml.SafeLoader):
@@ -506,13 +530,13 @@ def detect_stata_binary() -> Path | None:
 def _signal_process_group(
     process: subprocess.Popen[str],
     process_signal: signal.Signals,
-) -> bool:
+) -> _ProcessGroupSignalResult:
     # Confirm immediately before signaling that this Popen still owns a
     # waitable leader.  A reaped leader no longer reserves its PID, so its
     # former PGID is unsafe to signal.
     leader_state = _process_leader_state(process)
     if leader_state is _ProcessLeaderState.UNANCHORED:
-        return False
+        return _ProcessGroupSignalResult(False, False)
     try:
         os.killpg(process.pid, process_signal)
     except (ProcessLookupError, PermissionError):
@@ -520,11 +544,74 @@ def _signal_process_group(
         # leader.  ESRCH has the same safe interpretation.  Refresh the state
         # to cover exit races; a live member would keep the owned group
         # signalable, while lost ownership remains a closed failure.
-        return (
+        cleanup_confirmed = (
             _process_leader_state(process)
             is _ProcessLeaderState.EXITED_ANCHORED
         )
-    return True
+        return _ProcessGroupSignalResult(cleanup_confirmed, False)
+    return _ProcessGroupSignalResult(
+        cleanup_confirmed=True,
+        live_leader_signaled=(
+            leader_state is _ProcessLeaderState.LIVE_ANCHORED
+        ),
+    )
+
+
+@lru_cache(maxsize=1)
+def _darwin_waitid_function():
+    """Return Darwin waitid for Python builds that do not expose os.waitid."""
+
+    if sys.platform != "darwin":
+        raise RuntimeError("Darwin waitid fallback requested off macOS")
+    libc = ctypes.CDLL(None, use_errno=True)
+    try:
+        waitid = libc.waitid
+    except AttributeError as error:
+        raise RuntimeError(
+            "This macOS runtime lacks non-reaping waitid support"
+        ) from error
+    waitid.argtypes = [
+        ctypes.c_int,
+        ctypes.c_uint,
+        ctypes.POINTER(_DarwinSiginfo),
+        ctypes.c_int,
+    ]
+    waitid.restype = ctypes.c_int
+    return waitid
+
+
+def _leader_exited_with_darwin_waitid(pid: int) -> bool:
+    info = _DarwinSiginfo()
+    ctypes.set_errno(0)
+    result = _darwin_waitid_function()(
+        1,  # P_PID
+        pid,
+        ctypes.byref(info),
+        0x01 | 0x04 | 0x20,  # WNOHANG | WEXITED | WNOWAIT
+    )
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+    return info.si_pid != 0
+
+
+def _leader_exited_without_reaping(pid: int) -> bool:
+    native_waitid = getattr(os, "waitid", None)
+    if native_waitid is not None:
+        return (
+            native_waitid(
+                os.P_PID,
+                pid,
+                os.WEXITED | os.WNOHANG | os.WNOWAIT,
+            )
+            is not None
+        )
+    if sys.platform == "darwin":
+        return _leader_exited_with_darwin_waitid(pid)
+    raise RuntimeError(
+        "This runtime lacks the non-reaping waitid support required for "
+        "process-group cleanup"
+    )
 
 
 def _process_leader_state(
@@ -539,19 +626,15 @@ def _process_leader_state(
     ):
         return _ProcessLeaderState.UNANCHORED
     try:
-        status = os.waitid(
-            os.P_PID,
-            process.pid,
-            os.WEXITED | os.WNOHANG | os.WNOWAIT,
-        )
+        leader_exited = _leader_exited_without_reaping(process.pid)
     except OSError as error:
         if not isinstance(error, ChildProcessError) and error.errno != errno.ECHILD:
             raise
         setattr(process, "_skillpack_process_group_anchor_lost", True)
         return _ProcessLeaderState.UNANCHORED
-    if status is None:
-        return _ProcessLeaderState.LIVE_ANCHORED
-    return _ProcessLeaderState.EXITED_ANCHORED
+    if leader_exited:
+        return _ProcessLeaderState.EXITED_ANCHORED
+    return _ProcessLeaderState.LIVE_ANCHORED
 
 
 def _normalize_process_text(value: str | bytes | None) -> str:
@@ -613,6 +696,7 @@ def _stop_process_group(
 
     try:
         cleanup_confirmed = False
+        leader_kill_sent = False
         diagnostic = ""
         if (
             _process_leader_state(process)
@@ -626,10 +710,12 @@ def _stop_process_group(
             # Signal the whole group before communicate() can reap its leader.
             # A single uncatchable signal leaves no escape interval between a
             # nominally graceful signal and the enforced group stop.
-            cleanup_confirmed = _signal_process_group(
+            signal_result = _signal_process_group(
                 process,
                 signal.SIGKILL,
             )
+            cleanup_confirmed = signal_result.cleanup_confirmed
+            leader_kill_sent = signal_result.live_leader_signaled
             if not cleanup_confirmed:
                 diagnostic = "Could not confirm process-group termination."
         try:
@@ -658,12 +744,14 @@ def _stop_process_group(
                 stderr=stderr,
                 diagnostic=diagnostic,
                 cleanup_confirmed=False,
+                leader_kill_sent=leader_kill_sent,
             )
         return _ProcessStopResult(
             stdout=_normalize_process_text(stdout),
             stderr=_normalize_process_text(stderr),
             diagnostic=diagnostic,
             cleanup_confirmed=cleanup_confirmed,
+            leader_kill_sent=leader_kill_sent,
         )
     except BaseException:
         _force_cleanup_process(process)
@@ -793,6 +881,7 @@ def run_stata_do(
     process_returncode = process.returncode if process.returncode is not None else 1
     killed_after_marker = (
         marker_found
+        and stop_result.leader_kill_sent
         and process_returncode == -int(signal.SIGKILL)
     )
     if not log_path.exists():

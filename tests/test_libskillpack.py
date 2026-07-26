@@ -413,43 +413,53 @@ class RunStataDoTests(unittest.TestCase):
                 self.killpg.call_args_list,
             )
 
-    def test_natural_nonzero_exit_after_marker_is_not_suppressed(self) -> None:
-        with TemporaryDirectory(prefix="stata-run-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            do_file = self._make_do_file(cwd)
-            marker = "VALIDATION COMPLETE: natural-race"
-            process = ImmediateProcess(returncode=7)
+    def test_exit_before_cleanup_after_marker_is_not_suppressed(self) -> None:
+        for natural_returncode in (7, -int(signal.SIGKILL)):
+            with self.subTest(returncode=natural_returncode), TemporaryDirectory(
+                prefix="stata-run-"
+            ) as temp_root:
+                cwd = Path(temp_root) / "work"
+                do_file = self._make_do_file(cwd)
+                marker = "VALIDATION COMPLETE: natural-race"
+                process = ImmediateProcess(returncode=natural_returncode)
 
-            def fake_popen(*args, **kwargs) -> ImmediateProcess:
-                del args, kwargs
-                (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
-                return process
+                def fake_popen(*args, **kwargs) -> ImmediateProcess:
+                    del args, kwargs
+                    (cwd / "smoke.log").write_text(
+                        f"{marker}\n",
+                        encoding="utf-8",
+                    )
+                    return process
 
-            states = [
-                libskillpack._ProcessLeaderState.LIVE_ANCHORED,
-                libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-                libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-                libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-            ]
-            with patch.object(
-                libskillpack.subprocess,
-                "Popen",
-                side_effect=fake_popen,
-            ), patch.object(
-                libskillpack,
-                "_process_leader_state",
-                side_effect=states,
-            ):
-                result, _ = libskillpack.run_stata_do(
-                    Path("/fake/stata"),
-                    do_file,
-                    cwd,
-                    completion_marker=marker,
-                    timeout_seconds=1,
+                states = [
+                    libskillpack._ProcessLeaderState.LIVE_ANCHORED,
+                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+                ]
+                with patch.object(
+                    libskillpack.subprocess,
+                    "Popen",
+                    side_effect=fake_popen,
+                ), patch.object(
+                    libskillpack,
+                    "_process_leader_state",
+                    side_effect=states,
+                ):
+                    result, _ = libskillpack.run_stata_do(
+                        Path("/fake/stata"),
+                        do_file,
+                        cwd,
+                        completion_marker=marker,
+                        timeout_seconds=1,
+                    )
+
+                self.assertEqual(natural_returncode, result.returncode)
+                self.killpg.assert_called_once_with(
+                    process.pid,
+                    signal.SIGKILL,
                 )
-
-            self.assertEqual(7, result.returncode)
-            self.killpg.assert_called_once_with(process.pid, signal.SIGKILL)
+                self.killpg.reset_mock()
 
     def test_already_reaped_process_group_is_never_signaled(self) -> None:
         with TemporaryDirectory(prefix="stata-run-") as temp_root:
@@ -568,10 +578,51 @@ class RunStataDoTests(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    hasattr(os, "fork") and hasattr(os, "waitid"),
-    "requires POSIX fork and waitid",
+    hasattr(os, "fork")
+    and (hasattr(os, "waitid") or sys.platform == "darwin"),
+    "requires POSIX fork and non-reaping waitid support",
 )
 class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
+    @unittest.skipUnless(
+        sys.platform == "darwin",
+        "Darwin ctypes waitid fallback is macOS-specific",
+    )
+    def test_darwin_ctypes_waitid_fallback_preserves_anchor(self) -> None:
+        process = subprocess.Popen(
+            ["/usr/bin/true"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            with patch.object(
+                libskillpack.os,
+                "waitid",
+                None,
+                create=True,
+            ):
+                deadline = time.monotonic() + 3
+                while (
+                    libskillpack._process_leader_state(process)
+                    is libskillpack._ProcessLeaderState.LIVE_ANCHORED
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(0.02)
+                self.assertIs(
+                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+                    libskillpack._process_leader_state(process),
+                )
+
+                stopped = libskillpack._stop_process_group(process)
+
+            self.assertTrue(stopped.cleanup_confirmed, stopped.diagnostic)
+            self.assertFalse(stopped.leader_kill_sent)
+            self.assertEqual(0, process.returncode)
+        finally:
+            if process.returncode is None:
+                libskillpack._force_cleanup_process(process)
+
     def test_exited_anchored_leader_without_descendants_is_clean(self) -> None:
         process = subprocess.Popen(
             ["/usr/bin/true"],
@@ -596,6 +647,7 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
             stopped = libskillpack._stop_process_group(process)
 
             self.assertTrue(stopped.cleanup_confirmed, stopped.diagnostic)
+            self.assertFalse(stopped.leader_kill_sent)
             self.assertEqual(0, process.returncode)
         finally:
             if process.returncode is None:
@@ -653,6 +705,7 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
                 stopped = libskillpack._stop_process_group(process)
 
                 self.assertTrue(stopped.cleanup_confirmed, stopped.diagnostic)
+                self.assertFalse(stopped.leader_kill_sent)
                 self.assertEqual(0, process.returncode)
                 deadline = time.monotonic() + 2
                 while time.monotonic() < deadline:
