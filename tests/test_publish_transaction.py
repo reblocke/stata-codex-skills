@@ -1137,6 +1137,302 @@ class PublishTransactionTests(unittest.TestCase):
             self.assertFalse((attacker / "skills").exists())
             self.assertTrue((moved_parent / "skills").is_dir())
 
+    def test_new_directory_replacement_before_first_stat_is_rejected(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            parent = Path(temporary)
+            replacement = parent / "created"
+            displaced = parent / "displaced-created"
+            parent_descriptor = os.open(
+                parent,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+            )
+            real_mkdir = os.mkdir
+            replaced = False
+
+            def replace_after_mkdir(
+                name: str | bytes,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> None:
+                nonlocal replaced
+                real_mkdir(name, mode, dir_fd=dir_fd)
+                if name == "created" and not replaced:
+                    self.assertEqual(parent_descriptor, dir_fd)
+                    os.rename(
+                        name,
+                        displaced.name,
+                        src_dir_fd=parent_descriptor,
+                        dst_dir_fd=parent_descriptor,
+                    )
+                    real_mkdir(name, 0o700, dir_fd=parent_descriptor)
+                    replaced = True
+
+            try:
+                with patch.object(
+                    publish_local.os,
+                    "mkdir",
+                    side_effect=replace_after_mkdir,
+                ), self.assertRaisesRegex(
+                    publish_local.PublishError,
+                    "changed before identity capture",
+                ):
+                    publish_local._create_directory_handle_at(
+                        parent_descriptor,
+                        replacement.name,
+                        replacement,
+                    )
+            finally:
+                os.close(parent_descriptor)
+
+            self.assertTrue(replaced)
+            self.assertTrue(replacement.is_dir())
+            self.assertEqual([], list(replacement.iterdir()))
+            self.assertEqual(0o700, stat.S_IMODE(replacement.stat().st_mode))
+            self.assertTrue(displaced.is_dir())
+            self.assertEqual([], list(displaced.iterdir()))
+            self.assertEqual(0o500, stat.S_IMODE(displaced.stat().st_mode))
+
+    def test_directory_open_interruption_closes_child_descriptor(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            parent = Path(temporary)
+            child = parent / "child"
+            child.mkdir()
+            parent_descriptor = os.open(
+                parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            before = len(os.listdir("/dev/fd"))
+            try:
+                with patch.object(
+                    publish_local.os,
+                    "fstat",
+                    side_effect=KeyboardInterrupt(
+                        "interrupt after directory open"
+                    ),
+                ), self.assertRaises(KeyboardInterrupt):
+                    publish_local._open_directory_handle_at(
+                        parent_descriptor,
+                        child.name,
+                        child,
+                    )
+            finally:
+                os.close(parent_descriptor)
+
+            self.assertEqual(before - 1, len(os.listdir("/dev/fd")))
+
+    def test_new_directory_interruption_preserves_identity_and_closes_descriptor(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            parent = Path(temporary)
+            created = parent / "created"
+            parent_descriptor = os.open(
+                parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            descriptors_before = len(os.listdir("/dev/fd"))
+            interruption = KeyboardInterrupt(
+                "interrupt while synchronizing new directory"
+            )
+            try:
+                with patch.object(
+                    publish_local,
+                    "_fsync_directory_descriptor",
+                    side_effect=interruption,
+                ), self.assertRaises(KeyboardInterrupt) as raised:
+                    publish_local._create_directory_handle_at(
+                        parent_descriptor,
+                        created.name,
+                        created,
+                    )
+
+                self.assertIs(interruption, raised.exception)
+                self.assertEqual(
+                    descriptors_before,
+                    len(os.listdir("/dev/fd")),
+                )
+            finally:
+                os.close(parent_descriptor)
+
+            self.assertTrue(created.is_dir())
+            self.assertEqual(0o700, stat.S_IMODE(created.stat().st_mode))
+            self.assertEqual([], list(created.iterdir()))
+
+    def test_new_directory_syncs_child_before_parent(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            parent = Path(temporary)
+            created = parent / "created"
+            parent_descriptor = os.open(
+                parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            real_fsync_directory = publish_local._fsync_directory_descriptor
+            sync_calls: list[tuple[int, Path, bool]] = []
+            handle: publish_local.DirectoryHandle | None = None
+
+            def record_directory_sync(
+                descriptor: int,
+                display_path: Path,
+                *,
+                preserve_transaction: bool = False,
+            ) -> None:
+                sync_calls.append(
+                    (descriptor, display_path, preserve_transaction)
+                )
+                real_fsync_directory(
+                    descriptor,
+                    display_path,
+                    preserve_transaction=preserve_transaction,
+                )
+
+            try:
+                with patch.object(
+                    publish_local,
+                    "_fsync_directory_descriptor",
+                    side_effect=record_directory_sync,
+                ):
+                    handle = publish_local._create_directory_handle_at(
+                        parent_descriptor,
+                        created.name,
+                        created,
+                    )
+                child_descriptor = publish_local._require_directory_descriptor(
+                    handle
+                )
+                self.assertEqual(
+                    [
+                        (child_descriptor, created, True),
+                        (parent_descriptor, parent, True),
+                    ],
+                    sync_calls,
+                )
+            finally:
+                publish_local._close_directory_handle(handle)
+                os.close(parent_descriptor)
+
+    def test_new_directory_replacement_during_child_sync_is_rejected(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            parent = Path(temporary)
+            created = parent / "created"
+            displaced = parent / "displaced-created"
+            parent_descriptor = os.open(
+                parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            descriptors_before = len(os.listdir("/dev/fd"))
+            real_fsync_directory = publish_local._fsync_directory_descriptor
+            replaced = False
+
+            def replace_after_child_sync(
+                descriptor: int,
+                display_path: Path,
+                *,
+                preserve_transaction: bool = False,
+            ) -> None:
+                nonlocal replaced
+                real_fsync_directory(
+                    descriptor,
+                    display_path,
+                    preserve_transaction=preserve_transaction,
+                )
+                if display_path == created and not replaced:
+                    created.rename(displaced)
+                    created.mkdir(mode=0o700)
+                    created.chmod(0o700)
+                    replaced = True
+
+            try:
+                with patch.object(
+                    publish_local,
+                    "_fsync_directory_descriptor",
+                    side_effect=replace_after_child_sync,
+                ), self.assertRaisesRegex(
+                    publish_local.PublishError,
+                    "changed during synchronization",
+                ):
+                    publish_local._create_directory_handle_at(
+                        parent_descriptor,
+                        created.name,
+                        created,
+                    )
+
+                self.assertTrue(replaced)
+                self.assertEqual(
+                    descriptors_before,
+                    len(os.listdir("/dev/fd")),
+                )
+            finally:
+                os.close(parent_descriptor)
+
+            for directory in (created, displaced):
+                self.assertTrue(directory.is_dir())
+                self.assertEqual(
+                    0o700,
+                    stat.S_IMODE(directory.stat().st_mode),
+                )
+                self.assertEqual([], list(directory.iterdir()))
+
+    def test_new_directory_child_sync_failure_preserves_directory(self) -> None:
+        with TemporaryDirectory(prefix="publish-test-") as temporary:
+            parent = Path(temporary)
+            created = parent / "created"
+            parent_descriptor = os.open(
+                parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            descriptors_before = len(os.listdir("/dev/fd"))
+            sync_paths: list[Path] = []
+
+            def fail_child_sync(
+                descriptor: int,
+                display_path: Path,
+                *,
+                preserve_transaction: bool = False,
+            ) -> None:
+                del descriptor
+                sync_paths.append(display_path)
+                raise publish_local.PublishError(
+                    "forced child directory sync failure",
+                    preserve_transaction=preserve_transaction,
+                )
+
+            try:
+                with patch.object(
+                    publish_local,
+                    "_fsync_directory_descriptor",
+                    side_effect=fail_child_sync,
+                ), self.assertRaisesRegex(
+                    publish_local.PublishError,
+                    "forced child directory sync failure",
+                ) as raised:
+                    publish_local._create_directory_handle_at(
+                        parent_descriptor,
+                        created.name,
+                        created,
+                        preserve_on_create_failure=False,
+                    )
+
+                self.assertTrue(raised.exception.preserve_transaction)
+                self.assertEqual([created], sync_paths)
+                self.assertEqual(
+                    descriptors_before,
+                    len(os.listdir("/dev/fd")),
+                )
+            finally:
+                os.close(parent_descriptor)
+
+            self.assertTrue(created.is_dir())
+            self.assertEqual(0o700, stat.S_IMODE(created.stat().st_mode))
+            self.assertEqual([], list(created.iterdir()))
+
     def test_old_receipt_is_rejected_before_staging(self) -> None:
         with TemporaryDirectory(prefix="publish-test-") as temporary:
             root = Path(temporary)
@@ -1893,15 +2189,18 @@ class PublishTransactionTests(unittest.TestCase):
             }
             real_fsync_directory = publish_local._fsync_directory_descriptor
             failed = False
+            backup_sync_calls = 0
 
-            def fail_first_backup_fsync(
+            def fail_post_backup_fsync(
                 file_descriptor: int,
                 display_path: Path,
                 *,
                 preserve_transaction: bool = False,
             ) -> None:
-                nonlocal failed
-                if display_path.name == "backups" and not failed:
+                nonlocal backup_sync_calls, failed
+                if display_path.name == "backups":
+                    backup_sync_calls += 1
+                if backup_sync_calls == 2 and not failed:
                     failed = True
                     raise publish_local.PublishError(
                         "forced backup directory fsync failure",
@@ -1916,7 +2215,7 @@ class PublishTransactionTests(unittest.TestCase):
             with patch.object(
                 publish_local,
                 "_fsync_directory_descriptor",
-                side_effect=fail_first_backup_fsync,
+                side_effect=fail_post_backup_fsync,
             ), self.assertRaisesRegex(
                 publish_local.PublishError,
                 "destinations were restored",
@@ -1928,6 +2227,7 @@ class PublishTransactionTests(unittest.TestCase):
                 )
 
             self.assertTrue(failed)
+            self.assertGreaterEqual(backup_sync_calls, 2)
             for folder in release_state.SKILL_FOLDERS:
                 self.assertEqual(before[folder], snapshot(destination / folder))
             self.assertEqual(

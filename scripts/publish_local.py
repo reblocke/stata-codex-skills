@@ -697,11 +697,11 @@ def _close_file_descriptor(
     if unlock:
         try:
             fcntl.flock(file_descriptor, fcntl.LOCK_UN)
-        except OSError as error:
+        except BaseException as error:
             errors.append(f"unlock failed: {error}")
     try:
         os.close(file_descriptor)
-    except OSError as error:
+    except BaseException as error:
         errors.append(f"close failed: {error}")
     return errors
 
@@ -745,7 +745,25 @@ def _open_directory_handle_at(
             dir_fd=parent_descriptor,
         )
         opened = os.fstat(file_descriptor)
-    except OSError as error:
+        if (
+            not stat.S_ISDIR(metadata.st_mode)
+            or not stat.S_ISDIR(opened.st_mode)
+            or metadata.st_dev != opened.st_dev
+            or metadata.st_ino != opened.st_ino
+        ):
+            raise PublishError(
+                f"Anchored directory changed while opening it: {display_path}"
+            )
+        handle = DirectoryHandle(
+            name=name,
+            display_path=display_path,
+            device=opened.st_dev,
+            inode=opened.st_ino,
+            file_descriptor=file_descriptor,
+        )
+        file_descriptor = None
+        return handle
+    except BaseException as error:
         close_errors = (
             _close_file_descriptor(file_descriptor)
             if file_descriptor is not None
@@ -756,33 +774,27 @@ def _open_directory_handle_at(
             if close_errors
             else ""
         )
-        raise PublishError(
-            f"Could not open anchored directory {display_path}: "
-            f"{error}{close_suffix}"
-        ) from error
-    if (
-        not stat.S_ISDIR(metadata.st_mode)
-        or not stat.S_ISDIR(opened.st_mode)
-        or metadata.st_dev != opened.st_dev
-        or metadata.st_ino != opened.st_ino
-    ):
-        close_errors = _close_file_descriptor(file_descriptor)
-        close_suffix = (
-            f"; descriptor cleanup also reported: {'; '.join(close_errors)}"
-            if close_errors
-            else ""
-        )
-        raise PublishError(
-            f"Anchored directory changed while opening it: "
-            f"{display_path}{close_suffix}"
-        )
-    return DirectoryHandle(
-        name=name,
-        display_path=display_path,
-        device=opened.st_dev,
-        inode=opened.st_ino,
-        file_descriptor=file_descriptor,
-    )
+        if isinstance(error, OSError):
+            raise PublishError(
+                f"Could not open anchored directory {display_path}: "
+                f"{error}{close_suffix}"
+            ) from error
+        if isinstance(error, PublishError):
+            if close_errors:
+                raise PublishError(
+                    f"{error}{close_suffix}",
+                    preserve_transaction=error.preserve_transaction,
+                ) from error
+            raise
+        if close_errors:
+            try:
+                error.add_note(
+                    "anchored-directory descriptor cleanup also reported: "
+                    + "; ".join(close_errors)
+                )
+            except BaseException:
+                pass
+        raise
 
 
 def _close_directory_handle(handle: DirectoryHandle | None) -> list[str]:
@@ -823,7 +835,7 @@ def _create_directory_handle_at(
     preserve_on_create_failure: bool = True,
 ) -> DirectoryHandle:
     try:
-        os.mkdir(name, 0o700, dir_fd=parent_descriptor)
+        os.mkdir(name, 0o500, dir_fd=parent_descriptor)
     except OSError as error:
         raise PublishError(
             f"Could not create anchored directory {display_path}: {error}",
@@ -842,19 +854,34 @@ def _create_directory_handle_at(
         if (
             not stat.S_ISDIR(created.st_mode)
             or created.st_uid != expected_owner
-            or created.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+            or stat.S_IMODE(created.st_mode) != 0o500
         ):
             raise PublishError(
-                "New transaction directory has unsafe ownership or "
-                f"permissions: {display_path}",
+                "New transaction directory changed before identity capture: "
+                f"{display_path}",
                 preserve_transaction=True,
             )
+        created_identity = (created.st_dev, created.st_ino)
         handle = _open_directory_handle_at(
             parent_descriptor,
             name,
             display_path,
         )
-        if handle.device != created.st_dev or handle.inode != created.st_ino:
+        descriptor = _require_directory_descriptor(handle)
+        opened = os.fstat(descriptor)
+        public = os.stat(
+            name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            (handle.device, handle.inode) != created_identity
+            or (opened.st_dev, opened.st_ino) != created_identity
+            or (public.st_dev, public.st_ino) != created_identity
+            or stat.S_IMODE(opened.st_mode) != 0o500
+            or stat.S_IMODE(public.st_mode) != 0o500
+            or os.listdir(descriptor)
+        ):
             close_errors = _close_directory_handle(handle)
             close_suffix = (
                 "; descriptor cleanup also reported: "
@@ -867,7 +894,20 @@ def _create_directory_handle_at(
                 f"anchored: {display_path}{close_suffix}",
                 preserve_transaction=True,
             )
-        if os.listdir(_require_directory_descriptor(handle)):
+        os.fchmod(descriptor, 0o700)
+        opened = os.fstat(descriptor)
+        public = os.stat(
+            name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            (opened.st_dev, opened.st_ino) != created_identity
+            or (public.st_dev, public.st_ino) != created_identity
+            or stat.S_IMODE(opened.st_mode) != 0o700
+            or stat.S_IMODE(public.st_mode) != 0o700
+            or os.listdir(descriptor)
+        ):
             close_errors = _close_directory_handle(handle)
             close_suffix = (
                 "; descriptor cleanup also reported: "
@@ -876,15 +916,40 @@ def _create_directory_handle_at(
                 else ""
             )
             raise PublishError(
-                "New transaction directory was not empty when anchored; "
+                "New transaction directory changed during initialization; "
                 f"preserving it without cleanup: {display_path}{close_suffix}",
                 preserve_transaction=True,
             )
         _fsync_directory_descriptor(
+            descriptor,
+            display_path,
+            preserve_transaction=True,
+        )
+        _fsync_directory_descriptor(
             parent_descriptor,
             display_path.parent,
-            preserve_transaction=preserve_on_create_failure,
+            preserve_transaction=True,
         )
+        opened = os.fstat(descriptor)
+        public = os.stat(
+            name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            (opened.st_dev, opened.st_ino) != created_identity
+            or (public.st_dev, public.st_ino) != created_identity
+            or not stat.S_ISDIR(opened.st_mode)
+            or not stat.S_ISDIR(public.st_mode)
+            or stat.S_IMODE(opened.st_mode) != 0o700
+            or stat.S_IMODE(public.st_mode) != 0o700
+            or os.listdir(descriptor)
+        ):
+            raise PublishError(
+                "New transaction directory changed during synchronization; "
+                f"preserving it without cleanup: {display_path}",
+                preserve_transaction=True,
+            )
         return handle
     except BaseException as error:
         close_errors = _close_directory_handle(handle)
@@ -894,6 +959,16 @@ def _create_directory_handle_at(
             if close_errors
             else ""
         )
+        if not isinstance(error, Exception):
+            if close_errors:
+                try:
+                    error.add_note(
+                        "new-directory descriptor cleanup also reported: "
+                        + "; ".join(close_errors)
+                    )
+                except BaseException:
+                    pass
+            raise
         if isinstance(error, PublishError):
             if error.preserve_transaction:
                 if close_errors:
