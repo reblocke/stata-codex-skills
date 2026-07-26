@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+from dataclasses import dataclass
 from functools import lru_cache
 import hashlib
 import io
@@ -34,6 +35,14 @@ UPSTREAM_REPO_DIR = RAW_ROOT / "upstream" / "stata-skill"
 STATA_ROOT = Path("/Applications/Stata")
 STATA_ADO_BASE = STATA_ROOT / "ado" / "base"
 STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS = 5
+
+
+@dataclass(frozen=True)
+class _ProcessStopResult:
+    stdout: str
+    stderr: str
+    diagnostic: str
+    cleanup_confirmed: bool
 
 
 class _UniqueKeySafeLoader(yaml.SafeLoader):
@@ -480,16 +489,19 @@ def detect_stata_binary() -> Path | None:
 def _signal_process_group(
     process: subprocess.Popen[str],
     process_signal: signal.Signals,
-) -> None:
+) -> bool:
     try:
         os.killpg(process.pid, process_signal)
     except ProcessLookupError:
-        pass
+        return True
     except PermissionError:
         # macOS can report EPERM for a vanished group after its leader is
-        # already reaped. A live leader remains a real cleanup failure.
+        # already reaped. Treat that state as ambiguous rather than success;
+        # a live leader remains a real cleanup failure.
         if process.poll() is None:
             raise
+        return False
+    return True
 
 
 def _normalize_process_text(value: str | bytes | None) -> str:
@@ -563,7 +575,7 @@ def _force_cleanup_process(process: subprocess.Popen[str]) -> None:
 
 def _stop_process_group(
     process: subprocess.Popen[str],
-) -> tuple[str, str, str]:
+) -> _ProcessStopResult:
     """Stop one group and collect output without trusting inherited pipe EOF."""
 
     try:
@@ -573,7 +585,10 @@ def _stop_process_group(
                 timeout=STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS
             )
         except subprocess.TimeoutExpired as first_timeout:
-            _signal_process_group(process, signal.SIGKILL)
+            kill_confirmed = _signal_process_group(
+                process,
+                signal.SIGKILL,
+            )
             try:
                 stdout, stderr = process.communicate(
                     timeout=STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS
@@ -598,20 +613,46 @@ def _stop_process_group(
                         " Could not confirm process reap within the bounded "
                         "cleanup window."
                     )
-                return stdout, stderr, note
-            return (
-                _merge_process_text(first_timeout.output, stdout),
-                _merge_process_text(first_timeout.stderr, stderr),
-                "",
+                return _ProcessStopResult(
+                    stdout=stdout,
+                    stderr=stderr,
+                    diagnostic=note,
+                    cleanup_confirmed=False,
+                )
+            diagnostic = (
+                ""
+                if kill_confirmed
+                else (
+                    "Could not confirm process-group termination after the "
+                    "leader exited."
+                )
+            )
+            return _ProcessStopResult(
+                stdout=_merge_process_text(first_timeout.output, stdout),
+                stderr=_merge_process_text(first_timeout.stderr, stderr),
+                diagnostic=diagnostic,
+                cleanup_confirmed=kill_confirmed,
             )
         else:
             # A descendant can ignore SIGTERM and close inherited pipes,
             # allowing communicate() to return after only the leader exits.
-            _signal_process_group(process, signal.SIGKILL)
-            return (
-                _normalize_process_text(stdout),
-                _normalize_process_text(stderr),
-                "",
+            cleanup_confirmed = _signal_process_group(
+                process,
+                signal.SIGKILL,
+            )
+            diagnostic = (
+                ""
+                if cleanup_confirmed
+                else (
+                    "Could not confirm process-group termination after the "
+                    "leader exited."
+                )
+            )
+            return _ProcessStopResult(
+                stdout=_normalize_process_text(stdout),
+                stderr=_normalize_process_text(stderr),
+                diagnostic=diagnostic,
+                cleanup_confirmed=cleanup_confirmed,
             )
     except BaseException:
         _force_cleanup_process(process)
@@ -638,6 +679,7 @@ def run_stata_do(
         log_path.unlink()
 
     child_do_file = Path(os.path.relpath(do_file, start=cwd))
+    deadline = time.monotonic() + timeout_seconds
     process = subprocess.Popen(
         [str(stata_binary), "-e", "do", str(child_do_file)],
         cwd=str(cwd),
@@ -650,7 +692,6 @@ def run_stata_do(
     marker_found = False
     timed_out = False
     stopped_after_marker = False
-    deadline = time.monotonic() + timeout_seconds
     try:
         while True:
             if log_path.exists():
@@ -673,7 +714,7 @@ def run_stata_do(
         raise
 
     stopped_after_marker = marker_found and process.poll() is None
-    stdout, stderr, cleanup_note = _stop_process_group(process)
+    stop_result = _stop_process_group(process)
 
     log_text = read_text(log_path) if log_path.exists() else ""
     marker_found = any(line.strip() == completion_marker for line in log_text.splitlines())
@@ -687,6 +728,8 @@ def run_stata_do(
     if timed_out:
         effective_returncode = 124
         diagnostics.append(f"Stata timed out after {timeout_seconds} seconds.")
+    elif not stop_result.cleanup_confirmed:
+        effective_returncode = 1
     elif process_returncode != 0 and not stopped_after_marker:
         effective_returncode = process_returncode
     elif not log_path.exists():
@@ -696,12 +739,16 @@ def run_stata_do(
     else:
         effective_returncode = 0
 
-    stderr_parts = [stderr or "", cleanup_note, *diagnostics]
+    stderr_parts = [
+        stop_result.stderr,
+        stop_result.diagnostic,
+        *diagnostics,
+    ]
     effective_stderr = "\n".join(part for part in stderr_parts if part).strip()
     result = subprocess.CompletedProcess(
         process.args,
         effective_returncode,
-        stdout,
+        stop_result.stdout,
         effective_stderr,
     )
     return result, log_path

@@ -634,6 +634,85 @@ class RunStataDescendantCleanupTests(unittest.TestCase):
             self.assertTrue(leaders[0].stdout.closed)
             self.assertTrue(leaders[0].stderr.closed)
 
+    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
+    def test_marker_cannot_hide_unconfirmed_escaped_child_cleanup(self) -> None:
+        with TemporaryDirectory(prefix="stata-marker-escaped-") as temp_root:
+            cwd = Path(temp_root) / "work"
+            cwd.mkdir()
+            do_file = cwd / "smoke.do"
+            do_file.write_text("clear all\n", encoding="utf-8")
+            marker = "VALIDATION COMPLETE: escaped-marker"
+            stub = Path(temp_root) / "stata-stub"
+            stub.write_text(
+                "#!/usr/bin/env python3\n"
+                "import subprocess\n"
+                "import sys\n"
+                "import time\n"
+                "child = subprocess.Popen(\n"
+                "    [sys.executable, '-c', 'import time; time.sleep(30)'],\n"
+                "    start_new_session=True,\n"
+                ")\n"
+                "with open('escaped.pid', 'w', encoding='utf-8') as handle:\n"
+                "    handle.write(str(child.pid))\n"
+                "with open('smoke.log', 'w', encoding='utf-8') as handle:\n"
+                f"    handle.write('{marker}\\n')\n"
+                "while True:\n"
+                "    time.sleep(1)\n",
+                encoding="utf-8",
+            )
+            stub.chmod(0o755)
+            real_popen = libskillpack.subprocess.Popen
+            leaders = []
+
+            def capture_popen(*args, **kwargs):
+                process = real_popen(*args, **kwargs)
+                leaders.append(process)
+                return process
+
+            escaped_pid: int | None = None
+            started = time.monotonic()
+            try:
+                with patch.object(
+                    libskillpack.subprocess,
+                    "Popen",
+                    side_effect=capture_popen,
+                ), patch.object(
+                    libskillpack,
+                    "STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS",
+                    0.1,
+                ):
+                    result, _ = libskillpack.run_stata_do(
+                        stub,
+                        do_file,
+                        cwd,
+                        completion_marker=marker,
+                        timeout_seconds=2,
+                    )
+                escaped_pid = int(
+                    (cwd / "escaped.pid").read_text(encoding="utf-8")
+                )
+                os.kill(escaped_pid, 0)
+                self.assertEqual(1, result.returncode)
+                self.assertLess(time.monotonic() - started, 3)
+                self.assertIn(
+                    "Post-kill pipe closure timed out",
+                    result.stderr,
+                )
+                self.assertEqual(1, len(leaders))
+                self.assertIsNotNone(leaders[0].returncode)
+                self.assertTrue(leaders[0].stdout.closed)
+                self.assertTrue(leaders[0].stderr.closed)
+            finally:
+                if escaped_pid is None and (cwd / "escaped.pid").exists():
+                    escaped_pid = int(
+                        (cwd / "escaped.pid").read_text(encoding="utf-8")
+                    )
+                if escaped_pid is not None:
+                    try:
+                        os.kill(escaped_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
 
 class StrictYamlTests(unittest.TestCase):
     def test_read_yaml_rejects_duplicate_top_level_key_with_source_lines(self) -> None:
