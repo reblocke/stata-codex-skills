@@ -6,6 +6,7 @@ from subprocess import CompletedProcess
 from tempfile import TemporaryDirectory
 import os
 import shlex
+import stat
 import subprocess
 import sys
 import unittest
@@ -524,6 +525,387 @@ class PinnedRefreshTests(unittest.TestCase):
                 (external_upstream / "sentinel.txt").read_text(encoding="utf-8"),
             )
             self.assertFalse((external_upstream / "stata-skill").exists())
+
+    def test_new_checkout_directory_replacement_is_preserved_and_refused(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-checkout-create-") as temp_root:
+            root = Path(temp_root)
+            repository_root = root / "repository"
+            checkout = repository_root / "raw" / "upstream" / "stata-skill"
+            displaced = checkout.parent / "displaced-stata-skill"
+            replacement_file = checkout / "preserve.txt"
+            checkout.parent.mkdir(parents=True)
+            real_open = os.open
+            opened_descriptors: list[int] = []
+            substituted = False
+
+            def substitute_before_created_directory_open(
+                path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                nonlocal substituted
+                if path == checkout.name and checkout.exists() and not substituted:
+                    checkout.rename(displaced)
+                    checkout.mkdir()
+                    replacement_file.write_bytes(b"preserve replacement\n")
+                    checkout.chmod(0o500)
+                    substituted = True
+                descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+                opened_descriptors.append(descriptor)
+                return descriptor
+
+            try:
+                with patch.object(
+                    fetch_upstream.os,
+                    "open",
+                    side_effect=substitute_before_created_directory_open,
+                ), self.assertRaisesRegex(
+                    RuntimeError,
+                    "Created directory changed while being initialized",
+                ):
+                    fetch_upstream.open_directory_chain(
+                        repository_root,
+                        Path("raw") / fetch_upstream.UPSTREAM_CHECKOUT_RELATIVE,
+                        create=True,
+                    )
+
+                self.assertTrue(substituted)
+                self.assertEqual(
+                    b"preserve replacement\n",
+                    replacement_file.read_bytes(),
+                )
+                self.assertEqual(0o500, stat.S_IMODE(checkout.stat().st_mode))
+                self.assertEqual(0o500, stat.S_IMODE(displaced.stat().st_mode))
+                self.assertEqual([], list(displaced.iterdir()))
+                for descriptor in opened_descriptors:
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
+            finally:
+                for directory in (checkout, displaced):
+                    if directory.exists():
+                        directory.chmod(0o700)
+
+    def test_new_report_directory_replacement_is_preserved_and_refused(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-report-create-") as temp_root:
+            repository_root = Path(temp_root) / "repository"
+            raw_root = repository_root / "raw"
+            report_parent = raw_root / "candidates"
+            displaced = raw_root / "displaced-candidates"
+            report_path = report_parent / "upstream-comparison.yaml"
+            replacement_file = report_parent / "preserve.txt"
+            raw_root.mkdir(parents=True)
+            real_open = os.open
+            opened_descriptors: list[int] = []
+            substituted = False
+
+            def substitute_before_created_directory_open(
+                path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                nonlocal substituted
+                if (
+                    path == report_parent.name
+                    and report_parent.exists()
+                    and not substituted
+                ):
+                    report_parent.rename(displaced)
+                    report_parent.mkdir()
+                    replacement_file.write_bytes(b"preserve replacement\n")
+                    report_parent.chmod(0o500)
+                    substituted = True
+                descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+                opened_descriptors.append(descriptor)
+                return descriptor
+
+            try:
+                with patch.multiple(
+                    fetch_upstream,
+                    REPO_ROOT=repository_root,
+                    RAW_ROOT=raw_root,
+                    UPSTREAM_REPO_DIR=(
+                        raw_root / fetch_upstream.UPSTREAM_CHECKOUT_RELATIVE
+                    ),
+                ), patch.object(
+                    fetch_upstream.os,
+                    "open",
+                    side_effect=substitute_before_created_directory_open,
+                ), self.assertRaisesRegex(
+                    RuntimeError,
+                    "Created directory changed while being initialized",
+                ):
+                    fetch_upstream.open_report_target(report_path)
+
+                self.assertTrue(substituted)
+                self.assertEqual(
+                    b"preserve replacement\n",
+                    replacement_file.read_bytes(),
+                )
+                self.assertEqual(0o500, stat.S_IMODE(report_parent.stat().st_mode))
+                self.assertEqual(0o500, stat.S_IMODE(displaced.stat().st_mode))
+                self.assertEqual([], list(displaced.iterdir()))
+                for descriptor in opened_descriptors:
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
+            finally:
+                for directory in (report_parent, displaced):
+                    if directory.exists():
+                        directory.chmod(0o700)
+
+    def test_new_git_directory_replacement_is_preserved_and_refused(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-git-create-") as temp_root:
+            repository_root = Path(temp_root) / "repository"
+            raw_root = repository_root / "raw"
+            checkout = raw_root / fetch_upstream.UPSTREAM_CHECKOUT_RELATIVE
+            git_directory = checkout / ".git"
+            displaced = checkout / ".git-displaced"
+            replacement_file = git_directory / "preserve.txt"
+            repository_root.mkdir()
+            real_open = os.open
+            opened_descriptors: list[int] = []
+            substituted = False
+
+            def substitute_before_created_directory_open(
+                path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+                flags: int,
+                mode: int = 0o777,
+                *,
+                dir_fd: int | None = None,
+            ) -> int:
+                nonlocal substituted
+                if path == ".git" and git_directory.exists() and not substituted:
+                    git_directory.rename(displaced)
+                    git_directory.mkdir()
+                    replacement_file.write_bytes(b"preserve replacement\n")
+                    git_directory.chmod(0o500)
+                    substituted = True
+                descriptor = real_open(path, flags, mode, dir_fd=dir_fd)
+                opened_descriptors.append(descriptor)
+                return descriptor
+
+            try:
+                with patch.multiple(
+                    fetch_upstream,
+                    REPO_ROOT=repository_root,
+                    RAW_ROOT=raw_root,
+                    UPSTREAM_REPO_DIR=checkout,
+                ), patch.object(
+                    fetch_upstream.os,
+                    "open",
+                    side_effect=substitute_before_created_directory_open,
+                ), patch.object(
+                    fetch_upstream,
+                    "checked_checkout_git",
+                    side_effect=AssertionError(
+                        "Git must not start after directory replacement"
+                    ),
+                ) as checked_git, self.assertRaisesRegex(
+                    RuntimeError,
+                    "Created directory changed while being initialized",
+                ):
+                    fetch_upstream.initialize_upstream_repo(allow_create=True)
+
+                checked_git.assert_not_called()
+                self.assertTrue(substituted)
+                self.assertEqual(
+                    b"preserve replacement\n",
+                    replacement_file.read_bytes(),
+                )
+                self.assertEqual(0o500, stat.S_IMODE(git_directory.stat().st_mode))
+                self.assertEqual(0o500, stat.S_IMODE(displaced.stat().st_mode))
+                self.assertEqual([], list(displaced.iterdir()))
+                for descriptor in opened_descriptors:
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
+            finally:
+                for directory in (git_directory, displaced):
+                    if directory.exists():
+                        directory.chmod(0o700)
+
+    def test_git_context_interruption_closes_unowned_directory_descriptor(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-git-context-") as temp_root:
+            repository_root = Path(temp_root) / "repository"
+            raw_root = repository_root / "raw"
+            checkout = raw_root / fetch_upstream.UPSTREAM_CHECKOUT_RELATIVE
+            repository_root.mkdir()
+            descriptor_root = (
+                Path("/proc/self/fd")
+                if Path("/proc/self/fd").is_dir()
+                else Path("/dev/fd")
+            )
+            descriptors_before = len(os.listdir(descriptor_root))
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=repository_root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+            ), patch.object(
+                fetch_upstream,
+                "GitMetadataContext",
+                side_effect=KeyboardInterrupt(),
+            ) as context_constructor, self.assertRaises(KeyboardInterrupt):
+                fetch_upstream.initialize_upstream_repo(allow_create=True)
+
+            context_constructor.assert_called_once()
+            self.assertEqual(
+                descriptors_before,
+                len(os.listdir(descriptor_root)),
+            )
+            self.assertEqual(
+                0o700,
+                stat.S_IMODE((checkout / ".git").stat().st_mode),
+            )
+            self.assertEqual([], list((checkout / ".git").iterdir()))
+
+    def test_existing_git_context_interruption_closes_git_descriptor(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-existing-context-") as temp_root:
+            checkout = Path(temp_root) / "checkout"
+            (checkout / ".git").mkdir(parents=True)
+            checkout_descriptor = os.open(
+                checkout,
+                fetch_upstream.DIRECTORY_OPEN_FLAGS,
+            )
+            descriptor_root = (
+                Path("/proc/self/fd")
+                if Path("/proc/self/fd").is_dir()
+                else Path("/dev/fd")
+            )
+            descriptors_before = len(os.listdir(descriptor_root))
+            try:
+                with patch.object(
+                    fetch_upstream,
+                    "GitMetadataContext",
+                    side_effect=KeyboardInterrupt(),
+                ), self.assertRaises(KeyboardInterrupt):
+                    fetch_upstream.open_git_metadata(checkout_descriptor)
+
+                self.assertEqual(
+                    descriptors_before,
+                    len(os.listdir(descriptor_root)),
+                )
+                os.fstat(checkout_descriptor)
+            finally:
+                os.close(checkout_descriptor)
+
+    def test_git_context_close_interruption_preserves_primary_and_closes_both(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-context-close-") as temp_root:
+            root = Path(temp_root)
+            checkout_descriptor = os.open(
+                root,
+                fetch_upstream.DIRECTORY_OPEN_FLAGS,
+            )
+            git_descriptor = os.dup(checkout_descriptor)
+            context = fetch_upstream.GitMetadataContext(
+                checkout_fd=checkout_descriptor,
+                git_dir_fd=git_descriptor,
+            )
+            primary_error = RuntimeError("primary refresh failure")
+            attempted: list[int] = []
+            real_close = os.close
+
+            def close_then_interrupt(descriptor: int) -> None:
+                attempted.append(descriptor)
+                real_close(descriptor)
+                if descriptor == git_descriptor:
+                    raise KeyboardInterrupt("first close interrupted")
+
+            with patch.object(
+                fetch_upstream.os,
+                "close",
+                side_effect=close_then_interrupt,
+            ), self.assertRaises(RuntimeError) as caught:
+                with context:
+                    raise primary_error
+
+            self.assertIs(primary_error, caught.exception)
+            self.assertEqual(
+                [git_descriptor, checkout_descriptor],
+                attempted,
+            )
+            for descriptor in (git_descriptor, checkout_descriptor):
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+            self.assertTrue(getattr(primary_error, "__notes__", ()))
+
+    def test_report_target_close_interruption_preserves_primary(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="pinned-target-close-") as temp_root:
+            root = Path(temp_root)
+            descriptor = os.open(
+                root,
+                fetch_upstream.DIRECTORY_OPEN_FLAGS,
+            )
+            target = fetch_upstream.ReportTarget(
+                path=root / "upstream-comparison.yaml",
+                parent_fd=descriptor,
+            )
+            primary_error = RuntimeError("primary report failure")
+            attempted: list[int] = []
+            real_close = os.close
+
+            def close_then_interrupt(observed: int) -> None:
+                attempted.append(observed)
+                real_close(observed)
+                raise KeyboardInterrupt("report close interrupted")
+
+            with patch.object(
+                fetch_upstream.os,
+                "close",
+                side_effect=close_then_interrupt,
+            ), self.assertRaises(RuntimeError) as caught:
+                with target:
+                    raise primary_error
+
+            self.assertIs(primary_error, caught.exception)
+            self.assertEqual([descriptor], attempted)
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
+            self.assertTrue(getattr(primary_error, "__notes__", ()))
+
+    def test_report_target_standalone_close_failure_surfaces(self) -> None:
+        with TemporaryDirectory(prefix="pinned-target-close-") as temp_root:
+            root = Path(temp_root)
+            descriptor = os.open(
+                root,
+                fetch_upstream.DIRECTORY_OPEN_FLAGS,
+            )
+            target = fetch_upstream.ReportTarget(
+                path=root / "upstream-comparison.yaml",
+                parent_fd=descriptor,
+            )
+            real_close = os.close
+
+            def close_then_fail(observed: int) -> None:
+                real_close(observed)
+                raise OSError("report close failed")
+
+            with patch.object(
+                fetch_upstream.os,
+                "close",
+                side_effect=close_then_fail,
+            ), self.assertRaisesRegex(OSError, "report close failed"):
+                target.close()
+
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
 
     def test_clean_exact_origin_checkout_is_adopted_once(self) -> None:
         with TemporaryDirectory(prefix="pinned-unowned-checkout-") as temp_root:

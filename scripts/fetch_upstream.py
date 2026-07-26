@@ -67,8 +67,26 @@ class ReportTarget:
     def name(self) -> str:
         return self.path.name
 
-    def close(self) -> None:
-        os.close(self.parent_fd)
+    def close(
+        self,
+        primary_error: BaseException | None = None,
+    ) -> None:
+        finalize_directory_descriptors(
+            [self.parent_fd],
+            primary_error=primary_error,
+        )
+
+    def __enter__(self) -> ReportTarget:
+        return self
+
+    def __exit__(
+        self,
+        _exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        _traceback: object | None,
+    ) -> bool:
+        self.close(primary_error=exception)
+        return False
 
 
 @dataclass
@@ -76,9 +94,26 @@ class GitMetadataContext:
     checkout_fd: int
     git_dir_fd: int
 
-    def close(self) -> None:
-        os.close(self.git_dir_fd)
-        os.close(self.checkout_fd)
+    def close(
+        self,
+        primary_error: BaseException | None = None,
+    ) -> None:
+        finalize_directory_descriptors(
+            [self.checkout_fd, self.git_dir_fd],
+            primary_error=primary_error,
+        )
+
+    def __enter__(self) -> GitMetadataContext:
+        return self
+
+    def __exit__(
+        self,
+        _exception_type: type[BaseException] | None,
+        exception: BaseException | None,
+        _traceback: object | None,
+    ) -> bool:
+        self.close(primary_error=exception)
+        return False
 
 
 @dataclass(frozen=True)
@@ -125,6 +160,138 @@ def validate_repository_layout() -> tuple[Path, Path]:
     return repository_root, raw_root
 
 
+def close_directory_descriptors(
+    descriptors: list[int],
+) -> list[BaseException]:
+    """Attempt each descriptor close once and return every close failure."""
+
+    close_errors: list[BaseException] = []
+    closed_descriptors: set[int] = set()
+    for descriptor in reversed(descriptors):
+        if descriptor in closed_descriptors:
+            continue
+        closed_descriptors.add(descriptor)
+        try:
+            os.close(descriptor)
+        except BaseException as error:
+            close_errors.append(error)
+    return close_errors
+
+
+def note_directory_close_failures(
+    error: BaseException,
+    close_errors: list[BaseException],
+) -> None:
+    if close_errors:
+        try:
+            error.add_note(
+                "Additionally failed to close one or more directory "
+                "descriptors: "
+                + "; ".join(
+                    f"{type(close_error).__name__}: {close_error}"
+                    for close_error in close_errors
+                )
+            )
+        except BaseException:
+            pass
+
+
+def finalize_directory_descriptors(
+    descriptors: list[int],
+    *,
+    primary_error: BaseException | None = None,
+) -> None:
+    """Close every descriptor without replacing an active operation failure."""
+
+    close_errors = close_directory_descriptors(descriptors)
+    if primary_error is not None:
+        note_directory_close_failures(primary_error, close_errors)
+        return
+    if close_errors:
+        first_error = close_errors.pop(0)
+        note_directory_close_failures(first_error, close_errors)
+        raise first_error
+
+
+def create_directory_component(
+    parent_fd: int,
+    name: str,
+    *,
+    label: Path | str,
+) -> int:
+    """Create, bind, and durably promote one otherwise-missing directory."""
+
+    directory_fd: int | None = None
+    try:
+        os.mkdir(name, mode=0o500, dir_fd=parent_fd)
+        created = os.stat(
+            name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(created.st_mode)
+            or stat.S_IMODE(created.st_mode) != 0o500
+        ):
+            raise RuntimeError(
+                f"Created directory is not safely initialized: {label}"
+            )
+
+        directory_fd = os.open(name, DIRECTORY_OPEN_FLAGS, dir_fd=parent_fd)
+        created_identity = (created.st_dev, created.st_ino)
+        held = os.fstat(directory_fd)
+        observed = os.stat(
+            name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if (
+            (held.st_dev, held.st_ino) != created_identity
+            or (observed.st_dev, observed.st_ino) != created_identity
+            or not stat.S_ISDIR(held.st_mode)
+            or not stat.S_ISDIR(observed.st_mode)
+            or stat.S_IMODE(held.st_mode) != 0o500
+            or stat.S_IMODE(observed.st_mode) != 0o500
+            or os.listdir(directory_fd)
+        ):
+            raise RuntimeError(
+                f"Created directory changed while being initialized: {label}"
+            )
+
+        os.fchmod(directory_fd, 0o700)
+        held = os.fstat(directory_fd)
+        observed = os.stat(
+            name,
+            dir_fd=parent_fd,
+            follow_symlinks=False,
+        )
+        if (
+            (held.st_dev, held.st_ino) != created_identity
+            or (observed.st_dev, observed.st_ino) != created_identity
+            or not stat.S_ISDIR(held.st_mode)
+            or not stat.S_ISDIR(observed.st_mode)
+            or stat.S_IMODE(held.st_mode) != 0o700
+            or stat.S_IMODE(observed.st_mode) != 0o700
+            or os.listdir(directory_fd)
+        ):
+            raise RuntimeError(
+                f"Created directory changed while being finalized: {label}"
+            )
+        os.fsync(directory_fd)
+        os.fsync(parent_fd)
+        return directory_fd
+    except BaseException as error:
+        close_errors = close_directory_descriptors(
+            [] if directory_fd is None else [directory_fd]
+        )
+        if isinstance(error, OSError):
+            failure = RuntimeError(f"Could not create safe directory {label}: {error}")
+            note_directory_close_failures(failure, close_errors)
+            raise failure from error
+        note_directory_close_failures(error, close_errors)
+        raise
+
+
 def open_directory_chain(
     repository_root: Path,
     relative_path: Path,
@@ -137,36 +304,47 @@ def open_directory_chain(
         part in {"", ".", ".."} for part in relative_path.parts
     ):
         raise RuntimeError(f"Unsafe repository-relative directory: {relative_path}")
+    open_descriptors: list[int] = []
     try:
-        current_fd = os.open(repository_root, DIRECTORY_OPEN_FLAGS)
+        repository_fd = os.open(repository_root, DIRECTORY_OPEN_FLAGS)
     except OSError as error:
         raise RuntimeError(
             f"Repository root must be a real, non-symlink directory: {error}"
         ) from error
+    open_descriptors.append(repository_fd)
     try:
         for part in relative_path.parts:
+            current_fd = open_descriptors[-1]
             try:
                 next_fd = os.open(part, DIRECTORY_OPEN_FLAGS, dir_fd=current_fd)
             except FileNotFoundError:
                 if not create:
                     raise
-                try:
-                    os.mkdir(part, mode=0o700, dir_fd=current_fd)
-                    next_fd = os.open(part, DIRECTORY_OPEN_FLAGS, dir_fd=current_fd)
-                except OSError as error:
-                    raise RuntimeError(
-                        f"Could not create safe directory {relative_path}: {error}"
-                    ) from error
+                next_fd = create_directory_component(
+                    current_fd,
+                    part,
+                    label=relative_path,
+                )
             except OSError as error:
                 raise RuntimeError(
                     f"Directory path must not contain symlinks: {relative_path}: {error}"
                 ) from error
-            os.close(current_fd)
-            current_fd = next_fd
-        return current_fd
-    except BaseException:
-        os.close(current_fd)
+            open_descriptors.append(next_fd)
+        result_fd = open_descriptors.pop()
+    except BaseException as error:
+        note_directory_close_failures(
+            error,
+            close_directory_descriptors(open_descriptors),
+        )
         raise
+
+    close_errors = close_directory_descriptors(open_descriptors)
+    if close_errors:
+        close_errors.extend(close_directory_descriptors([result_fd]))
+        primary_error = close_errors.pop(0)
+        note_directory_close_failures(primary_error, close_errors)
+        raise primary_error
+    return result_fd
 
 
 def assert_checkout_identity(checkout_fd: int) -> None:
@@ -198,7 +376,17 @@ def open_git_metadata(checkout_fd: int) -> GitMetadataContext:
             "Raw upstream refresh requires a real, dedicated .git directory; "
             "linked worktrees are not supported"
         ) from error
-    return GitMetadataContext(checkout_fd=checkout_fd, git_dir_fd=git_dir_fd)
+    try:
+        return GitMetadataContext(
+            checkout_fd=checkout_fd,
+            git_dir_fd=git_dir_fd,
+        )
+    except BaseException as error:
+        note_directory_close_failures(
+            error,
+            close_directory_descriptors([git_dir_fd]),
+        )
+        raise
 
 
 def read_bounded_regular_file(
@@ -1097,6 +1285,7 @@ def initialize_upstream_repo(*, allow_create: bool) -> GitMetadataContext:
         created = True
 
     context: GitMetadataContext | None = None
+    unowned_git_dir_fd: int | None = None
     try:
         assert_checkout_identity(checkout_fd)
         if created:
@@ -1104,13 +1293,16 @@ def initialize_upstream_repo(*, allow_create: bool) -> GitMetadataContext:
                 raise RuntimeError(
                     "New raw upstream checkout directory is unexpectedly nonempty"
                 )
-            try:
-                os.mkdir(".git", mode=0o700, dir_fd=checkout_fd)
-            except OSError as error:
-                raise RuntimeError(
-                    "Could not create dedicated Git metadata directory"
-                ) from error
-            context = open_git_metadata(checkout_fd)
+            unowned_git_dir_fd = create_directory_component(
+                checkout_fd,
+                ".git",
+                label=UPSTREAM_CHECKOUT_RELATIVE / ".git",
+            )
+            context = GitMetadataContext(
+                checkout_fd=checkout_fd,
+                git_dir_fd=unowned_git_dir_fd,
+            )
+            unowned_git_dir_fd = None
             checked_checkout_git(
                 ["git", "init"],
                 context,
@@ -1164,11 +1356,16 @@ def initialize_upstream_repo(*, allow_create: bool) -> GitMetadataContext:
             require_clean_upstream_repo(context)
             assert_git_metadata_identity(context)
             write_checkout_owner_marker(context)
-    except BaseException:
+    except BaseException as error:
+        descriptors = [checkout_fd]
         if context is not None:
-            context.close()
-        else:
-            os.close(checkout_fd)
+            descriptors.append(context.git_dir_fd)
+        elif unowned_git_dir_fd is not None:
+            descriptors.append(unowned_git_dir_fd)
+        note_directory_close_failures(
+            error,
+            close_directory_descriptors(descriptors),
+        )
         raise
     return context
 
@@ -1201,7 +1398,7 @@ def refresh_upstream_repo(upstream_ref: str, *, offline: bool = False) -> None:
     """
 
     context = initialize_upstream_repo(allow_create=not offline)
-    try:
+    with context:
         require_clean_upstream_repo(context)
         assert_git_metadata_identity(context)
         if not offline:
@@ -1266,8 +1463,6 @@ def refresh_upstream_repo(upstream_ref: str, *, offline: bool = False) -> None:
                 symbolic_head.stderr.strip()
                 or "Could not verify detached upstream checkout"
             )
-    finally:
-        context.close()
 
 
 def upstream_commit(context: GitMetadataContext) -> str:
@@ -1331,7 +1526,7 @@ def tracked_markdown_inventory(
 
 def build_inventory() -> dict:
     context = initialize_upstream_repo(allow_create=False)
-    try:
+    with context:
         inventory: dict[str, list[dict]] = {}
         for skill_key, relative_root in UPSTREAM_ROOTS.items():
             inventory[skill_key] = tracked_markdown_inventory(
@@ -1345,8 +1540,6 @@ def build_inventory() -> dict:
         }
         assert_git_metadata_identity(context)
         return result
-    finally:
-        context.close()
 
 
 def inventory_by_path(inventory: dict) -> dict[str, str]:
@@ -2305,32 +2498,39 @@ def main(argv: list[str] | None = None) -> int:
     target: ReportTarget | None = None
     reviewed_lock: dict | None = None
     preserved_report: PreservedReport | None = None
+    operation_error_reported = False
     try:
         report_path = validate_report_path(args.report)
         reviewed_lock = read_reviewed_upstream_lock()
         target = open_report_target(report_path)
-        preserved_report = remove_stale_report(target)
-        refresh_upstream_repo(args.upstream_ref, offline=args.offline)
-        inventory = build_inventory()
-        if inventory["commit"] != args.upstream_ref:
-            raise RuntimeError("Candidate inventory does not match the requested commit")
-        report = build_comparison_report(
-            inventory,
-            args.upstream_ref,
-            reviewed_lock=reviewed_lock,
-        )
-        write_report_atomically(target, report)
-    except RuntimeError as error:
-        print(f"ERROR: {error}")
-        if target is not None and preserved_report is not None:
-            print(
-                "RECOVERY: "
-                f"{describe_preserved_report(target, preserved_report)}"
-            )
+        with target:
+            try:
+                preserved_report = remove_stale_report(target)
+                refresh_upstream_repo(args.upstream_ref, offline=args.offline)
+                inventory = build_inventory()
+                if inventory["commit"] != args.upstream_ref:
+                    raise RuntimeError(
+                        "Candidate inventory does not match the requested commit"
+                    )
+                report = build_comparison_report(
+                    inventory,
+                    args.upstream_ref,
+                    reviewed_lock=reviewed_lock,
+                )
+                write_report_atomically(target, report)
+            except RuntimeError as error:
+                print(f"ERROR: {error}")
+                if preserved_report is not None:
+                    print(
+                        "RECOVERY: "
+                        f"{describe_preserved_report(target, preserved_report)}"
+                    )
+                operation_error_reported = True
+                raise
+    except (OSError, RuntimeError) as error:
+        if not operation_error_reported:
+            print(f"ERROR: {error}")
         return 1
-    finally:
-        if target is not None:
-            target.close()
     print(f"Wrote ignored upstream comparison {report_path}")
     print("No curated content, lock, or manifest files were changed")
     return 0
