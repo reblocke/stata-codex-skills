@@ -11,6 +11,12 @@ aliases:
 - percentile capping
 - trimming
 - outlier treatment
+routing_terms:
+- winsor2 by-group percentile capping
+- winsor without overwriting the source variable
+- trim extreme observations by percentile
+- cuts and suffix options in winsor2
+- sensitivity analysis for outlier treatment
 commands:
 - winsor
 - winsor2

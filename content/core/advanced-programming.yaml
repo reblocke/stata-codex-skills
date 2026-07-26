@@ -8,6 +8,14 @@ trigger: >-
   results, managing program versions, preserving data, and writing estimation-command interfaces.
 commands: [program define, syntax, marksample, return, ereturn, preserve, restore, version]
 aliases: [ado programming, Stata program, rclass, eclass, syntax parser, returned results]
+routing_terms:
+- program define
+- syntax varlist parser
+- rclass program
+- eclass estimation command
+- marksample qualifier handling
+- ereturn post results
+- ado command development
 source_topics: [program, syntax, return, ereturn]
 syntax_patterns:
 - program define command_name, rclass

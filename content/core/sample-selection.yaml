@@ -8,6 +8,13 @@ trigger: >-
   heckman or heckprobit, a selection equation, exclusion restrictions, inverse Mills ratios, or selection correction.
 commands: [heckman, heckprobit, mills(), predict]
 aliases: [sample selection, Heckman correction, Heckit, inverse Mills ratio, selection equation]
+routing_terms:
+- heckman selection model
+- heckprobit selection model
+- inverse Mills ratio from heckman
+- exclusion restriction for selection
+- nonrandom outcome observation
+- two-step Heckman correction
 source_topics: [heckman, heckprobit]
 syntax_patterns:
 - heckman outcome x1 x2, select(observed = z1 z2 x1 x2)

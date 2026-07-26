@@ -8,6 +8,13 @@ trigger: >-
   environment discovery, quoting paths, subprocess return codes, and controlled data exchange with external tools.
 commands: [python, python query, shell, java, javacall, Stata Function Interface]
 aliases: [Python integration, PyStata, shell command, Java plugin, external process, SFI]
+routing_terms:
+- python query in Stata
+- PyStata setup
+- shell command from Stata
+- javacall plugin invocation
+- SFI data exchange
+- external executable return code
 source_topics: [pystata_intro, shell, java_plugin]
 syntax_patterns:
 - python script "analysis.py", args("--input" "data.csv")

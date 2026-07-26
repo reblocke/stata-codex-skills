@@ -11,6 +11,12 @@ aliases:
 - difference GMM
 - system GMM
 - dynamic panel
+routing_terms:
+- xtabond2 dynamic-panel GMM
+- Arellano-Bond difference GMM
+- Blundell-Bond system GMM
+- collapse dynamic-panel instruments
+- Hansen and serial-correlation tests after xtabond2
 commands:
 - xtabond2
 source_topics:

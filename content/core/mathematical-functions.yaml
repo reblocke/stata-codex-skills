@@ -18,6 +18,14 @@ commands:
 - rnormal()
 - set seed
 aliases: [math function, statistical function, random number, RNG, probability function, transformation]
+routing_terms:
+- runiform() random draws
+- rnormal() random draws
+- normal() probability
+- invnormal() quantile
+- logarithmic transformation with ln()
+- reproducible random-number seed
+- round() numeric values
 source_topics:
 - functions
 - random_number_functions

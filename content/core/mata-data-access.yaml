@@ -8,6 +8,13 @@ trigger: >-
   respecting if/in samples, and exchanging scalars, macros, and matrices through st_*() functions.
 commands: [st_data(), st_view(), st_store(), st_addvar(), st_matrix(), st_local(), st_numscalar()]
 aliases: [Mata Stata interface, st_data, st_view, st_store, data access]
+routing_terms:
+- st_data() copy
+- st_view() view
+- st_store() writeback
+- st_addvar() from Mata
+- st_local() exchange
+- Mata access to active Stata data
 source_topics: [mf_st_data, mf_st_store]
 syntax_patterns:
 - "mata: X = st_data(., (\"x1\", \"x2\"), \"touse\")"

@@ -9,6 +9,12 @@ aliases:
 - immediate regression export
 - Word regression table
 - Excel regression table
+routing_terms:
+- regression table
+- outreg2 immediate estimation export
+- append each regression to Word or Excel
+- one-command regression table export
+- export without storing a model collection
 commands:
 - outreg2
 source_topics:

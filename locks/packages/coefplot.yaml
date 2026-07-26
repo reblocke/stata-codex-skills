@@ -1,0 +1,10 @@
+schema_version: 1
+slug: coefplot
+distributions:
+- source: http://fmwww.bc.edu/repec/bocode/c
+  descriptor: coefplot.pkg
+  distribution_date: '20250822'
+  files:
+    c/coefplot.ado: 7c555af8d3a3efa1d72861988259ca4d2b67d52516bb87d82f21f31b639517f3
+    c/coefplot.sthlp: 9b31f0702281293a698d618495a024f47cb0a3ede72fa548884dd52debb1207b
+generated_files: {}

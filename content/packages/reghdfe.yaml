@@ -12,6 +12,12 @@ aliases:
 - high-dimensional fixed effects
 - multi-way fixed effects
 - HDFE
+routing_terms:
+- reghdfe absorbed fixed effects
+- multiple high-dimensional fixed effects
+- multi-way clustered HDFE regression
+- singleton handling in reghdfe
+- fast within transformation with ftools
 commands:
 - reghdfe
 - ftools

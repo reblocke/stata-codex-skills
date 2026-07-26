@@ -8,6 +8,14 @@ trigger: >-
   lag-order selection, forecasts, and impulse-response functions with tsset, arima, var, and irf.
 commands: [tsset, tsreport, arima, var, varsoc, irf, forecast]
 aliases: [time series, ARIMA, ARMA, VAR, lag operator, impulse response, IRF]
+routing_terms:
+- tsset time-series data
+- arima model in Stata
+- vector autoregression with var
+- varsoc lag-order selection
+- irf impulse response
+- forecast solve
+- time-series lag and difference operators
 source_topics: [tsset, arima, var, irf]
 syntax_patterns:
 - tsset calendar_month, monthly

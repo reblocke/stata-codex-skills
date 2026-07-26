@@ -8,6 +8,10 @@ import argparse
 import plistlib
 import tempfile
 
+from runtime_guard import require_supported_runtime
+
+require_supported_runtime()
+
 from libskillpack import (
     CONTENT_ROOT,
     LOCK_ROOT,

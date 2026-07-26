@@ -8,6 +8,14 @@ trigger: >-
   overlap, common support, balance assessment, average treatment effects, and matched-sample diagnostics.
 commands: [teffects psmatch, teffects nnmatch, tebalance summarize, tebalance density, predict]
 aliases: [propensity-score matching, propensity score matching, PSM, nearest-neighbor matching, covariate balance]
+routing_terms:
+- propensity score matching
+- teffects psmatch
+- teffects nnmatch
+- tebalance after matching
+- propensity-score overlap check
+- nearest-neighbor matching in Stata
+- ATE from psmatch
 source_topics: [teffects_psmatch, teffects_nnmatch, tebalance]
 syntax_patterns:
 - teffects psmatch (outcome) (treated covariates), atet nneighbor(1)

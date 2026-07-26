@@ -16,6 +16,13 @@ commands:
 - save
 - clear
 aliases: [Stata basics, open dataset, inspect data, browse data, save dataset, sysuse]
+routing_terms:
+- first Stata session
+- sysuse auto
+- inspect a .dta dataset
+- describe variable metadata
+- browse observations interactively
+- reload a Stata dataset
 source_topics:
 - use
 - save

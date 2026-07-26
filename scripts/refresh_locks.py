@@ -10,6 +10,10 @@ import shutil
 import tempfile
 import uuid
 
+from runtime_guard import require_supported_runtime
+
+require_supported_runtime()
+
 from libskillpack import (
     CONTENT_ROOT,
     LOCK_ROOT,
@@ -32,7 +36,6 @@ from libskillpack import (
     write_yaml,
 )
 from validate_skill_pack import (
-    package_content_entries,
     parse_stata_track,
     sanitize_diagnostics,
 )
@@ -41,6 +44,60 @@ from validate_skill_pack import (
 CANDIDATE_ROOT = RAW_ROOT / "candidates"
 EXPECTED_UPSTREAM_COMMIT = "33a7efc85e92cd30edc7b907f1deb9d7038397bc"
 TRACK_METADATA_FILES = {"stata.trk", "backup.trk"}
+
+
+def validated_installable_package_entries() -> list[dict]:
+    """Validate package content before using any entry value as a path."""
+
+    from lint_skill_pack import lint_config, lint_entry
+
+    config = load_skill_config()
+    errors = lint_config(config)
+    if errors:
+        raise RuntimeError(
+            "Package content validation failed before refresh: "
+            + "; ".join(errors)
+        )
+
+    entries: list[dict] = []
+    seen_slugs: set[str] = set()
+    for skill_key, path, entry in iter_content_entries(CONTENT_ROOT, config):
+        if skill_key != "packages":
+            continue
+        errors.extend(
+            lint_entry(
+                skill_key,
+                path,
+                entry,
+                config["skills"]["packages"],
+            )
+        )
+        if not isinstance(entry, dict):
+            continue
+        slug = entry.get("slug")
+        if isinstance(slug, str):
+            if slug in seen_slugs:
+                errors.append(f"{path}: duplicate package slug {slug}")
+            else:
+                seen_slugs.add(slug)
+        if (
+            entry.get("validation_mode") == "stata"
+            and entry.get("install_commands")
+        ):
+            entries.append(entry)
+
+    if errors:
+        raise RuntimeError(
+            "Package content validation failed before refresh: "
+            + "; ".join(errors)
+        )
+    return sorted(
+        entries,
+        key=lambda entry: (
+            entry.get("order", 10**9),
+            entry.get("slug", ""),
+        ),
+    )
 
 
 def upstream_candidate() -> dict:
@@ -150,11 +207,20 @@ def plugin_sdk_candidate() -> dict:
     return {"schema_version": 1, "sources": refreshed}
 
 
-def package_lock_candidate(stata_binary: Path) -> dict:
+def package_lock_candidates(
+    stata_binary: Path,
+    selected_slugs: set[str] | None = None,
+) -> dict[str, dict]:
     packages: dict[str, dict] = {}
-    installable = [
-        entry for entry in package_content_entries() if entry.get("install_commands")
-    ]
+    installable = validated_installable_package_entries()
+    known_slugs = {entry["slug"] for entry in installable}
+    unknown = sorted((selected_slugs or set()) - known_slugs)
+    if unknown:
+        raise RuntimeError(f"Unknown package lock targets: {', '.join(unknown)}")
+    if selected_slugs:
+        installable = [
+            entry for entry in installable if entry["slug"] in selected_slugs
+        ]
     with tempfile.TemporaryDirectory(prefix="stata-package-lock-") as temp_root:
         work_root = Path(temp_root)
         for index, entry in enumerate(installable, start=1):
@@ -226,10 +292,12 @@ def package_lock_candidate(stata_binary: Path) -> dict:
                 and str(path.relative_to(plus_dir)) not in tracked_files
             }
             packages[slug] = {
+                "schema_version": 1,
+                "slug": slug,
                 "distributions": distributions,
                 "generated_files": generated_files,
             }
-    return {"schema_version": 1, "packages": packages}
+    return packages
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -239,6 +307,12 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         choices=("upstream", "stata-help", "plugin-sdk", "packages", "all"),
         required=True,
+    )
+    parser.add_argument(
+        "--package",
+        action="append",
+        dest="packages",
+        help="Refresh only this package lock candidate; repeat as needed.",
     )
     args = parser.parse_args(argv)
     targets = {
@@ -250,6 +324,8 @@ def main(argv: list[str] | None = None) -> int:
             else (target,)
         )
     }
+    if args.packages and "packages" not in targets:
+        parser.error("--package requires --target packages or --target all")
     builders = {
         "upstream": upstream_candidate,
         "stata-help": stata_help_candidate,
@@ -267,10 +343,14 @@ def main(argv: list[str] | None = None) -> int:
             stata_binary = detect_stata_binary()
             if stata_binary is None:
                 raise RuntimeError("Could not locate Stata for package lock refresh")
-            payload = package_lock_candidate(stata_binary)
-            destination = CANDIDATE_ROOT / "packages-lock.yaml"
-            write_yaml(destination, payload)
-            print(f"Wrote review candidate {destination}")
+            payloads = package_lock_candidates(
+                stata_binary,
+                set(args.packages) if args.packages else None,
+            )
+            for slug, payload in sorted(payloads.items()):
+                destination = CANDIDATE_ROOT / "packages" / f"{slug}.yaml"
+                write_yaml(destination, payload)
+                print(f"Wrote review candidate {destination}")
     except Exception as error:
         print(f"ERROR: {type(error).__name__}: {error}")
         return 1

@@ -16,6 +16,12 @@ aliases:
 - plugin package
 - platform binary
 - Stata package distribution
+routing_terms:
+- package platform-specific plugin binaries
+- stata.toc and pkg release manifest
+- ado wrapper for a plugin binary
+- sthlp documentation for a plugin
+- local net-install plugin test
 commands:
 - net install
 - net from

@@ -13,10 +13,15 @@ import stat
 import tempfile
 import uuid
 
+from runtime_guard import require_supported_runtime
+
+require_supported_runtime()
+
 from libskillpack import (
     BUILD_ROOT,
     CONTENT_ROOT,
     LOCK_ROOT,
+    PACKAGE_LOCK_ROOT,
     REPO_ROOT,
     iter_content_entries,
     load_skill_config,
@@ -170,14 +175,17 @@ def verify_package_install_lock(slug: str, plus_dir: Path) -> tuple[bool, str]:
     expected under the isolated PLUS directory.
     """
 
-    lock_path = LOCK_ROOT / "packages.yaml"
+    if not re.fullmatch(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", slug):
+        return False, f"Unsafe package lock slug: {slug!r}"
+    lock_path = PACKAGE_LOCK_ROOT / f"{slug}.yaml"
     lock = read_yaml(lock_path)
-    packages = lock.get("packages")
-    if lock.get("schema_version") != 1 or not isinstance(packages, dict):
+    if (
+        not isinstance(lock, dict)
+        or lock.get("schema_version") != 1
+        or lock.get("slug") != slug
+    ):
         return False, f"{lock_path}: invalid package lock"
-    package = packages.get(slug)
-    if not isinstance(package, dict):
-        return False, f"{lock_path}: missing package lock for {slug}"
+    package = lock
     distributions = package.get("distributions")
     if not isinstance(distributions, list) or not distributions:
         return False, f"{lock_path}: package {slug} has no locked distributions"

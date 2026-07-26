@@ -8,6 +8,14 @@ trigger: >-
   group and time definitions, aggregate treatment effects, parallel-trends checks, and Granger-type tests.
 commands: [didregress, xtdidregress, estat ptrends, estat granger, estat trendplots]
 aliases: [difference in differences, difference-in-differences, DID, DiD, parallel trends, treatment timing]
+routing_terms:
+- difference in differences
+- didregress
+- xtdidregress
+- estat ptrends
+- parallel-trends test after didregress
+- treatment timing in built-in DID
+- staggered panel DID with xtdidregress
 source_topics: [didregress, didregress_postestimation, did_intro]
 syntax_patterns:
 - didregress (outcome covariates) (treated), group(group_id) time(period)

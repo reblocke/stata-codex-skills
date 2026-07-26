@@ -8,6 +8,14 @@ trigger: >-
   and distribution checks with summarize, tabulate, tabstat, codebook, correlate, and pwcorr.
 commands: [summarize, tabulate, tabstat, codebook, correlate, pwcorr]
 aliases: [summary statistics, descriptive statistics, frequency table, crosstab, correlation]
+routing_terms:
+- summarize detail percentiles
+- tabstat by group
+- two-way frequency table
+- codebook variables
+- pwcorr with significance
+- distribution percentiles in Stata
+- cross-tabulation with tabulate
 source_topics: [summarize, tabulate, tabstat, codebook, correlate]
 syntax_patterns:
 - summarize price mpg, detail

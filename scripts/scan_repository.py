@@ -9,6 +9,10 @@ from pathlib import Path
 import re
 import stat
 
+from runtime_guard import require_supported_runtime
+
+require_supported_runtime()
+
 from libskillpack import REPO_ROOT
 from release_state import SourcePathInventory, source_path_inventory
 

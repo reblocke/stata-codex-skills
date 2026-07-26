@@ -69,7 +69,7 @@ stata-codex-skills/
 │   ├── packages/      # editable YAML source for community packages
 │   └── plugins/       # editable YAML source for plugin workflows
 ├── config/            # deterministic skill names, sections, and compatibility routes
-├── locks/             # reviewed upstream, Stata-help, package, and plugin-SDK locks
+├── locks/             # reviewed upstream, Stata-help, plugin-SDK, and per-package locks
 ├── manifests/         # generated provenance indexes; never publication authority
 ├── templates/         # Jinja templates for SKILL.md and reference pages
 ├── scripts/           # fetch, harvest, scaffold, render, lint, publish, validate
@@ -87,7 +87,8 @@ Also note:
 ## Requirements
 
 - `uv` 0.11.11 (enforced by `pyproject.toml` and pinned in CI)
-- Python 3.11 or newer, installed or managed by `uv`
+- Python 3.11.x, installed or managed by `uv` (pinned so Unicode routing and
+  fixture-integrity checks use one reproducible Unicode database)
 - Git
 
 `make build` and `make check` do not require Stata, the upstream checkout, or
@@ -294,8 +295,9 @@ Without step 2, an `AGENTS.md` file can mention the skills but Codex will not be
 When you update the repo, the normal order is:
 
 1. Edit the reviewed YAML files in `content/`.
-2. Regenerate structured cases with
-   `uv run --frozen python scripts/render_prompt_cases.py`.
+2. If routing behavior changed, independently edit the relevant structured
+   cases in `tests/prompts/cases.yaml`; do not derive them from the content
+   trigger being tested.
 3. Run `make check`.
 4. Run `make validate`.
 5. Run `make publish`.
@@ -382,8 +384,7 @@ deleting a concurrent replacement.
 - `scripts/harvest_stata_help.py`: resolves only exact help names or declared globs and writes a reviewable candidate report
 - `scripts/scaffold_content.py`: reports missing or empty curated fields and never rewrites content
 - `scripts/render_skills.py`: renders, validates, and atomically replaces the complete three-skill tree
-- `scripts/render_prompt_cases.py`: deterministically generates structured routing fixtures from every canonical reference plus boundary cases
-- `scripts/refresh_locks.py`: writes ignored lock candidates for explicit review; it never promotes them
+- `scripts/refresh_locks.py`: writes ignored lock candidates for explicit review, including repeatable `--package` selection for per-package locks; it never promotes them
 - `scripts/verify_locks.py`: verifies checked provenance locks, with optional live local/network checks
 - `scripts/lint_skill_pack.py`: validates schema quality, exact provenance, locks, prompt cases, generated routing, and metadata; its generated-drift render workspace is retained and reported
 - `scripts/check_determinism.py`: renders twice in clean retained roots, compares byte-level tree digests, and reports the outer workspace for explicit cleanup
@@ -459,8 +460,11 @@ tests remain documented local integrations because CI has no Stata license.
 
 - Static schema, provenance, lock, prompt-case, and generated-drift lint: pass
 - Python unit suite: pass (see the current CI run for the discovered test count)
-- Structured routing cases: 76 (63 canonical plus 13 boundary cases)
-- Fresh-agent forward routing: 76/76 selected the expected route and no forbidden route
+- Structured routing cases: 85 (63 canonical routes, 13 explicit route
+  boundaries, 1 alias-only route, 6 clarify cases, and 2 abstentions)
+- Manual fresh-agent forward routing: pending rerun for the independently
+  rewritten fixtures; `make check` validates their structure and coverage but
+  does not claim an agent actually followed them
 - Deterministic clean double render and repository secret/artifact scan: pass
 - `stata-core`: all 38 content-defined smoke tests passed
 - `stata-core` validator path handling: pass when the repo lives in a path with spaces

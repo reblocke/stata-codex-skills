@@ -8,6 +8,14 @@ trigger: >-
   pointers, structures, source files, compiled object files, and reusable Mata libraries.
 commands: [mata, function, for, if, return, mata mosave, mata mlib]
 aliases: [Mata programming, Mata function, Mata library, mlib, typed function]
+routing_terms:
+- accelerate a computational kernel beyond ado code
+- typed Mata function
+- compile with mata mosave
+- build a mata mlib library
+- Mata pointers and structures
+- Mata function arguments
+- reusable Mata source file
 source_topics: [m2_declarations, m2_for, m2_return, m2_syntax]
 syntax_patterns:
 - real matrix function transform(real matrix X)

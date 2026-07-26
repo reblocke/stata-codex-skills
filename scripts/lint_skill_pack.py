@@ -2,17 +2,25 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
 import argparse
 import re
+import stat
 import sys
 import tempfile
+import unicodedata
+
+from runtime_guard import require_supported_runtime
+
+require_supported_runtime()
 
 from libskillpack import (
     BUILD_ROOT,
     CONTENT_ROOT,
     LOCK_ROOT,
     MANIFEST_ROOT,
+    PACKAGE_LOCK_ROOT,
     PROMPT_CASES_PATH,
     REPO_ROOT,
     UPSTREAM_REPO_URL,
@@ -31,6 +39,7 @@ REQUIRED_FIELDS = {
     "title",
     "trigger",
     "aliases",
+    "routing_terms",
     "commands",
     "source_topics",
     "syntax_patterns",
@@ -46,6 +55,7 @@ REQUIRED_FIELDS = {
 }
 LIST_FIELDS = {
     "aliases",
+    "routing_terms",
     "commands",
     "source_topics",
     "syntax_patterns",
@@ -57,6 +67,7 @@ LIST_FIELDS = {
 }
 NONEMPTY_LIST_FIELDS = {
     "aliases",
+    "routing_terms",
     "commands",
     "source_topics",
     "syntax_patterns",
@@ -77,6 +88,20 @@ GENERIC_TEXT = {
     "plan the interface and the validation path before writing plugin code or wrapper ado-files",
     "use batch-mode stata logs and compiler output together when debugging plugin failures",
     "a plugin crash terminates the stata session so treat every memory access and return code as high risk",
+}
+GENERIC_ROUTING_TERMS = {
+    "do",
+    "for",
+    "help",
+    "if",
+    "predict",
+    "replace",
+    "return",
+    "run",
+    "save",
+    "search",
+    "use",
+    "which",
 }
 UNSAFE_INSTALL_PATTERNS = (
     (re.compile(r"(?i),\s*replace\b"), "must not use replace by default"),
@@ -103,16 +128,803 @@ MANIFEST_EXECUTABLE_FIELDS = {
     "section",
     "title",
     "trigger",
+    "routing_terms",
     "commands",
     "validation_case",
     "install_commands",
     "smoke_test",
 }
 TRACK_METADATA_FILES = {"stata.trk", "backup.trk"}
+STABLE_WHITESPACE = frozenset(
+    " \t\n\r\v\f"
+    "\u0085\u00a0\u1680"
+    "\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a"
+    "\u2028\u2029\u202f\u205f\u3000"
+)
+UNICODE_PROSE_SEPARATORS = frozenset(
+    "\u00ab\u00b7\u00bb"
+    "\u2010\u2011\u2012\u2013\u2014\u2015"
+    "\u2018\u2019\u201a\u201b\u201c\u201d\u201e\u201f"
+    "\u2022\u2026\u2027"
+    "\u2039\u203a\u2044\u2215"
+)
+ROUTING_ASCII_SYMBOLS = frozenset("_+#")
+COPY_ASCII_SYMBOLS = frozenset("+#")
+COPY_SYMBOL_TRANSLATION = str.maketrans("", "", "+#")
+MEANINGFUL_COPY_SYMBOL_TOKENS = frozenset({"c++", "c#"})
+OUTLINED_LATIN_TRANSLATION = str.maketrans(
+    {
+        0x1CCD6 + offset: chr(ord("A") + offset)
+        for offset in range(26)
+    }
+)
+MIN_COMPACT_TRIGGER_LENGTH = 48
+MAX_COPY_TEXT_LENGTH = 4096
+MAX_COPY_TOKEN_LENGTH = 512
+MAX_FUSED_SEGMENT_TOKEN_LENGTH = 96
+COPY_SIMILARITY_GRAM_SIZE = 3
+COPY_SIMILARITY_PERCENT = 85
+COPY_SIMILARITY_THRESHOLD = COPY_SIMILARITY_PERCENT / 100
+COPY_MAX_EDIT_PERCENT = 100 - COPY_SIMILARITY_PERCENT
+
+
+@dataclass(frozen=True)
+class CopyForms:
+    """Obfuscation-resistant text with and without real whitespace."""
+
+    tokens: tuple[str, ...]
+    spaced: str
+    compact: str
+    plain_tokens: tuple[str, ...]
+    plain_spaced: str
+    plain_compact: str
+
+
+def nfkc_casefold(value: str) -> str:
+    """Return stable compatibility-normalized, case-insensitive text."""
+
+    value = value.translate(OUTLINED_LATIN_TRANSLATION)
+    compatible = unicodedata.normalize("NFKC", value)
+    return unicodedata.normalize("NFKC", compatible.casefold())
 
 
 def normalized_text(value: str) -> str:
-    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+    """Normalize prose without changing word-count semantics."""
+
+    folded = nfkc_casefold(value)
+    prose = "".join(
+        character if character.isalnum() else " "
+        for character in folded
+    )
+    return " ".join(prose.split())
+
+
+def copy_forms(value: str) -> CopyForms:
+    """Return stable hard-token and compact forms for integrity checks."""
+
+    folded = unicodedata.normalize("NFKD", nfkc_casefold(value))
+    tokens: list[str] = []
+    token: list[str] = []
+    for character in folded:
+        if character in STABLE_WHITESPACE:
+            if token:
+                tokens.append("".join(token))
+                token = []
+            continue
+        if character.isascii():
+            if character.isalnum() or character in COPY_ASCII_SYMBOLS:
+                token.append(character)
+            continue
+        if unicodedata.category(character)[:1] in {"L", "N"}:
+            token.append(character)
+    if token:
+        tokens.append("".join(token))
+    frozen_tokens = tuple(tokens)
+    plain_tokens = tuple(
+        plain_token
+        for raw_token in frozen_tokens
+        if (plain_token := raw_token.translate(COPY_SYMBOL_TRANSLATION))
+    )
+    return CopyForms(
+        tokens=frozen_tokens,
+        spaced=" ".join(frozen_tokens),
+        compact="".join(frozen_tokens),
+        plain_tokens=plain_tokens,
+        plain_spaced=" ".join(plain_tokens),
+        plain_compact="".join(plain_tokens),
+    )
+
+
+def copy_forms_within_limits(forms: CopyForms) -> bool:
+    """Return whether normalized integrity forms stay within fixed bounds."""
+
+    return (
+        len(forms.spaced) <= MAX_COPY_TEXT_LENGTH
+        and len(forms.compact) <= MAX_COPY_TEXT_LENGTH
+        and all(
+            len(token) <= MAX_COPY_TOKEN_LENGTH
+            for token in forms.tokens
+        )
+    )
+
+
+def copy_text_limit_error(value: str) -> str | None:
+    """Describe the first raw or normalized integrity limit violation."""
+
+    if len(value) > MAX_COPY_TEXT_LENGTH:
+        return f"exceeds {MAX_COPY_TEXT_LENGTH} characters"
+    forms = copy_forms(value)
+    if (
+        len(forms.spaced) > MAX_COPY_TEXT_LENGTH
+        or len(forms.compact) > MAX_COPY_TEXT_LENGTH
+    ):
+        return (
+            f"normalizes beyond {MAX_COPY_TEXT_LENGTH} characters"
+        )
+    if any(
+        len(token) > MAX_COPY_TOKEN_LENGTH
+        for token in forms.tokens
+    ):
+        return (
+            f"contains a token longer than "
+            f"{MAX_COPY_TOKEN_LENGTH} characters"
+        )
+    return None
+
+
+def copy_text_within_limits(value: str) -> bool:
+    """Return whether integrity matching can process text within fixed bounds."""
+
+    return copy_text_limit_error(value) is None
+
+
+def bounded_copy_similarity(left: str, right: str) -> float:
+    """Return linear-time ordered and trigram similarity for bounded copy text."""
+
+    if left == right:
+        return 1.0
+    positional_similarity = 0.0
+    if left and len(left) == len(right):
+        positional_similarity = sum(
+            left_character == right_character
+            for left_character, right_character in zip(left, right)
+        ) / len(left)
+    gram_size = COPY_SIMILARITY_GRAM_SIZE
+    if min(len(left), len(right)) < gram_size:
+        return positional_similarity
+    left_grams = Counter(
+        left[index : index + gram_size]
+        for index in range(len(left) - gram_size + 1)
+    )
+    right_grams = Counter(
+        right[index : index + gram_size]
+        for index in range(len(right) - gram_size + 1)
+    )
+    overlap = sum((left_grams & right_grams).values())
+    trigram_similarity = (2 * overlap) / (
+        len(left) + len(right) - (2 * gram_size) + 2
+    )
+    return max(positional_similarity, trigram_similarity)
+
+
+def bounded_edit_similar(left: str, right: str) -> bool:
+    """Return whether bit-parallel edit distance meets the copy threshold."""
+
+    maximum_length = max(len(left), len(right))
+    if maximum_length == 0:
+        return True
+    maximum_edits = (
+        maximum_length * COPY_MAX_EDIT_PERCENT
+    ) // 100
+    if abs(len(left) - len(right)) > maximum_edits:
+        return False
+    if not left or not right:
+        return maximum_length <= maximum_edits
+    if len(left) > len(right):
+        left, right = right, left
+
+    pattern_length = len(left)
+    bitmask = (1 << pattern_length) - 1
+    high_bit = 1 << (pattern_length - 1)
+    character_masks: dict[str, int] = {}
+    for index, character in enumerate(left):
+        character_masks[character] = (
+            character_masks.get(character, 0) | (1 << index)
+        )
+
+    positive = bitmask
+    negative = 0
+    score = pattern_length
+    text_length = len(right)
+    for index, character in enumerate(right, start=1):
+        equal = character_masks.get(character, 0)
+        vertical = equal | negative
+        horizontal = (
+            ((((equal & positive) + positive) ^ positive) | equal)
+            & bitmask
+        )
+        positive_horizontal = (
+            negative | ~(horizontal | positive)
+        ) & bitmask
+        negative_horizontal = positive & horizontal
+        if positive_horizontal & high_bit:
+            score += 1
+        elif negative_horizontal & high_bit:
+            score -= 1
+        positive_horizontal = (
+            (positive_horizontal << 1) | 1
+        ) & bitmask
+        negative_horizontal = (
+            negative_horizontal << 1
+        ) & bitmask
+        positive = (
+            negative_horizontal
+            | ~(vertical | positive_horizontal)
+        ) & bitmask
+        negative = (positive_horizontal & vertical) & bitmask
+        if score - (text_length - index) > maximum_edits:
+            return False
+
+    return score <= maximum_edits
+
+
+def bounded_copy_near_verbatim(left: str, right: str) -> bool:
+    """Return whether bounded text meets the near-verbatim copy policy."""
+
+    return (
+        bounded_copy_similarity(left, right)
+        >= COPY_SIMILARITY_THRESHOLD
+        or bounded_edit_similar(left, right)
+    )
+
+
+def normalized_copy_text(value: str) -> str:
+    """Normalize integrity text without collapsing real whitespace."""
+
+    return copy_forms(value).plain_spaced
+
+
+def signature_aware_copy_text(
+    forms: CopyForms,
+    signature_forms: CopyForms,
+    *,
+    allow_ambiguous_signature_match: bool = False,
+) -> tuple[tuple[str, ...], str, str]:
+    """Strip unexpected +/# while preserving meaningful signature tokens."""
+
+    def symbol_subsequence(expected: str, observed: str) -> bool:
+        remaining = iter(observed)
+        return all(symbol in remaining for symbol in expected)
+
+    def matches_padded_token(observed: str, expected: str) -> bool:
+        return (
+            observed.translate(COPY_SYMBOL_TRANSLATION)
+            == expected.translate(COPY_SYMBOL_TRANSLATION)
+            and symbol_subsequence(
+                "".join(
+                    symbol
+                    for symbol in expected
+                    if symbol in COPY_ASCII_SYMBOLS
+                ),
+                "".join(
+                    symbol
+                    for symbol in observed
+                    if symbol in COPY_ASCII_SYMBOLS
+                ),
+            )
+        )
+
+    def join_symbol_only_tokens(
+        source_tokens: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        coalesced: list[str] = []
+        leading_symbols = ""
+        for token in source_tokens:
+            if token and all(
+                character in COPY_ASCII_SYMBOLS
+                for character in token
+            ):
+                if coalesced:
+                    coalesced[-1] += token
+                else:
+                    leading_symbols += token
+                continue
+            coalesced.append(f"{leading_symbols}{token}")
+            leading_symbols = ""
+        if leading_symbols:
+            if coalesced:
+                coalesced[-1] += leading_symbols
+            else:
+                coalesced.append(leading_symbols)
+        return tuple(coalesced)
+
+    signature_tokens = join_symbol_only_tokens(signature_forms.tokens)
+    signature_symbol_tokens = frozenset(
+        token
+        for token in signature_tokens
+        if any(symbol in token for symbol in COPY_ASCII_SYMBOLS)
+    )
+    expected_symbol_tokens = (
+        signature_symbol_tokens | MEANINGFUL_COPY_SYMBOL_TOKENS
+    )
+    expected_symbols_by_plain: dict[str, frozenset[str]] = {
+        plain: frozenset(
+            expected
+            for expected in expected_symbol_tokens
+            if expected.translate(COPY_SYMBOL_TRANSLATION) == plain
+        )
+        for plain in {
+            expected.translate(COPY_SYMBOL_TRANSLATION)
+            for expected in expected_symbol_tokens
+        }
+        if plain
+    }
+    signature_plain_tokens = frozenset(
+        plain
+        for token in signature_tokens
+        if (plain := token.translate(COPY_SYMBOL_TRANSLATION))
+    )
+    signature_plain_compact = "".join(
+        token.translate(COPY_SYMBOL_TRANSLATION)
+        for token in signature_tokens
+    )
+    signature_symbol_at: dict[int, str] = {}
+    signature_plain_c_at: set[int] = set()
+    signature_cursor = 0
+    for token in signature_tokens:
+        plain = token.translate(COPY_SYMBOL_TRANSLATION)
+        if not plain:
+            continue
+        signature_cursor += len(plain)
+        if any(symbol in token for symbol in COPY_ASCII_SYMBOLS):
+            signature_symbol_at[signature_cursor - 1] = token
+        elif plain == "c":
+            signature_plain_c_at.add(signature_cursor - 1)
+
+    def fused_symbol_segments(token: str) -> tuple[str, ...]:
+        if len(token) > MAX_FUSED_SEGMENT_TOKEN_LENGTH:
+            return (token,)
+        plain_characters: list[str] = []
+        plain_to_raw: list[int] = []
+        for index, character in enumerate(token):
+            if character not in COPY_ASCII_SYMBOLS:
+                plain_characters.append(character)
+                plain_to_raw.append(index)
+        plain_token = "".join(plain_characters)
+        candidates: list[tuple[tuple[int, int], tuple[str, ...]]] = []
+        for expected_plain, expected_tokens in expected_symbols_by_plain.items():
+            plain_start = plain_token.find(expected_plain)
+            while plain_start >= 0:
+                raw_start = plain_to_raw[plain_start]
+                raw_end = (
+                    plain_to_raw[plain_start + len(expected_plain) - 1] + 1
+                )
+                while (
+                    raw_end < len(token)
+                    and token[raw_end] in COPY_ASCII_SYMBOLS
+                ):
+                    raw_end += 1
+                candidate = token[raw_start:raw_end]
+                left = token[:raw_start]
+                right = token[raw_end:]
+                if (
+                    candidate[-1] in COPY_ASCII_SYMBOLS
+                    and any(
+                        matches_padded_token(candidate, expected)
+                        for expected in expected_tokens
+                    )
+                    and (left or right)
+                    and (
+                        not left
+                        or left.translate(COPY_SYMBOL_TRANSLATION)
+                        in signature_plain_tokens
+                    )
+                    and (
+                        not right
+                        or (
+                            right[0].isalnum()
+                            and right.translate(COPY_SYMBOL_TRANSLATION)
+                            in signature_plain_tokens
+                        )
+                    )
+                ):
+                    pieces = tuple(
+                        piece for piece in (left, candidate, right) if piece
+                    )
+                    score = (
+                        int(bool(left)) + int(bool(right)),
+                        -(raw_end - raw_start),
+                    )
+                    candidates.append((score, pieces))
+                plain_start = plain_token.find(
+                    expected_plain,
+                    plain_start + 1,
+                )
+        if not candidates:
+            return (token,)
+        best_score = min(score for score, _ in candidates)
+        best = {
+            pieces
+            for score, pieces in candidates
+            if score == best_score
+        }
+        return next(iter(best)) if len(best) == 1 else (token,)
+
+    def coalesce_symbol_continuations(
+        source_tokens: tuple[str, ...],
+    ) -> tuple[str, ...]:
+        coalesced: list[str] = []
+        leading_symbols = ""
+        for token in source_tokens:
+            if token and all(
+                character in COPY_ASCII_SYMBOLS
+                for character in token
+            ):
+                if coalesced:
+                    coalesced[-1] += token
+                else:
+                    leading_symbols += token
+                continue
+            token = f"{leading_symbols}{token}"
+            leading_symbols = ""
+            if coalesced:
+                prefix = token[: len(token) - len(token.lstrip("+#"))]
+                candidate = f"{coalesced[-1]}{prefix}"
+                if prefix and any(
+                    matches_padded_token(candidate, expected)
+                    for expected in expected_symbol_tokens
+                ):
+                    coalesced[-1] = candidate
+                    token = token[len(prefix) :]
+            if token:
+                coalesced.extend(fused_symbol_segments(token))
+        if leading_symbols:
+            if coalesced:
+                coalesced[-1] += leading_symbols
+            else:
+                coalesced.append(leading_symbols)
+        return tuple(coalesced)
+
+    def normalized_token_for(
+        token: str,
+        allowed_signature_tokens: frozenset[str],
+    ) -> str:
+        if (
+            token in allowed_signature_tokens
+            or token in MEANINGFUL_COPY_SYMBOL_TOKENS
+        ):
+            return token
+        signature_matches = sorted(
+            expected
+            for expected in allowed_signature_tokens
+            if matches_padded_token(token, expected)
+        )
+        meaningful_matches = sorted(
+            expected
+            for expected in MEANINGFUL_COPY_SYMBOL_TOKENS
+            if matches_padded_token(token, expected)
+        )
+        if len(meaningful_matches) == 1:
+            return meaningful_matches[0]
+        if len(meaningful_matches) > 1:
+            if (
+                allow_ambiguous_signature_match
+                and len(signature_matches) == 1
+            ):
+                return signature_matches[0]
+            return token
+        if len(signature_matches) == 1:
+            return signature_matches[0]
+        if len(signature_matches) > 1:
+            return token
+        return token.translate(COPY_SYMBOL_TRANSLATION)
+
+    def aligned_fused_token(token: str) -> str | None:
+        if len(token) > MAX_COPY_TOKEN_LENGTH:
+            return None
+        plain = token.translate(COPY_SYMBOL_TRANSLATION)
+        if plain in signature_plain_tokens:
+            return None
+        signature_offset = signature_plain_compact.find(plain)
+        if signature_offset >= 0 and (
+            signature_plain_compact.find(plain, signature_offset + 1) < 0
+        ):
+            observed_offset = 0
+            matched_length = len(plain)
+        else:
+            observed_offset = plain.find(signature_plain_compact)
+            if (
+                observed_offset < 0
+                or plain.find(
+                    signature_plain_compact,
+                    observed_offset + 1,
+                )
+                >= 0
+            ):
+                return None
+            signature_offset = 0
+            matched_length = len(signature_plain_compact)
+
+        normalized: list[str] = []
+        plain_index = -1
+        index = 0
+        while index < len(token):
+            character = token[index]
+            if character not in COPY_ASCII_SYMBOLS:
+                plain_index += 1
+                normalized.append(character)
+                index += 1
+                continue
+            end = index + 1
+            while (
+                end < len(token)
+                and token[end] in COPY_ASCII_SYMBOLS
+            ):
+                end += 1
+            symbols = token[index:end]
+            relative_position = plain_index - observed_offset
+            signature_position = (
+                signature_offset + relative_position
+                if 0 <= relative_position < matched_length
+                else -1
+            )
+            expected = signature_symbol_at.get(signature_position)
+            if expected is not None:
+                base = expected.translate(COPY_SYMBOL_TRANSLATION)
+                candidate = normalized_token_for(
+                    f"{base}{symbols}",
+                    frozenset({expected}),
+                )
+                normalized.append(
+                    candidate[len(base) :]
+                    if candidate.startswith(base)
+                    else symbols
+                )
+            elif signature_position in signature_plain_c_at:
+                candidate = normalized_token_for(
+                    f"c{symbols}",
+                    frozenset(),
+                )
+                normalized.append(
+                    candidate[1:]
+                    if candidate.startswith("c")
+                    else symbols
+                )
+            index = end
+        return "".join(normalized)
+
+    tokens_list: list[str] = []
+    for token in coalesce_symbol_continuations(forms.tokens):
+        normalized = aligned_fused_token(token)
+        if normalized is None:
+            normalized = normalized_token_for(
+                token,
+                signature_symbol_tokens,
+            )
+        if normalized:
+            tokens_list.append(normalized)
+    tokens = tuple(tokens_list)
+    return tokens, " ".join(tokens), "".join(tokens)
+
+
+def has_symbolic_copy_substitution(
+    observed_tokens: tuple[str, ...],
+    signature_tokens: tuple[str, ...],
+) -> bool:
+    """Return whether flexible matching changes a symbolic token's identity."""
+
+    def grouped(tokens: tuple[str, ...]) -> dict[str, Counter[str]]:
+        result: dict[str, Counter[str]] = {}
+        for token in tokens:
+            plain = token.translate(COPY_SYMBOL_TRANSLATION)
+            if plain:
+                result.setdefault(plain, Counter())[token] += 1
+        return result
+
+    observed = grouped(observed_tokens)
+    signature = grouped(signature_tokens)
+    for plain, expected_counts in signature.items():
+        actual_counts = observed.get(plain, Counter())
+        has_deficit = any(
+            count > actual_counts[identity]
+            for identity, count in expected_counts.items()
+        )
+        has_symbolic_surplus = any(
+            any(symbol in identity for symbol in COPY_ASCII_SYMBOLS)
+            and count > expected_counts[identity]
+            for identity, count in actual_counts.items()
+        )
+        if has_deficit and has_symbolic_surplus:
+            return True
+    return False
+
+
+def normalized_routing_term(value: str) -> str:
+    """Normalize phrases with a conservative, version-stable token policy."""
+
+    folded = nfkc_casefold(value)
+    identifier_aware: list[str] = []
+    for character in folded:
+        if (
+            character in STABLE_WHITESPACE
+            or character in UNICODE_PROSE_SEPARATORS
+        ):
+            identifier_aware.append(" ")
+        elif character.isascii():
+            identifier_aware.append(
+                character
+                if character.isalnum() or character in ROUTING_ASCII_SYMBOLS
+                else " "
+            )
+        else:
+            # Preserve every non-ASCII attachment. This deliberately favors a
+            # missed match over inventing a token boundary from Unicode data
+            # that differs among supported Python versions.
+            identifier_aware.append(character)
+    return " ".join("".join(identifier_aware).split())
+
+
+def contains_routing_term(prompt: str, routing_term: str) -> bool:
+    """Match a normalized routing phrase at token boundaries."""
+
+    normalized_prompt = normalized_routing_term(prompt)
+    normalized_term = normalized_routing_term(routing_term)
+    return bool(normalized_term) and (
+        f" {normalized_term} " in f" {normalized_prompt} "
+    )
+
+
+def trigger_copy_kind(prompt: str, trigger: str) -> str | None:
+    """Classify fixtures copied from curated trigger text."""
+
+    if (
+        len(prompt) > MAX_COPY_TEXT_LENGTH
+        or len(trigger) > MAX_COPY_TEXT_LENGTH
+    ):
+        return None
+    prompt_forms = copy_forms(prompt)
+    trigger_forms = copy_forms(trigger)
+    if (
+        not copy_forms_within_limits(prompt_forms)
+        or not copy_forms_within_limits(trigger_forms)
+    ):
+        return None
+    prompt_flexible_tokens, prompt_flexible_spaced, prompt_flexible_compact = (
+        signature_aware_copy_text(
+            prompt_forms,
+            trigger_forms,
+            allow_ambiguous_signature_match=True,
+        )
+    )
+    trigger_flexible_tokens, trigger_flexible_spaced, trigger_flexible_compact = (
+        signature_aware_copy_text(
+            trigger_forms,
+            trigger_forms,
+            allow_ambiguous_signature_match=True,
+        )
+    )
+    if (
+        prompt_forms.spaced == trigger_forms.spaced
+        or prompt_forms.compact == trigger_forms.compact
+        or prompt_flexible_spaced == trigger_flexible_spaced
+        or prompt_flexible_compact == trigger_flexible_compact
+    ):
+        return "normalized exact"
+    compact_embedded = (
+        len(trigger_forms.compact) >= MIN_COMPACT_TRIGGER_LENGTH
+        and trigger_forms.compact in prompt_forms.compact
+    )
+    flexible_embedded = (
+        len(trigger_flexible_compact) >= MIN_COMPACT_TRIGGER_LENGTH
+        and trigger_flexible_compact in prompt_flexible_compact
+    )
+    if (
+        trigger_forms.spaced
+        and trigger_forms.spaced in prompt_forms.spaced
+    ) or compact_embedded or flexible_embedded:
+        return "embedded normalized"
+    symbol_conflict = has_symbolic_copy_substitution(
+        prompt_flexible_tokens,
+        trigger_flexible_tokens,
+    )
+    raw_near_verbatim = any(
+        bounded_copy_near_verbatim(
+            left,
+            right,
+        )
+        for left, right in (
+            (
+                prompt_forms.spaced,
+                trigger_forms.spaced,
+            ),
+            (
+                prompt_forms.compact,
+                trigger_forms.compact,
+            ),
+        )
+    )
+    flexible_near_verbatim = any(
+        bounded_copy_near_verbatim(
+            left,
+            right,
+        )
+        for left, right in (
+            (
+                prompt_flexible_spaced,
+                trigger_flexible_spaced,
+            ),
+            (
+                prompt_flexible_compact,
+                trigger_flexible_compact,
+            ),
+        )
+    )
+    if raw_near_verbatim or (
+        not symbol_conflict
+        and flexible_near_verbatim
+    ):
+        return "near-verbatim"
+    if min(
+        len(prompt_flexible_tokens),
+        len(trigger_flexible_tokens),
+    ) < 8:
+        return None
+    raw_prompt_tokens = Counter(prompt_forms.tokens)
+    raw_trigger_tokens = Counter(trigger_forms.tokens)
+    flexible_prompt_tokens = Counter(prompt_flexible_tokens)
+    flexible_trigger_tokens = Counter(trigger_flexible_tokens)
+    raw_coverage = sum(
+        (raw_prompt_tokens & raw_trigger_tokens).values()
+    ) / sum(raw_trigger_tokens.values())
+    flexible_coverage = sum(
+        (flexible_prompt_tokens & flexible_trigger_tokens).values()
+    ) / sum(flexible_trigger_tokens.values())
+    if (
+        raw_coverage >= COPY_SIMILARITY_THRESHOLD
+    ) or (
+        not symbol_conflict
+        and flexible_coverage >= COPY_SIMILARITY_THRESHOLD
+    ):
+        return "high trigger-token coverage"
+    return None
+
+
+def copy_equivalent(value: str, signature: str) -> bool:
+    """Return whether text differs from a signature only by obfuscation."""
+
+    value_forms = copy_forms(value)
+    signature_forms = copy_forms(signature)
+    _, value_flexible_spaced, value_flexible_compact = (
+        signature_aware_copy_text(value_forms, signature_forms)
+    )
+    _, signature_flexible_spaced, signature_flexible_compact = (
+        signature_aware_copy_text(signature_forms, signature_forms)
+    )
+    return (
+        value_forms.spaced == signature_forms.spaced
+        or value_forms.compact == signature_forms.compact
+        or value_flexible_spaced == signature_flexible_spaced
+        or value_flexible_compact == signature_flexible_compact
+    )
+
+
+def copy_startswith(value: str, signature: str) -> bool:
+    """Return whether text starts with an obfuscated signature."""
+
+    value_forms = copy_forms(value)
+    signature_forms = copy_forms(signature)
+    _, value_flexible_spaced, value_flexible_compact = (
+        signature_aware_copy_text(value_forms, signature_forms)
+    )
+    _, signature_flexible_spaced, signature_flexible_compact = (
+        signature_aware_copy_text(signature_forms, signature_forms)
+    )
+    return (
+        value_forms.spaced.startswith(signature_forms.spaced)
+        or value_forms.compact.startswith(signature_forms.compact)
+        or value_flexible_spaced.startswith(signature_flexible_spaced)
+        or value_flexible_compact.startswith(signature_flexible_compact)
+    )
 
 
 def is_nonempty_string(value: object) -> bool:
@@ -247,6 +1059,9 @@ def lint_config(config: dict) -> list[str]:
                 f"config/skills.yaml: skill {skill_key} interface metadata "
                 "is incomplete"
             )
+    boundaries = config.get("routing_boundaries")
+    if not isinstance(boundaries, list):
+        errors.append("config/skills.yaml: routing_boundaries must be a list")
     return errors
 
 
@@ -375,6 +1190,10 @@ def lint_entry(
     for field in ("title", "trigger", "validation_case"):
         if not is_nonempty_string(entry.get(field)):
             errors.append(f"{source_label}: {field} must be nonempty")
+    trigger = entry.get("trigger")
+    if isinstance(trigger, str):
+        if limit_error := copy_text_limit_error(trigger):
+            errors.append(f"{source_label}: trigger {limit_error}")
     for field in LIST_FIELDS:
         value = entry.get(field)
         if not isinstance(value, list) or any(not is_nonempty_string(item) for item in value):
@@ -383,6 +1202,28 @@ def lint_entry(
             errors.append(f"{source_label}: {field} must not be empty")
         elif len(value) != len(set(value)):
             errors.append(f"{source_label}: {field} contains duplicates")
+    routing_terms = entry.get("routing_terms", [])
+    if isinstance(routing_terms, list):
+        normalized_pairs = [
+            (term, normalized_routing_term(term))
+            for term in routing_terms
+            if isinstance(term, str)
+        ]
+        normalized_terms = [normalized for _, normalized in normalized_pairs]
+        if any(not term for term in normalized_terms):
+            errors.append(f"{source_label}: routing_terms contains an empty normalized term")
+        if len(normalized_terms) != len(set(normalized_terms)):
+            errors.append(
+                f"{source_label}: routing_terms contains normalized duplicates"
+            )
+        for raw_term, normalized_term in normalized_pairs:
+            if any(
+                copy_equivalent(raw_term, generic_term)
+                for generic_term in GENERIC_ROUTING_TERMS
+            ):
+                errors.append(
+                    f"{source_label}: routing term {raw_term!r} is too generic"
+                )
     preflight = entry.get("preflight_commands", [])
     if not isinstance(preflight, list) or any(
         not is_nonempty_string(item) for item in preflight
@@ -429,12 +1270,26 @@ def lint_entry(
             if not isinstance(value, str):
                 continue
             normalized = normalized_text(value)
-            if normalized in GENERIC_TEXT or len(normalized.split()) < 3:
-                errors.append(f"{source_label}: {field} contains generic content {value!r}")
-    validation_case = normalized_text(str(entry.get("validation_case", "")))
+            if (
+                any(
+                    copy_equivalent(value, generic_text)
+                    for generic_text in GENERIC_TEXT
+                )
+                or len(normalized.split()) < 3
+            ):
+                errors.append(
+                    f"{source_label}: {field} contains generic content {value!r}"
+                )
+    validation_case = str(entry.get("validation_case", ""))
     if (
-        validation_case in GENERIC_TEXT
-        or validation_case.startswith("run a small batch mode example that exercises")
+        any(
+            copy_equivalent(validation_case, generic_text)
+            for generic_text in GENERIC_TEXT
+        )
+        or copy_startswith(
+            validation_case,
+            "run a small batch mode example that exercises",
+        )
     ):
         errors.append(f"{source_label}: validation_case is generic")
 
@@ -446,6 +1301,84 @@ def lint_entry(
     errors.extend(
         lint_provenance(source_label, skill_key, entry.get("provenance"))
     )
+    return errors
+
+
+def lint_routing_collisions(
+    config: dict,
+    entries: list[tuple[str, Path, dict]],
+) -> list[str]:
+    """Require every normalized cross-route collision to be reviewed."""
+
+    errors: list[str] = []
+    known_routes = {
+        f"{skill_key}/{entry.get('slug')}"
+        for skill_key, _, entry in entries
+        if isinstance(entry, dict) and is_nonempty_string(entry.get("slug"))
+    }
+    observed: dict[str, set[str]] = {}
+    for skill_key, _, entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        route = f"{skill_key}/{entry.get('slug')}"
+        for term in entry.get("routing_terms", []):
+            if not isinstance(term, str):
+                continue
+            normalized = normalized_routing_term(term)
+            if normalized:
+                observed.setdefault(normalized, set()).add(route)
+
+    declared: dict[str, set[str]] = {}
+    for index, boundary in enumerate(config.get("routing_boundaries", []), start=1):
+        label = f"config/skills.yaml: routing boundary {index}"
+        if not isinstance(boundary, dict):
+            errors.append(f"{label} must be a mapping")
+            continue
+        term = boundary.get("term")
+        routes = boundary.get("routes")
+        if not is_nonempty_string(term):
+            errors.append(f"{label} requires a nonempty term")
+            continue
+        normalized = normalized_routing_term(term)
+        if normalized in declared:
+            errors.append(f"{label} duplicates normalized term {normalized!r}")
+            continue
+        if (
+            not isinstance(routes, list)
+            or len(routes) < 2
+            or any(not is_nonempty_string(route) for route in routes)
+            or len(routes) != len(set(routes))
+        ):
+            errors.append(f"{label} routes must contain at least two unique routes")
+            continue
+        route_set = set(routes)
+        unknown = sorted(route_set - known_routes)
+        if unknown:
+            errors.append(f"{label} has unknown routes: {', '.join(unknown)}")
+        if boundary.get("action") != "clarify":
+            errors.append(f"{label} action must be clarify")
+        if not is_nonempty_string(boundary.get("guidance")):
+            errors.append(f"{label} requires concise clarification guidance")
+        declared[normalized] = route_set
+
+    collisions = {
+        term: routes for term, routes in observed.items() if len(routes) > 1
+    }
+    for term, routes in sorted(collisions.items()):
+        if term not in declared:
+            errors.append(
+                "content/: undeclared normalized routing collision "
+                f"{term!r}: {', '.join(sorted(routes))}"
+            )
+        elif declared[term] != routes:
+            errors.append(
+                f"config/skills.yaml: routing boundary {term!r} must list "
+                f"exactly {', '.join(sorted(routes))}"
+            )
+    for term in sorted(set(declared) - set(collisions)):
+        errors.append(
+            f"config/skills.yaml: orphan routing boundary {term!r}"
+        )
     return errors
 
 
@@ -516,24 +1449,23 @@ def lint_prompt_cases(
     canonical_paths: set[str],
     alias_paths: set[str],
     prompt_path: Path = PROMPT_CASES_PATH,
+    canonical_triggers: dict[str, str] | None = None,
 ) -> list[str]:
     errors: list[str] = []
     data = read_yaml(prompt_path)
-    if data.get("schema_version") != 1 or not isinstance(data.get("cases"), list):
-        return [f"{prompt_path}: expected schema_version 1 and cases list"]
-    if prompt_path == PROMPT_CASES_PATH:
-        from render_prompt_cases import BOUNDARY_CASES, canonical_cases
-
-        expected_cases = [*canonical_cases(), *BOUNDARY_CASES]
-        if data["cases"] != expected_cases:
-            errors.append(
-                f"{prompt_path}: structured cases are stale; "
-                "run scripts/render_prompt_cases.py"
-            )
+    if (
+        not isinstance(data, dict)
+        or data.get("schema_version") != 2
+        or not isinstance(data.get("cases"), list)
+    ):
+        return [f"{prompt_path}: expected schema_version 2 and cases list"]
     valid_skills = {skill["name"] for skill in config["skills"].values()}
+    valid_actions = {"route", "clarify", "abstain"}
     ids: set[str] = set()
     covered: Counter[str] = Counter()
     boundary_by_skill: Counter[str] = Counter()
+    action_counts: Counter[str] = Counter()
+    clarify_terms: Counter[str] = Counter()
     for index, case in enumerate(data["cases"]):
         label = f"{prompt_path}: case {index + 1}"
         if not isinstance(case, dict):
@@ -542,9 +1474,11 @@ def lint_prompt_cases(
         for field in (
             "id",
             "prompt",
+            "action",
             "expected_skill",
             "expected_refs",
             "forbidden_routes",
+            "boundary",
         ):
             if field not in case:
                 errors.append(f"{label} missing {field}")
@@ -553,30 +1487,102 @@ def lint_prompt_cases(
             errors.append(f"{label} has invalid or duplicate id")
         else:
             ids.add(case_id)
-        if not is_nonempty_string(case.get("prompt")):
+        prompt = case.get("prompt")
+        prompt_copy_safe = False
+        if not is_nonempty_string(prompt):
             errors.append(f"{label} prompt must be nonempty")
+        elif "i need task-specific guidance" in prompt.casefold():
+            errors.append(
+                f"{label} prompt is generated scaffold text, not an independent fixture"
+            )
+        elif limit_error := copy_text_limit_error(prompt):
+            errors.append(f"{label} prompt {limit_error}")
+        else:
+            prompt_copy_safe = True
+        if prompt_copy_safe and canonical_triggers:
+            for route, trigger in sorted(canonical_triggers.items()):
+                copy_kind = trigger_copy_kind(prompt, trigger)
+                if copy_kind:
+                    errors.append(
+                        f"{label} prompt is a {copy_kind} copy of the canonical "
+                        f"trigger for {route}"
+                    )
+        action = case.get("action")
+        if action not in valid_actions:
+            errors.append(f"{label} action must be route, clarify, or abstain")
+        else:
+            action_counts[action] += 1
         skill_name = case.get("expected_skill")
-        if skill_name not in valid_skills:
-            errors.append(f"{label} expected_skill is unknown")
         expected = case.get("expected_refs")
         forbidden = case.get("forbidden_routes")
-        if not isinstance(expected, list) or not expected:
-            errors.append(f"{label} expected_refs must be nonempty")
+        if not isinstance(expected, list):
+            errors.append(f"{label} expected_refs must be a list")
             expected = []
+        elif any(not is_nonempty_string(route) for route in expected):
+            errors.append(f"{label} expected_refs must contain only nonempty strings")
+            expected = [route for route in expected if is_nonempty_string(route)]
         if not isinstance(forbidden, list):
             errors.append(f"{label} forbidden_routes must be a list")
             forbidden = []
+        elif any(not is_nonempty_string(route) for route in forbidden):
+            errors.append(
+                f"{label} forbidden_routes must contain only nonempty strings"
+            )
+            forbidden = [
+                route for route in forbidden if is_nonempty_string(route)
+            ]
+        if not isinstance(case.get("boundary"), bool):
+            errors.append(f"{label} boundary must be boolean")
+        if action == "route":
+            if skill_name not in valid_skills:
+                errors.append(f"{label} expected_skill is unknown")
+            if not expected:
+                errors.append(f"{label} route action requires expected_refs")
+        elif action in {"clarify", "abstain"}:
+            if case.get("boundary") is not True:
+                errors.append(f"{label} {action} action requires boundary true")
+            if skill_name is not None:
+                errors.append(f"{label} {action} action requires expected_skill null")
+            if expected:
+                errors.append(f"{label} {action} action requires empty expected_refs")
+            if forbidden:
+                errors.append(f"{label} {action} action requires empty forbidden_routes")
+        if action == "clarify":
+            routing_term = case.get("routing_term")
+            if not is_nonempty_string(routing_term):
+                errors.append(f"{label} clarify action requires routing_term")
+            else:
+                normalized_term = normalized_routing_term(routing_term)
+                clarify_terms[normalized_term] += 1
+                if (
+                    is_nonempty_string(prompt)
+                    and not contains_routing_term(prompt, routing_term)
+                ):
+                    errors.append(
+                        f"{label} prompt must state its ambiguous routing_term"
+                    )
+        elif "routing_term" in case:
+            errors.append(f"{label} routing_term is valid only for clarify actions")
         for route in expected:
             if route not in canonical_paths:
                 errors.append(f"{label} expected ref {route!r} is not canonical")
             else:
                 covered[route] += 1
+                if (
+                    action == "route"
+                    and skill_name in valid_skills
+                    and route.partition("/")[0] != skill_name
+                ):
+                    errors.append(
+                        f"{label} expected ref {route!r} does not belong to "
+                        f"expected_skill {skill_name!r}"
+                    )
             if route in forbidden:
                 errors.append(f"{label} route {route!r} is both expected and forbidden")
         for route in forbidden:
             if route not in canonical_paths | alias_paths:
                 errors.append(f"{label} forbidden route {route!r} is unknown")
-        if case.get("boundary") is True:
+        if case.get("boundary") is True and action == "route":
             if not forbidden:
                 errors.append(f"{label} boundary case requires forbidden_routes")
             if skill_name in valid_skills:
@@ -587,6 +1593,33 @@ def lint_prompt_cases(
     for skill_name in sorted(valid_skills):
         if not boundary_by_skill[skill_name]:
             errors.append(f"{prompt_path}: {skill_name} lacks a boundary case")
+    if action_counts["clarify"] < 3:
+        errors.append(f"{prompt_path}: requires at least three clarify cases")
+    if action_counts["abstain"] < 2:
+        errors.append(f"{prompt_path}: requires at least two abstain cases")
+    declared_terms = {
+        normalized_routing_term(boundary["term"])
+        for boundary in config.get("routing_boundaries", [])
+        if isinstance(boundary, dict) and is_nonempty_string(boundary.get("term"))
+    }
+    if set(clarify_terms) != declared_terms:
+        missing = sorted(declared_terms - set(clarify_terms))
+        extra = sorted(set(clarify_terms) - declared_terms)
+        if missing:
+            errors.append(
+                f"{prompt_path}: routing boundaries lack clarify cases: "
+                + ", ".join(missing)
+            )
+        if extra:
+            errors.append(
+                f"{prompt_path}: clarify cases lack declared boundaries: "
+                + ", ".join(extra)
+            )
+    for term, count in clarify_terms.items():
+        if count != 1:
+            errors.append(
+                f"{prompt_path}: routing boundary {term!r} requires exactly one clarify case"
+            )
     return errors
 
 
@@ -696,93 +1729,136 @@ def lint_stata_help_lock(entries: list[tuple[str, Path, dict]]) -> list[str]:
     return errors
 
 
+def lint_package_lock_payload(
+    package_path: Path,
+    slug: str,
+    package: object,
+) -> list[str]:
+    """Validate one parsed per-package lock without rereading live bytes."""
+
+    errors: list[str] = []
+    if not isinstance(package, dict):
+        return [f"{package_path}: package lock must be a mapping"]
+    if (
+        package.get("schema_version") != 1
+        or package.get("slug") != slug
+    ):
+        return [
+            f"{package_path}: schema_version must be 1 and slug must match filename"
+        ]
+    distributions = package.get("distributions")
+    if not isinstance(distributions, list) or not distributions:
+        return [f"{package_path}: distributions must be a nonempty list"]
+    seen_descriptors: set[str] = set()
+    for index, distribution in enumerate(distributions):
+        label = f"{package_path}: distribution {index + 1}"
+        if not isinstance(distribution, dict):
+            errors.append(f"{label} must be a mapping")
+            continue
+        for field in ("source", "descriptor", "distribution_date", "files"):
+            if field not in distribution:
+                errors.append(f"{label} missing {field}")
+        if not re.match(
+            r"^https?://", str(distribution.get("source", ""))
+        ):
+            errors.append(f"{label} source must be an HTTP(S) provenance URL")
+        descriptor = distribution.get("descriptor")
+        if not is_nonempty_string(descriptor) or descriptor in seen_descriptors:
+            errors.append(f"{label} descriptor must be unique and nonempty")
+        else:
+            seen_descriptors.add(descriptor)
+        if not re.fullmatch(
+            r"\d{8}", str(distribution.get("distribution_date", ""))
+        ):
+            errors.append(f"{label} distribution_date must be YYYYMMDD")
+        file_map = distribution.get("files", {})
+        if not isinstance(file_map, dict) or not file_map:
+            errors.append(f"{label} files must be nonempty")
+        else:
+            for relative, sha in file_map.items():
+                if (
+                    Path(relative).is_absolute()
+                    or ".." in Path(relative).parts
+                    or relative in TRACK_METADATA_FILES
+                ):
+                    errors.append(f"{label} unsafe locked path {relative}")
+                if not SHA256_RE.fullmatch(str(sha)):
+                    errors.append(f"{label} {relative} invalid sha256")
+    generated_files = package.get("generated_files", {})
+    if not isinstance(generated_files, dict):
+        errors.append(f"{package_path}: generated_files must be a mapping")
+    else:
+        for relative, sha in generated_files.items():
+            if (
+                Path(relative).is_absolute()
+                or ".." in Path(relative).parts
+                or relative in TRACK_METADATA_FILES
+            ):
+                errors.append(
+                    f"{package_path}: unsafe generated path {relative}"
+                )
+            if not SHA256_RE.fullmatch(str(sha)):
+                errors.append(
+                    f"{package_path}: {relative} invalid generated sha256"
+                )
+    return errors
+
+
 def lint_distribution_locks(
     entries: list[tuple[str, Path, dict]],
 ) -> list[str]:
     errors: list[str] = []
-    package_path = LOCK_ROOT / "packages.yaml"
-    lock = read_yaml(package_path)
-    packages = lock.get("packages")
-    if lock.get("schema_version") != 1 or not isinstance(packages, dict):
-        errors.append(f"{package_path}: invalid or missing package lock schema")
-    else:
-        required = {
-            entry["slug"]
-            for skill_key, _, entry in entries
-            if skill_key == "packages" and entry.get("install_commands")
-        }
-        missing = sorted(required - set(packages))
-        extra = sorted(set(packages) - required)
-        if missing:
+    required = {
+        entry["slug"]
+        for skill_key, _, entry in entries
+        if skill_key == "packages" and entry.get("install_commands")
+    }
+    try:
+        package_root_metadata = PACKAGE_LOCK_ROOT.lstat()
+        if not stat.S_ISDIR(package_root_metadata.st_mode):
+            return [
+                f"{PACKAGE_LOCK_ROOT}: package lock root must be a real directory"
+            ]
+        package_children = sorted(PACKAGE_LOCK_ROOT.iterdir())
+    except OSError as error:
+        return [f"{PACKAGE_LOCK_ROOT}: could not inspect package locks: {error}"]
+    lock_paths: list[Path] = []
+    for child in package_children:
+        try:
+            child_metadata = child.lstat()
+        except OSError as error:
+            errors.append(f"{child}: could not inspect package lock: {error}")
+            continue
+        if (
+            not stat.S_ISREG(child_metadata.st_mode)
+            or child.suffix != ".yaml"
+        ):
             errors.append(
-                f"{package_path}: missing installable packages: {', '.join(missing)}"
+                f"{child}: package lock root may contain only regular .yaml files"
             )
-        if extra:
-            errors.append(
-                f"{package_path}: orphan package locks: {', '.join(extra)}"
+            continue
+        lock_paths.append(child)
+    observed = {path.stem for path in lock_paths}
+    missing = sorted(required - observed)
+    extra = sorted(observed - required)
+    if missing:
+        errors.append(
+            f"{PACKAGE_LOCK_ROOT}: missing installable packages: {', '.join(missing)}"
+        )
+    if extra:
+        errors.append(
+            f"{PACKAGE_LOCK_ROOT}: orphan package locks: {', '.join(extra)}"
+        )
+    for package_path in lock_paths:
+        slug = package_path.stem
+        package = read_yaml(package_path)
+        errors.extend(
+            lint_package_lock_payload(
+                package_path,
+                slug,
+                package,
             )
-        for slug, package in packages.items():
-            if not isinstance(package, dict):
-                errors.append(f"{package_path}: {slug} must be a mapping")
-                continue
-            distributions = package.get("distributions")
-            if not isinstance(distributions, list) or not distributions:
-                errors.append(
-                    f"{package_path}: {slug} distributions must be a nonempty list"
-                )
-                continue
-            seen_descriptors: set[str] = set()
-            for index, distribution in enumerate(distributions):
-                label = f"{package_path}: {slug} distribution {index + 1}"
-                if not isinstance(distribution, dict):
-                    errors.append(f"{label} must be a mapping")
-                    continue
-                for field in ("source", "descriptor", "distribution_date", "files"):
-                    if field not in distribution:
-                        errors.append(f"{label} missing {field}")
-                if not re.match(
-                    r"^https?://", str(distribution.get("source", ""))
-                ):
-                    errors.append(f"{label} source must be an HTTP(S) provenance URL")
-                descriptor = distribution.get("descriptor")
-                if not is_nonempty_string(descriptor) or descriptor in seen_descriptors:
-                    errors.append(f"{label} descriptor must be unique and nonempty")
-                else:
-                    seen_descriptors.add(descriptor)
-                if not re.fullmatch(
-                    r"\d{8}", str(distribution.get("distribution_date", ""))
-                ):
-                    errors.append(f"{label} distribution_date must be YYYYMMDD")
-                file_map = distribution.get("files", {})
-                if not isinstance(file_map, dict) or not file_map:
-                    errors.append(f"{label} files must be nonempty")
-                else:
-                    for relative, sha in file_map.items():
-                        if (
-                            Path(relative).is_absolute()
-                            or ".." in Path(relative).parts
-                            or relative in TRACK_METADATA_FILES
-                        ):
-                            errors.append(f"{label} unsafe locked path {relative}")
-                        if not SHA256_RE.fullmatch(str(sha)):
-                            errors.append(f"{label} {relative} invalid sha256")
-            generated_files = package.get("generated_files", {})
-            if not isinstance(generated_files, dict):
-                errors.append(f"{package_path}: {slug} generated_files must be a mapping")
-            else:
-                for relative, sha in generated_files.items():
-                    if (
-                        Path(relative).is_absolute()
-                        or ".." in Path(relative).parts
-                        or relative in TRACK_METADATA_FILES
-                    ):
-                        errors.append(
-                            f"{package_path}: {slug} unsafe generated path {relative}"
-                        )
-                    if not SHA256_RE.fullmatch(str(sha)):
-                        errors.append(
-                            f"{package_path}: {slug}/{relative} invalid generated sha256"
-                        )
+        )
 
     sdk_path = LOCK_ROOT / "plugin-sdk.yaml"
     lock = read_yaml(sdk_path)
@@ -924,6 +2000,7 @@ def lint_repo(check_generated: bool = True) -> list[str]:
         skill_key: set() for skill_key in config["skills"]
     }
     route_paths: set[str] = set()
+    route_triggers: dict[str, str] = {}
     repeated_text: Counter[str] = Counter()
     for skill_key, path, entry in entries:
         skill = config["skills"][skill_key]
@@ -936,7 +2013,13 @@ def lint_repo(check_generated: bool = True) -> list[str]:
                 errors.append(f"{path}: duplicate global slug {slug} also used by {slugs[slug]}")
             else:
                 slugs[slug] = skill_key
-            route_paths.add(f"{skill['name']}/{skill['route_dir']}/{slug}.md")
+            route_path = f"{skill['name']}/{skill['route_dir']}/{slug}.md"
+            route_paths.add(route_path)
+            if (
+                is_nonempty_string(entry.get("trigger"))
+                and copy_text_within_limits(entry["trigger"])
+            ):
+                route_triggers[route_path] = entry["trigger"]
         order = entry.get("order")
         if isinstance(order, int) and not isinstance(order, bool):
             if order in orders[skill_key]:
@@ -972,7 +2055,15 @@ def lint_repo(check_generated: bool = True) -> list[str]:
         if isinstance(alias, dict) and alias.get("from_skill") in config["skills"]
     }
     errors.extend(lint_route_aliases(config, slugs, route_paths))
-    errors.extend(lint_prompt_cases(config, route_paths, alias_route_paths))
+    errors.extend(lint_routing_collisions(config, entries))
+    errors.extend(
+        lint_prompt_cases(
+            config,
+            route_paths,
+            alias_route_paths,
+            canonical_triggers=route_triggers,
+        )
+    )
     errors.extend(lint_upstream_lock(entries))
     errors.extend(lint_stata_help_lock(entries))
     errors.extend(lint_distribution_locks(entries))

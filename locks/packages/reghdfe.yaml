@@ -1,0 +1,82 @@
+schema_version: 1
+slug: reghdfe
+distributions:
+- source: https://raw.githubusercontent.com/sergiocorreia/stata-require/7ee750b12f9c51ec8a879445cbf39357c308bdee/src
+  descriptor: require.pkg
+  distribution_date: '20240410'
+  files:
+    r/require.ado: bfc799167555a9e6bf2bb32daac24f49092d64cf3f6701a50f27a3fd1e6aacdc
+    r/require.sthlp: 2afb397d3e8a4b434178618352f350beef20eea25cf1b169b95d1d4bef2c34a9
+- source: https://raw.githubusercontent.com/sergiocorreia/ftools/7b3663e49ea5c5b81638c55be29edf416e68e8b7/src
+  descriptor: ftools.pkg
+  distribution_date: '20260109'
+  files:
+    f/fcollapse.ado: bec0014c804a413e40451d1a83e5faee7766dd442d812fe9549b2f8f878a2004
+    f/fcollapse.sthlp: 3cfd14b325a16209b0d6c4276907f15f699bcada9168bb4ba7e4ac2026256402
+    f/fcollapse_functions.mata: eb282f461a357497508d40a3d2c374e94d5ae4242b99c3b2596f736212614bd5
+    f/fcollapse_main.mata: 375eea05d3e412a0fa2f7406c606f0176f993109bf6e0bfcc7ef2975ba74ea11
+    f/fegen.ado: c5d1638f193b142e9c7529b3f36fcf53486d68689b320d21ff7e8cdd93c50e25
+    f/fegen.sthlp: 9d7662d1c3015361998ab549c7d4a780345ec26268478a86b185d375928ecf7d
+    f/fegen_group.ado: 92ca1712b8a2d03574d14529c85d390a5561af0b7217c0f103c2b764d9d0dd6b
+    f/fisid.ado: a889b5fb4c3cd6b0ac90db7500278b8080f0f66b86c71eb992a4477db57232c0
+    f/fisid.sthlp: 97b7eaa5baee4555c0920f3a797a9019e1535fb0c655c30069e580b5ecd5f806
+    f/flevelsof.ado: 24cb51b023866abf04420e43d3333abeefd7db66cfcf5beb5f6595b012f53192
+    f/flevelsof.sthlp: 627333bda5c89f7e40aec78efbeb24ed3c625f588f4f9b6dde3aa744ae0356f2
+    f/fmerge.ado: 1c2d18a8d72a12f68a7f743fb14c7a8186ece35ae05b0f75093ebc0133bcd697
+    f/fmerge.sthlp: db75a458e863fdb726e432419b6075e6192040aba30853df67b7afb1d49dd2a6
+    f/fsort.ado: a9eeb9312323c7898a715733d2baceb46578f5a1a3f698a87108b4cda053d97c
+    f/fsort.sthlp: 6a83df419f1d3068327560eaf4ea37906c55b27151aed2c5ebd1999a0d69700e
+    f/ftab.ado: 7a6e5d40a7f4beb2cab3b9ff2a96edb725ae5cb1cf6b18098847a81ed3c0f531
+    f/ftools.ado: c7eba3272b5fcd1dfa157e65c37840a051c6e2bf327d5ee31d42df65cf330b00
+    f/ftools.mata: 4af859bca19614684d3dd45566e13e17c6cf44df951ecca538bda5a44ebd1744
+    f/ftools.sthlp: 988637569f8803e4f2ef2c8dc2f1e9050e7898f1828da64c2087eee43f98e001
+    f/ftools_common.mata: ce73eae9f933f0c670e1d58f7200234414c68f5a19419357622d1e0b3887bcab
+    f/ftools_hash1.mata: a31bcd5cb93be191bf235cdf1e81f794be0f51cec9a9fb747d615e5c9ee8af0c
+    f/ftools_main.mata: b836c7e21872691d6b9c9da84f8407b82365852911d244561ce4bdb1a26e85af
+    f/ftools_plugin.mata: 897146c21a1fc6e899ef19ed01a3251d19e35c7deb5158ddf3c3f0caf6450125
+    f/ftools_type_aliases.mata: 27338dcf0d0b5f24795b46aa7fdeab79309bf18c35bacdee2313fce5ef739885
+    j/join.ado: 34a6141b43e66a25982f9514bdb8721a167091508a525114449db1648da3b18a
+    j/join.sthlp: 015893b534060334efeca44aa84f676128357adefeda2e0e8e6be48598eb600e
+    l/local_inlist.ado: c4540d6ef1c85d2ea2fdc5e9eefcfaf767f9eb2a2cc40cf3e2e5e019714d71c3
+    l/local_inlist.sthlp: 9912ba9a104be9c6130beb5a387582c6296e3b8d8bf1a3fec935d92d836af100
+    m/ms_add_comma.ado: 62c404231453f13f968e7780823d3235e7c3695b72ac1dbe28275478f2e6e208
+    m/ms_compile_mata.ado: 4a316f4e00e00cef93d5cfe151308e1a128a1551fc908dd47efe6406ff00ab26
+    m/ms_expand_varlist.ado: b862f7ba8f490dc1931b7dda7a37e6d6c9fd6cff9435d378b61da0e353bd91ca
+    m/ms_fvstrip.ado: b272704336522f4ea707948549b542d802ab3eb257c3ad2341a1c543685a51f5
+    m/ms_fvstrip.sthlp: cfe5988bb044628ab33795b04816a5492a8c92917cdf5c7734779d85cbb873dd
+    m/ms_fvunab.ado: a4f47474e6d4cead0cf05cf75fd4fa6c36156e997fc2a8aa6584c122bc934900
+    m/ms_get_version.ado: c20215fb7583cac63083464ef18b402d8382686c7c4c8cec05caa6b5a6ca9d91
+    m/ms_parse_absvars.ado: 98bec7d062b656cfc6818d49b6130af151b76798c33cd7031469fc5125ffe2cc
+    m/ms_parse_varlist.ado: bdb27378f1524d332cca571674c4e48c52a3138ee8183aa56bbebadb38cde48f
+    m/ms_parse_vce.ado: 99af53ca13f325a917b7377762feab140914a5a6534c0953ea9ce6d55dcfa678
+    p/parallel_map.ado: 96bea0da77aa112275134c77cad6f06977ae86f55759a2c7459e16d0eacf34dd
+    p/parallel_map.sthlp: b8ea404ce46d53c60eea67baee24257085a3d286772716888dfd30e4702a45fc
+    p/parallel_map_template.do.ado: d7fe2acbb7b97591b91d55760c7fc80b5ec60f5a432d80f670209647463c3d06
+- source: https://raw.githubusercontent.com/sergiocorreia/reghdfe/29b2b203f534413369d675d0c0f674d61291f536/src
+  descriptor: reghdfe.pkg
+  distribution_date: '20260708'
+  files:
+    e/estfe.ado: a2913f84bf90792230b525de0c495cbddfc810dc78c83dd351bac4cf9e353333
+    r/reghdfe.ado: e9b96033602a6f1785f1be0b6393b44d48ef0974009ee2bffee308bc251a6abc
+    r/reghdfe.mata: 55827e1e3c9bec3a0c9310c1147a24c3b997ca0a5dd256a353d98407f876dcf6
+    r/reghdfe.sthlp: 5c99c4d0b34eebe53d6f1158ba093d693cf4d0c74a3f7eb9603c6b0972b072c1
+    r/reghdfe3.ado: 06ae4682ad1421c08dfa520dc98609141006602192d9703ab147310c0aa1db5b
+    r/reghdfe3.sthlp: 54bdd8cd01fd4273978d989e29e310d5158461fc72edd874272da5cfbb42d62a
+    r/reghdfe3_estat.ado: 9e9ceaa020bdfd1f6803e671531f162a5194440f14330f4c0fe629d8a878b73a
+    r/reghdfe3_footnote.ado: 66558aab202a6345540988cf555037794eace5e09a17ddebaacafa0890bfc4ea
+    r/reghdfe3_p.ado: 422280314dd7dc48b9a3b6238face0abd698f459160918ca2b0195125587b3d2
+    r/reghdfe5.ado: 0ccc39e990efeb8aa6c603ac7feb89bec47ed73d5ace095d13504390cd1baf2a
+    r/reghdfe5.mata: f99d6502e5d5b300041a4c6290de25ebc5f8c20bc629292adcdc1cdaa9658187
+    r/reghdfe5.sthlp: 0f9b33f8d36ba36de40e56738f52f7a5ee20aa8296b48d9ae9a699316f1875fa
+    r/reghdfe5_estat.ado: 911cb9a178f13b6b68a9e3757b57880549e53b64ad9e5d3154ea5da7e191774b
+    r/reghdfe5_footnote.ado: a70ae8289b52d86c28e01fafddb10ef381d922e80da875d4b3907a3dc9fd8d5a
+    r/reghdfe5_header.ado: df5d665c5f504355ac345e87f8c3b3fe0adced08b73b5d1e51715f1eae2bfba6
+    r/reghdfe5_p.ado: 7b04d29494f2f8d977dc94ffaca701c6b7ec28768066f4cd3b93a5437e89e003
+    r/reghdfe5_parse.ado: 13662b3579e740e4233700d0f966b4cf7e03f6109a08cacd44e33fcf098cb20a
+    r/reghdfe_estat.ado: c824d5d2ca8e5bbeeb1916cc80afd05554c668467ebed96c7a5ca86b8a5a87bb
+    r/reghdfe_footnote.ado: 39efcab7ff05fe00ccfa24e2d6e428a216471bacc7896f97d12544aae33602ac
+    r/reghdfe_header.ado: 2d39165ed4363c1fc503b0d599dc942db55c87415733957e98ba26eccc66f65d
+    r/reghdfe_p.ado: ce736f81cfe3cecbd5d5f66c275582ce0d622ea8e67161df8bc7855dfd0b1639
+    r/reghdfe_programming.sthlp: db849ee333a5fa269381cf928fdf9c5c465ce13cd3219a31737f8b6299cd67c2
+generated_files:
+  personal/l/lftools.mlib: 5b19a177ff932017f4735af3ae5a1f2942bee34f955f3ebe363e4295cdb34784

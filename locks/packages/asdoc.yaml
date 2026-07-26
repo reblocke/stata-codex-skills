@@ -1,0 +1,11 @@
+schema_version: 1
+slug: asdoc
+distributions:
+- source: http://fmwww.bc.edu/repec/bocode/a
+  descriptor: asdoc.pkg
+  distribution_date: '20210723'
+  files:
+    a/asdoc.ado: 4cd58fab6ca6c73518a055ab652e0a054bb75ed9343ba8320c0b66201512b68b
+    a/asdoc.sthlp: 24b733a4fdb9f4cfe8dc8ca91e2a19b656a970149e41d652e5d7aa721d108d0b
+    l/lasdoc.mlib: 5863d66ab44bd536b19e1dd9e1896a6fa9e6bfa295a678172b12479db9738585
+generated_files: {}

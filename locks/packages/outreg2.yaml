@@ -1,0 +1,15 @@
+schema_version: 1
+slug: outreg2
+distributions:
+- source: http://fmwww.bc.edu/repec/bocode/o
+  descriptor: outreg2.pkg
+  distribution_date: '20140817'
+  files:
+    o/outreg2.ado: d366daa9d0621fe1011204879f696c75939202776802991ae96d170ae9d44e3f
+    o/outreg2.hlp: a583dd287315d0a32aaf7df94d4cfbb1184b9356d5f0d5f812ff8a663228793c
+    o/outreg2_prf.ado: 37984439b2159ca82bb6f8cc85deb4101994404bc90faab26f724b16a346895f
+    s/seeout.ado: 69c8700c387ee29399b407766d9be8f8e46a29b7246fe457b245cff25eeadb7d
+    s/seeout.hlp: ad470113294a6d21a0b5695e3d5fb05070dd7486bb50e9dc6144b2514d444c84
+    s/shellout.ado: 13289488a6da8f0272732b8e266967f9ecf5e944655b7a3cd946e2da974a2e63
+    s/shellout.hlp: 14f9bd234a19cf0a2d9da79c443c48a013b33735459d067d79cc0f4bf1a3ed1c
+generated_files: {}

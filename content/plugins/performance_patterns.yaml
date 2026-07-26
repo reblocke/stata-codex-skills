@@ -17,6 +17,14 @@ aliases:
 - pthread_create
 - pthread_join
 - SF_is_missing
+routing_terms:
+- accelerate a computational kernel beyond ado code
+- profile a Stata plugin hot path
+- reuse native buffers across observations
+- quickselect instead of a full sort
+- deterministic thread-local plugin RNG
+- optimize presorted indices and cache locality
+- preserve semantics in a native fast path
 commands:
 - qsort
 - quickselect

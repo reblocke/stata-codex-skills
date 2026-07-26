@@ -16,6 +16,12 @@ aliases:
 - distinct
 - missings
 - carryforward
+routing_terms:
+- gtools fast grouped operations
+- gcollapse large-data aggregation
+- greshape large-data reshape
+- rangestat rolling-window statistics
+- audit and carry forward missing values
 commands:
 - gcollapse
 - gegen

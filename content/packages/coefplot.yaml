@@ -10,6 +10,12 @@ aliases:
 - forest plot
 - model-comparison plot
 - margins plot
+routing_terms:
+- coefplot stored estimates
+- forest-style regression coefficient plot
+- compare model confidence intervals
+- plot marginal effects with coefplot
+- directly label regression estimates
 commands:
 - coefplot
 source_topics:

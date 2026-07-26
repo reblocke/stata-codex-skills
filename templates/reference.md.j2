@@ -4,9 +4,15 @@
 
 {{ entry.trigger }}
 
-## Routing aliases
+## Routing terms
 
-{% for alias in entry.routing_aliases %}
+{% for term in entry.routing_terms %}
+- `{{ term }}`
+{% endfor %}
+
+## Supported aliases and names
+
+{% for alias in entry.aliases %}
 - `{{ alias }}`
 {% endfor %}
 {% if entry.preflight_commands %}
@@ -70,15 +76,6 @@ outside an isolated validation directory.
 {% for item in entry.workflows %}
 - {{ item }}
 {% endfor %}
-{% if entry.smoke_test %}
-
-## Smoke test
-
-```stata
-{{ entry.smoke_test }}
-```
-{% endif %}
-
 ## Validation
 
 - Mode: `{{ entry.validation_mode }}`

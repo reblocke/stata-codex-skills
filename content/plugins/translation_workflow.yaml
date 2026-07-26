@@ -16,6 +16,13 @@ aliases:
 - license audit
 - API mapping
 - reference fixture
+routing_terms:
+- port a Python package to Stata
+- port an R package to Stata
+- audit feature parity before translation
+- choose ado Mata or a C++ wrapper
+- map source-language APIs to Stata
+- generate pinned source-language fixtures
 commands:
 - source inventory
 - license audit

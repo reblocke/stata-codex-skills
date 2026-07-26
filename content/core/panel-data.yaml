@@ -8,6 +8,14 @@ trigger: >-
   between estimators, population-averaged models, and panel-aware lags with xtset and xtreg.
 commands: [xtset, xtdescribe, xtsum, xtreg, hausman]
 aliases: [panel data, longitudinal data, fixed effects, random effects, within estimator, FE, RE]
+routing_terms:
+- xtset panel structure
+- duplicate panel-time observations
+- xtreg fixed effects
+- xtreg random effects
+- Hausman test after xtreg
+- within estimator in Stata
+- panel-aware lag operator
 source_topics: [xtset, xtreg, xt]
 syntax_patterns:
 - isid panel_id time

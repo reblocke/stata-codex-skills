@@ -1,0 +1,67 @@
+schema_version: 1
+slug: did
+distributions:
+- source: http://fmwww.bc.edu/repec/bocode/d
+  descriptor: drdid.pkg
+  distribution_date: '20251005'
+  files:
+    _/_gmm_dripw.ado: 2ad84cf49550828278dbb37a42741ca5a143e2b0e0f6fd02cb44c0548c31851d
+    _/_gmm_regipw.ado: 1e8d8ff57f5b271ac2f6414ef8ad2907100d9cba1e7f73882e26ea7df71ab829
+    _/_gmm_repeated.ado: f7af5faf9ecdfbc47b70a33ece573354e0b8788b2e7587f85fb3b2d181cb1528
+    _/_het_did_gmm.ado: a410955086ccfbec101810964e2cc2c6ff27f337e1d5dcf6274c2805e52d3a56
+    d/drdid.ado: 242dd51923580cda80b28f1b00512b9f95666db989825c46a9fad21d87dcfc9f
+    d/drdid.sthlp: 8fd3579f24b066e9c951c4fb8ffb310a28db8b24964f98cbc1c0f808753e6c18
+    d/drdid_display.ado: 340cf38f80b02e87f3e88d866be52a57011ba8dae8e8fb27ea18e9e082915741
+    d/drdid_predict.ado: cb211f4bcd2837f0731672a7f4c754ebf0124d0dcceed7f9bf02c1888e66d09c
+- source: http://fmwww.bc.edu/repec/bocode/c
+  descriptor: csdid.pkg
+  distribution_date: '20251005'
+  files:
+    _/_gcsgvar.ado: 7aafe6b124f386dd692319a05fd452c9b8610f6f17f7274202383bbd11ec027b
+    c/csdid.ado: f4f10d23f753ba1a5231ce5aa7999b65ceb58cd4a5ad66964b0793f65d179bcc
+    c/csdid.sthlp: e8d443784817d8f1312ef0fd891e2bd463b478b0ae6786102fc91b8b865718a5
+    c/csdid_estat.ado: be037cb115ceb25d16cb3f458764a5a5a1274175207c30d8024362426c1539a4
+    c/csdid_plot.ado: 6eb16369b1472b7878c7778accb6bfc4fd912c56a9f7df183dd63eed356a4825
+    c/csdid_postestimation.sthlp: 1003135e022bd19d2e2c5a297364c227ed13b6d701d08c0e9b6f1626efe05374
+    c/csdid_rif.ado: cd8dee134c83f8b88ea1157e2f1fbcd79de33f548abfa2c7d16dd23217b7c601
+    c/csdid_stats.ado: 5dfa8b7932dbf4ed36c60070e2fa0570196fdedbdb31c9ec7f10ee84c0a00052
+    c/csdid_table.ado: 6efaac3e8aee1092c7033dc97625d41ed605892bd4585f26d626afbe33388a88
+    t/tsvmat.ado: cdc9476da5809d2a3c31ad8bfc249347949702fbeaf7698fe2c6ab69da72140f
+- source: http://fmwww.bc.edu/repec/bocode/d
+  descriptor: did_multiplegt.pkg
+  distribution_date: '20240719'
+  files:
+    d/did_multiplegt.ado: 9b933d09115b0ed72c3a9cbe6459900eb7a6c099b03641685f8dd98a8050b42b
+    d/did_multiplegt.sthlp: 81ebfb526362d2dbfe270301ad2101515de2a8d5df159aa4c2bcba0b8a24262a
+- source: http://fmwww.bc.edu/repec/bocode/d
+  descriptor: did_imputation.pkg
+  distribution_date: '20231122'
+  files:
+    d/did_imputation.ado: ca5f40639db954212aac65db922647a241ac18f79cf6a2241c9b19434d42b4d6
+    d/did_imputation.sthlp: 4aaaf172b9d983f1fa991e17af948fe80c5e20b3250b53c9e7432bff9484b550
+- source: http://fmwww.bc.edu/repec/bocode/b
+  descriptor: bacondecomp.pkg
+  distribution_date: '20220921'
+  files:
+    b/b.ado: 4b0e1d00260f5037a0573e4597ead24c05c9d789ff50ca15026fa062ce521a72
+    b/b.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+    b/ba.ado: 5e7005cf0d9c6ecd28fefc1b28764518bacfbc71a96b30419a03ccfc9cd99e2e
+    b/ba.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+    b/bac.ado: 28c404f72e4b018b1fce6a9e22e81149a57adab54567d2462820df87baa07c93
+    b/bac.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+    b/baco.ado: d8f1ff3aaaab86455c6608e7f9200b39726dc3ab40b384662b6c8073432b74bf
+    b/baco.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+    b/bacon.ado: edb63b53b9221c7ec540a1056e8f3d1a4619c7e862bbc303621eea85793f9314
+    b/bacon.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+    b/bacond.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+    b/baconde.ado: 27972c4903261aec3ad9b6f8d8f035752a17912485ae8e6e57e73f92dc7c78f4
+    b/baconde.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+    b/bacondec.ado: ca9550037688648c315df3814c67b7a2534babf16b962741bb6b2e43e060906a
+    b/bacondec.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+    b/bacondeco.ado: 5afd8298978c7a49d7199e30576de5d9eef0d042f0f49a08cce1326780bcb733
+    b/bacondeco.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+    b/bacondecom.ado: 5a11ef70b357ce0c178828dbff9742d2726710ad8e1a526b8791ac541e5bc8b6
+    b/bacondecom.sthlp: 85cabb16b503797500583fa9cfa7eff783e10db13578c1d8422acc4a4348eaa1
+    b/bacondecomp.ado: 709cc3679c647d69aab6b5a40eea323be38965c02cf85616913a219d57a9e5c6
+    b/bacondecomp.sthlp: 01c2b605c3fc0213d9c661b71c683b5e5cc74da3b9d9554746c0f6f5ef1828b6
+generated_files: {}

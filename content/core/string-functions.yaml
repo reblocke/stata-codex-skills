@@ -16,6 +16,14 @@ commands:
 - ustrnormalize()
 - ustrlen()
 aliases: [string cleaning, text parsing, regular expression, regex, Unicode, split string]
+routing_terms:
+- regexm() match
+- regexs() capture group
+- ustrregexm() Unicode regex
+- ustrnormalize() Unicode normalization
+- split string variable
+- substr() extraction
+- strpos() search
 source_topics:
 - string_functions
 - split

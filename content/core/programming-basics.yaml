@@ -8,6 +8,15 @@ trigger: >-
   command delimiters, temporary names, quietly/noisily, capture, and basic reusable automation.
 commands: [local, global, foreach, forvalues, do, run, tempfile, tempname, capture, quietly]
 aliases: [Stata programming, macro, loop, foreach, forvalues, do-file, automation]
+routing_terms:
+- local macro expansion
+- global macro scope
+- foreach loop
+- forvalues loop
+- do-file arguments
+- tempfile and tempname
+- capture command errors
+- quietly run a Stata command
 source_topics: [foreach, forvalues, macro, do]
 syntax_patterns:
 - local outcomes "y1 y2 y3"

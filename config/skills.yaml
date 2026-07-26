@@ -43,7 +43,7 @@ skills:
     interface:
       display_name: Stata Core
       short_description: Built-in Stata workflows, commands, data management, and estimation
-      default_prompt: Use $stata-core for built-in Stata commands and workflows, loading only the references whose aliases and task intent match the request.
+      default_prompt: Use $stata-core for built-in Stata commands and workflows, loading only the references whose curated routing terms and task intent match the request.
 
   packages:
     name: stata-packages
@@ -69,7 +69,7 @@ skills:
     interface:
       display_name: Stata Packages
       short_description: Community-contributed Stata package workflows and validation
-      default_prompt: Use $stata-packages for community-contributed Stata packages, routing by command aliases and task intent and checking installation before use.
+      default_prompt: Use $stata-packages for community-contributed Stata packages, routing by curated terms and task intent and checking installation before use.
 
   plugins:
     name: stata-c-plugins
@@ -98,7 +98,47 @@ skills:
     interface:
       display_name: Stata C Plugins
       short_description: Build, package, and validate Stata C and C++ plugins
-      default_prompt: Use $stata-c-plugins for Stata C or C++ plugin work, routing by API aliases and the requested build, packaging, or validation intent.
+      default_prompt: Use $stata-c-plugins for Stata C or C++ plugin work, routing by curated terms and the requested build, packaging, or validation intent.
+
+routing_boundaries:
+  - term: difference in differences
+    routes:
+      - core/difference-in-differences
+      - packages/did
+    action: clarify
+    guidance: Ask whether the user wants built-in didregress or a community staggered-adoption estimator such as csdid.
+  - term: propensity score matching
+    routes:
+      - core/matching-methods
+      - packages/psmatch2
+    action: clarify
+    guidance: Ask whether the user wants built-in teffects matching or the community psmatch2 workflow.
+  - term: regression discontinuity
+    routes:
+      - core/regression-discontinuity
+      - packages/rdrobust
+    action: clarify
+    guidance: Ask whether the user wants a transparent built-in manual workflow or rdrobust bias-corrected inference.
+  - term: regression table
+    routes:
+      - core/tables-reporting
+      - packages/asdoc
+      - packages/estout
+      - packages/outreg2
+    action: clarify
+    guidance: Ask whether results should use built-in collect or etable, a sequential asdoc report, stored-model esttab, or immediate outreg2 export.
+  - term: local polynomial regression
+    routes:
+      - core/nonparametric-methods
+      - packages/nprobust
+    action: clarify
+    guidance: Ask whether the user wants built-in npregress or community nprobust and lprobust robust bias-corrected inference.
+  - term: accelerate a computational kernel beyond ado code
+    routes:
+      - core/mata-programming
+      - plugins/performance_patterns
+    action: clarify
+    guidance: Profile first and retain built-in or package options when sufficient; otherwise ask whether the kernel belongs in Mata or a native C or C++ plugin and what interface must be preserved.
 
 route_aliases:
   - from_skill: packages

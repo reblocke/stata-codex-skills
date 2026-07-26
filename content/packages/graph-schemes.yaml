@@ -15,6 +15,12 @@ aliases:
 - graph scheme
 - set scheme
 - graph query
+routing_terms:
+- grstyle reusable graph styling
+- schemepack Stata themes
+- blindschemes colorblind-safe graphs
+- colorpalette and colrspace palettes
+- project-wide Stata graph scheme
 commands:
 - grstyle
 - colorpalette

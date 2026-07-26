@@ -19,6 +19,13 @@ aliases:
 - rdms
 - regression discontinuity
 - fuzzy RD
+routing_terms:
+- regression discontinuity
+- rdrobust robust bias-corrected inference
+- rdbwselect regression-discontinuity bandwidth
+- rddensity manipulation test
+- rdlocrand local-randomization analysis
+- multi-cutoff regression discontinuity
 commands:
 - rdrobust
 - rdbwselect

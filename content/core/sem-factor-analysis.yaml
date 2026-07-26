@@ -8,6 +8,14 @@ trigger: >-
   identification constraints, standardized estimates, fit statistics, and latent-variable predictions.
 commands: [factor, rotate, predict, sem, gsem, estat gof, estat mindices]
 aliases: [factor analysis, EFA, confirmatory factor analysis, CFA, SEM, GSEM, latent variable, path analysis]
+routing_terms:
+- exploratory factor analysis
+- confirmatory factor analysis in sem
+- generalized SEM with gsem
+- rotate factor loadings
+- estat gof after sem
+- estat mindices after sem
+- latent-variable measurement model
 source_topics: [sem, gsem_command, factor]
 syntax_patterns:
 - factor item1-item6, factors(2) pcf
