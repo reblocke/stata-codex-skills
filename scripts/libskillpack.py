@@ -48,6 +48,7 @@ UPSTREAM_REPO_DIR = RAW_ROOT / "upstream" / "stata-skill"
 STATA_ROOT = Path("/Applications/Stata")
 STATA_ADO_BASE = STATA_ROOT / "ado" / "base"
 STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS = 5
+PROCESS_SIGNAL_EXIT_RACE_TIMEOUT_SECONDS = 0.25
 MACOS_SANDBOX_EXEC = Path("/usr/bin/sandbox-exec")
 STATA_SANDBOX_PROFILE = (
     "(version 1)"
@@ -907,11 +908,30 @@ def _signal_process_group(
         return _ProcessGroupSignalResult(False, False)
     try:
         os.killpg(process.pid, process_signal)
-    except (ProcessLookupError, PermissionError):
+    except ProcessLookupError:
+        # ESRCH can race with a natural leader exit between the anchored state
+        # observation and killpg().  Keep the waitable leader as the PID
+        # anchor, never retry the signal, and briefly observe whether it reaches
+        # the exited-but-unreaped state that proves the group disappeared.
+        deadline = (
+            time.monotonic() + PROCESS_SIGNAL_EXIT_RACE_TIMEOUT_SECONDS
+        )
+        while True:
+            leader_state = _process_leader_state(process)
+            if leader_state is not _ProcessLeaderState.LIVE_ANCHORED:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            time.sleep(min(0.01, remaining))
+        return _ProcessGroupSignalResult(
+            leader_state is _ProcessLeaderState.EXITED_ANCHORED,
+            False,
+        )
+    except PermissionError:
         # macOS reports EPERM for a group containing only an exited, waitable
-        # leader.  ESRCH has the same safe interpretation.  Refresh the state
-        # to cover exit races; a live member would keep the owned group
-        # signalable, while lost ownership remains a closed failure.
+        # leader.  Refresh once; unlike ESRCH, do not wait because a
+        # permission-denied live group must remain an explicit failure.
         cleanup_confirmed = (
             _process_leader_state(process)
             is _ProcessLeaderState.EXITED_ANCHORED

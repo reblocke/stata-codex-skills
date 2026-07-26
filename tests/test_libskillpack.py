@@ -595,6 +595,63 @@ class RunStataDoTests(unittest.TestCase):
             self.killpg.assert_called_once_with(process.pid, signal.SIGKILL)
 
 
+class ProcessGroupSignalTests(unittest.TestCase):
+    def test_esrch_exit_race_confirms_anchored_natural_exit(self) -> None:
+        process = MarkerThenNonexitProcess()
+        states = [
+            libskillpack._ProcessLeaderState.LIVE_ANCHORED,
+            libskillpack._ProcessLeaderState.LIVE_ANCHORED,
+            libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+        ]
+
+        with patch.object(
+            libskillpack,
+            "_process_leader_state",
+            side_effect=states,
+        ) as observe, patch.object(
+            libskillpack.os,
+            "killpg",
+            side_effect=ProcessLookupError,
+        ) as killpg, patch.object(
+            libskillpack.time,
+            "sleep",
+        ) as sleep:
+            result = libskillpack._signal_process_group(
+                process,
+                signal.SIGKILL,
+            )
+
+        self.assertTrue(result.cleanup_confirmed)
+        self.assertFalse(result.live_leader_signaled)
+        self.assertEqual(3, observe.call_count)
+        killpg.assert_called_once_with(process.pid, signal.SIGKILL)
+        sleep.assert_called_once()
+
+    def test_esrch_live_leader_remains_cleanup_failure(self) -> None:
+        process = MarkerThenNonexitProcess()
+
+        with patch.object(
+            libskillpack,
+            "_process_leader_state",
+            return_value=libskillpack._ProcessLeaderState.LIVE_ANCHORED,
+        ), patch.object(
+            libskillpack.os,
+            "killpg",
+            side_effect=ProcessLookupError,
+        ), patch.object(
+            libskillpack,
+            "PROCESS_SIGNAL_EXIT_RACE_TIMEOUT_SECONDS",
+            0,
+        ):
+            result = libskillpack._signal_process_group(
+                process,
+                signal.SIGKILL,
+            )
+
+        self.assertFalse(result.cleanup_confirmed)
+        self.assertFalse(result.live_leader_signaled)
+
+
 @unittest.skipUnless(
     hasattr(os, "fork")
     and (hasattr(os, "waitid") or sys.platform == "darwin"),
