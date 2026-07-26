@@ -4,8 +4,11 @@ from contextlib import redirect_stdout
 import io
 import os
 from pathlib import Path
+import re
 import shutil
+import stat
 import sys
+import tempfile
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
@@ -16,6 +19,8 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
+import check_determinism  # noqa: E402
+import lint_skill_pack  # noqa: E402
 import render_skills  # noqa: E402
 
 
@@ -41,6 +46,17 @@ class AtomicRenderTests(unittest.TestCase):
             if path.name.startswith(prefixes)
         ]
 
+    def assert_single_retained_stage(
+        self,
+        parent: Path,
+        target_name: str,
+    ) -> Path:
+        artifacts = self.transaction_artifacts(parent, target_name)
+        self.assertEqual(1, len(artifacts))
+        self.assertIn(".stage-", artifacts[0].name)
+        self.assertTrue(artifacts[0].is_dir())
+        return artifacts[0]
+
     @staticmethod
     def seeded_target(parent: Path) -> Path:
         target = parent / "generated"
@@ -51,12 +67,14 @@ class AtomicRenderTests(unittest.TestCase):
         )
         return target
 
-    def test_success_replaces_complete_tree_and_cleans_transaction_artifacts(self) -> None:
+    def test_success_replaces_complete_tree_and_retains_prior_tree(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
             target = self.seeded_target(parent)
 
-            render_skills.render_all(output_root=target)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                render_skills.render_all(output_root=target)
 
             self.assertNotEqual(
                 b"# Prior generated tree\n",
@@ -66,7 +84,47 @@ class AtomicRenderTests(unittest.TestCase):
                 {"stata-core", "stata-packages", "stata-c-plugins"},
                 {path.name for path in target.iterdir() if path.is_dir()},
             )
-            self.assertEqual([], self.transaction_artifacts(parent, target.name))
+            artifacts = self.transaction_artifacts(parent, target.name)
+            self.assertEqual(1, len(artifacts))
+            self.assertIn(".backup-", artifacts[0].name)
+            self.assertEqual(
+                b"# Prior generated tree\n",
+                (
+                    artifacts[0] / "stata-core" / "SKILL.md"
+                ).read_bytes(),
+            )
+            self.assertIn(
+                "prior rendered tree retained for explicit cleanup",
+                output.getvalue(),
+            )
+
+    def test_clean_success_does_not_label_output_as_retained_stage(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = parent / "generated"
+            output = io.StringIO()
+
+            with redirect_stdout(output):
+                render_skills.render_all(output_root=target)
+
+            rendered_output = output.getvalue()
+            self.assertTrue(target.is_dir())
+            self.assertEqual(
+                [],
+                self.transaction_artifacts(parent, target.name),
+            )
+            self.assertNotIn("retained stage", rendered_output.lower())
+            self.assertNotIn(
+                "staged render tree retained for explicit cleanup",
+                rendered_output.lower(),
+            )
+            self.assertNotRegex(
+                rendered_output,
+                (
+                    r"(?i)(?:retained stage location|explicit cleanup at): "
+                    + re.escape(str(target.resolve()))
+                ),
+            )
 
     def test_render_normalizes_modes_even_with_permissive_umask(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-modes-") as temp_root:
@@ -85,6 +143,468 @@ class AtomicRenderTests(unittest.TestCase):
                     metadata.st_mode & 0o7777,
                     path,
                 )
+
+    def test_changed_output_parent_before_staging_cannot_redirect_render(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            root = Path(temp_root)
+            approved_parent = root / "approved-parent"
+            approved_parent.mkdir()
+            target = self.seeded_target(approved_parent)
+            prior = self.snapshot(target)
+            displaced_parent = root / "displaced-approved-parent"
+            replacement_sentinel = approved_parent / "valuable.txt"
+            real_create_stage = render_skills._create_staged_root_at
+            changed = False
+
+            def change_parent_after_stage_creation(
+                parent_handle: render_skills.RenderParentHandle,
+                output_name: str,
+            ) -> tuple[Path, os.stat_result]:
+                nonlocal changed
+                created = real_create_stage(parent_handle, output_name)
+                parent_handle.path.rename(displaced_parent)
+                parent_handle.path.mkdir()
+                replacement_sentinel.write_text(
+                    "preserve replacement parent\n",
+                    encoding="utf-8",
+                )
+                changed = True
+                return created
+
+            output = io.StringIO()
+            with patch.object(
+                render_skills,
+                "_create_staged_root_at",
+                side_effect=change_parent_after_stage_creation,
+            ), redirect_stdout(output), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "output parent changed after validation",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(changed)
+            self.assertEqual(
+                "preserve replacement parent\n",
+                replacement_sentinel.read_text(encoding="utf-8"),
+            )
+            self.assertFalse((approved_parent / target.name).exists())
+            self.assertEqual(
+                prior,
+                self.snapshot(displaced_parent / target.name),
+            )
+            stages = [
+                path
+                for path in displaced_parent.iterdir()
+                if path.name.startswith(f".{target.name}.stage-")
+            ]
+            self.assertEqual(1, len(stages))
+            self.assertIn(
+                "no trusted entry manifest was captured",
+                output.getvalue(),
+            )
+
+    def test_changed_parent_before_materialization_is_not_accepted(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            root = Path(temp_root)
+            approved_parent = root / "approved-parent"
+            approved_parent.mkdir()
+            target = self.seeded_target(approved_parent)
+            prior = self.snapshot(target)
+            displaced_parent = root / "displaced-approved-parent"
+            replacement_sentinel = approved_parent / "valuable.txt"
+            real_materialize = render_skills._materialize_render_parent
+            changed = False
+
+            def change_parent_before_materialization(
+                anchor: render_skills.RenderParentAnchor,
+            ) -> render_skills.RenderParentHandle:
+                nonlocal changed
+                anchor.parent_path.rename(displaced_parent)
+                anchor.parent_path.mkdir()
+                replacement_sentinel.write_text(
+                    "preserve replacement parent\n",
+                    encoding="utf-8",
+                )
+                changed = True
+                return real_materialize(anchor)
+
+            with patch.object(
+                render_skills,
+                "_materialize_render_parent",
+                side_effect=change_parent_before_materialization,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "output ancestor changed after destination validation",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(changed)
+            self.assertEqual(
+                "preserve replacement parent\n",
+                replacement_sentinel.read_text(encoding="utf-8"),
+            )
+            self.assertFalse((approved_parent / target.name).exists())
+            self.assertEqual(
+                prior,
+                self.snapshot(displaced_parent / target.name),
+            )
+            self.assertEqual(
+                [],
+                self.transaction_artifacts(approved_parent, target.name),
+            )
+
+    def test_new_render_parent_replacement_before_open_is_not_modified(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-parent-") as temp_root:
+            root = Path(temp_root)
+            anchor_descriptor = os.open(
+                root,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            root_metadata = os.fstat(anchor_descriptor)
+            anchor = render_skills.RenderParentAnchor(
+                parent_path=root / "new-parent" / "nested",
+                ancestor_path=root,
+                device=root_metadata.st_dev,
+                inode=root_metadata.st_ino,
+                descriptor=anchor_descriptor,
+                missing_components=("new-parent", "nested"),
+            )
+            accepted_created = root / "accepted-created-parent"
+            replacement = root / "new-parent"
+            replacement_sentinel = replacement / "valuable.txt"
+            replacement_mode: int | None = None
+            changed = False
+            real_open = render_skills._open_directory_at
+
+            def replace_new_parent_before_open(
+                parent_descriptor: int,
+                name: str,
+                display_path: Path,
+            ) -> tuple[int, os.stat_result]:
+                nonlocal changed, replacement_mode
+                if name == "new-parent" and not changed:
+                    replacement.rename(accepted_created)
+                    replacement.mkdir(mode=0o700)
+                    replacement_sentinel.write_text(
+                        "preserve replacement parent\n",
+                        encoding="utf-8",
+                    )
+                    replacement_mode = stat.S_IMODE(
+                        replacement.stat().st_mode
+                    )
+                    changed = True
+                return real_open(
+                    parent_descriptor,
+                    name,
+                    display_path,
+                )
+
+            try:
+                with patch.object(
+                    render_skills,
+                    "_open_directory_at",
+                    side_effect=replace_new_parent_before_open,
+                ), self.assertRaisesRegex(
+                    render_skills.RenderTransactionError,
+                    "new render output parent changed before first use",
+                ):
+                    render_skills._materialize_render_parent(anchor)
+            finally:
+                os.close(anchor_descriptor)
+
+            self.assertTrue(changed)
+            self.assertIsNotNone(replacement_mode)
+            self.assertEqual(
+                replacement_mode,
+                stat.S_IMODE(replacement.stat().st_mode),
+            )
+            self.assertEqual(
+                {"valuable.txt"},
+                {path.name for path in replacement.iterdir()},
+            )
+            self.assertEqual(
+                "preserve replacement parent\n",
+                replacement_sentinel.read_text(encoding="utf-8"),
+            )
+            self.assertFalse((replacement / "nested").exists())
+            self.assertTrue(accepted_created.is_dir())
+
+    def test_stage_substitution_before_first_write_is_not_modified(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            displaced_stage = parent / "created-stage"
+            replacement_sentinel: Path | None = None
+            real_write = render_skills._write_staged_text
+            changed = False
+
+            def substitute_stage_before_write(
+                parent_handle: render_skills.RenderParentHandle,
+                staged_root: Path,
+                staged_identity: tuple[int, int],
+                directory_identities: dict[
+                    tuple[str, ...],
+                    tuple[int, int],
+                ],
+                relative_path: Path,
+                text: str,
+            ) -> None:
+                nonlocal changed, replacement_sentinel
+                if not changed:
+                    staged_root.rename(displaced_stage)
+                    staged_root.mkdir()
+                    replacement_sentinel = staged_root / "valuable.txt"
+                    replacement_sentinel.write_text(
+                        "preserve replacement stage\n",
+                        encoding="utf-8",
+                    )
+                    changed = True
+                real_write(
+                    parent_handle,
+                    staged_root,
+                    staged_identity,
+                    directory_identities,
+                    relative_path,
+                    text,
+                )
+
+            output = io.StringIO()
+            with patch.object(
+                render_skills,
+                "_write_staged_text",
+                side_effect=substitute_stage_before_write,
+            ), redirect_stdout(output), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "staging root changed before writing",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(changed)
+            self.assertEqual(prior, self.snapshot(target))
+            self.assertIsNotNone(replacement_sentinel)
+            assert replacement_sentinel is not None
+            self.assertEqual(
+                "preserve replacement stage\n",
+                replacement_sentinel.read_text(encoding="utf-8"),
+            )
+            self.assertTrue(displaced_stage.is_dir())
+            self.assertIn(
+                str(displaced_stage.resolve()),
+                output.getvalue(),
+            )
+
+    def test_intermediate_stage_replacement_is_not_modified(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            real_write = render_skills._write_staged_text
+            writes = 0
+            replacement_root: Path | None = None
+            replacement_sentinel: Path | None = None
+
+            def replace_skill_directory_after_first_write(
+                parent_handle: render_skills.RenderParentHandle,
+                staged_root: Path,
+                staged_identity: tuple[int, int],
+                directory_identities: dict[
+                    tuple[str, ...],
+                    tuple[int, int],
+                ],
+                relative_path: Path,
+                text: str,
+            ) -> None:
+                nonlocal writes, replacement_root, replacement_sentinel
+                real_write(
+                    parent_handle,
+                    staged_root,
+                    staged_identity,
+                    directory_identities,
+                    relative_path,
+                    text,
+                )
+                writes += 1
+                if writes == 1:
+                    skill_root = staged_root / "stata-core"
+                    skill_root.rename(staged_root / "accepted-stata-core")
+                    skill_root.mkdir(mode=0o700)
+                    replacement_root = skill_root
+                    replacement_sentinel = skill_root / "valuable.txt"
+                    replacement_sentinel.write_text(
+                        "preserve replacement directory\n",
+                        encoding="utf-8",
+                    )
+
+            with patch.object(
+                render_skills,
+                "_write_staged_text",
+                side_effect=replace_skill_directory_after_first_write,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "staging directory identity changed before writing",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertGreaterEqual(writes, 1)
+            self.assertEqual(prior, self.snapshot(target))
+            self.assertIsNotNone(replacement_root)
+            self.assertIsNotNone(replacement_sentinel)
+            assert replacement_root is not None
+            assert replacement_sentinel is not None
+            self.assertEqual(
+                0o700,
+                stat.S_IMODE(replacement_root.stat().st_mode),
+            )
+            self.assertEqual(
+                "preserve replacement directory\n",
+                replacement_sentinel.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                {"valuable.txt"},
+                {path.name for path in replacement_root.iterdir()},
+            )
+
+    def test_new_stage_directory_replacement_before_open_is_not_modified(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            real_open = render_skills._open_directory_at
+            changed = False
+            replacement_root: Path | None = None
+            replacement_sentinel: Path | None = None
+
+            def replace_new_directory_before_open(
+                parent_descriptor: int,
+                name: str,
+                display_path: Path,
+            ) -> tuple[int, os.stat_result]:
+                nonlocal changed, replacement_root, replacement_sentinel
+                if (
+                    not changed
+                    and name == "stata-core"
+                    and display_path.parent.name.startswith(
+                        ".generated.stage-"
+                    )
+                ):
+                    display_path.rename(
+                        display_path.parent / "accepted-stata-core"
+                    )
+                    display_path.mkdir(mode=0o700)
+                    replacement_root = display_path
+                    replacement_sentinel = display_path / "valuable.txt"
+                    replacement_sentinel.write_text(
+                        "preserve first-open replacement\n",
+                        encoding="utf-8",
+                    )
+                    changed = True
+                return real_open(
+                    parent_descriptor,
+                    name,
+                    display_path,
+                )
+
+            with patch.object(
+                render_skills,
+                "_open_directory_at",
+                side_effect=replace_new_directory_before_open,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "new staging directory changed before first use",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(changed)
+            self.assertEqual(prior, self.snapshot(target))
+            self.assertIsNotNone(replacement_root)
+            self.assertIsNotNone(replacement_sentinel)
+            assert replacement_root is not None
+            assert replacement_sentinel is not None
+            self.assertEqual(
+                0o700,
+                stat.S_IMODE(replacement_root.stat().st_mode),
+            )
+            self.assertEqual(
+                "preserve first-open replacement\n",
+                replacement_sentinel.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                {"valuable.txt"},
+                {path.name for path in replacement_root.iterdir()},
+            )
+
+    def test_primary_render_failure_survives_retention_interruption(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            primary = RuntimeError("primary replacement failure")
+            retention = KeyboardInterrupt("retention interrupted")
+            output = io.StringIO()
+
+            with patch.object(
+                render_skills,
+                "_replace_rendered_tree",
+                side_effect=primary,
+            ), patch.object(
+                render_skills,
+                "_retain_owned_directory",
+                side_effect=retention,
+            ), redirect_stdout(output), self.assertRaises(
+                RuntimeError
+            ) as raised:
+                render_skills.render_all(output_root=target)
+
+            self.assertIs(primary, raised.exception)
+            self.assertEqual(prior, self.snapshot(target))
+            stages = [
+                path
+                for path in self.transaction_artifacts(parent, target.name)
+                if ".stage-" in path.name
+            ]
+            self.assertEqual(1, len(stages))
+            self.assertIn(
+                "staged render retention also encountered KeyboardInterrupt",
+                output.getvalue(),
+            )
+
+    def test_retention_interruption_without_primary_closes_descriptors(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            retention = KeyboardInterrupt("retention interrupted")
+            before_fds = len(os.listdir("/dev/fd"))
+
+            with patch.object(
+                render_skills,
+                "_replace_rendered_tree",
+                return_value=None,
+            ), patch.object(
+                render_skills,
+                "_retain_staged_root",
+                side_effect=retention,
+            ), self.assertRaises(KeyboardInterrupt) as raised:
+                render_skills.render_all(output_root=target)
+
+            self.assertIs(retention, raised.exception)
+            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
+            self.assertEqual(prior, self.snapshot(target))
 
     def test_render_failure_preserves_previous_tree(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
@@ -132,11 +652,13 @@ class AtomicRenderTests(unittest.TestCase):
             sentinel.write_text("preserve stage-path bytes\n", encoding="utf-8")
 
             def substitute_stage_then_fail(
+                _parent_handle: render_skills.RenderParentHandle,
                 staged_root: Path,
                 _output_root: Path,
                 _expected: render_skills.RenderOutputState,
                 _expected_staged: render_skills.RenderOutputState,
                 _validator: object,
+                _verify_inputs: object,
             ) -> None:
                 staged_root.rename(displaced_stage)
                 unrelated.rename(staged_root)
@@ -154,6 +676,10 @@ class AtomicRenderTests(unittest.TestCase):
                 render_skills.render_all(output_root=target)
 
             self.assertIn("staged render cleanup was skipped", output.getvalue())
+            self.assertIn(
+                str(displaced_stage.resolve()),
+                output.getvalue(),
+            )
             surviving_values = [
                 path.read_text(encoding="utf-8")
                 for path in parent.rglob("valuable.txt")
@@ -170,11 +696,13 @@ class AtomicRenderTests(unittest.TestCase):
             real_replace = render_skills._replace_rendered_tree
 
             def substitute_before_transaction(
+                parent_handle: render_skills.RenderParentHandle,
                 staged_root: Path,
                 output_root: Path,
                 expected_output: render_skills.RenderOutputState,
                 expected_staged: render_skills.RenderOutputState,
                 validator: object,
+                verify_inputs: object,
             ) -> None:
                 staged_root.rename(validated_stage)
                 shutil.copytree(validated_stage, staged_root)
@@ -183,11 +711,13 @@ class AtomicRenderTests(unittest.TestCase):
                     encoding="utf-8",
                 )
                 real_replace(
+                    parent_handle,
                     staged_root,
                     output_root,
                     expected_output,
                     expected_staged,
                     validator,
+                    verify_inputs,
                 )
 
             output = io.StringIO()
@@ -197,7 +727,7 @@ class AtomicRenderTests(unittest.TestCase):
                 side_effect=substitute_before_transaction,
             ), redirect_stdout(output), self.assertRaisesRegex(
                 render_skills.RenderTransactionError,
-                "changed after preflight",
+                "no longer matches its accepted identity",
             ):
                 render_skills.render_all(output_root=target)
 
@@ -224,11 +754,13 @@ class AtomicRenderTests(unittest.TestCase):
             prior = self.snapshot(target)
 
             def mutate_stage_then_fail(
+                _parent_handle: render_skills.RenderParentHandle,
                 staged_root: Path,
                 _output_root: Path,
                 _expected_output: render_skills.RenderOutputState,
                 _expected_staged: render_skills.RenderOutputState,
                 _validator: object,
+                _verify_inputs: object,
             ) -> None:
                 foreign = staged_root / "foreign-dir"
                 foreign.mkdir()
@@ -272,27 +804,33 @@ class AtomicRenderTests(unittest.TestCase):
             target = self.seeded_target(parent)
             prior = self.snapshot(target)
             validated_stage = parent / "validated-stage"
-            real_rename = render_skills._atomic_rename_no_replace
+            real_rename = render_skills._rename_render_entry
             rename_count = 0
 
             def substitute_during_install(
-                source: Path,
-                destination: Path,
+                parent_handle: render_skills.RenderParentHandle,
+                source_name: str,
+                destination_name: str,
             ) -> None:
                 nonlocal rename_count
                 rename_count += 1
                 if rename_count == 2:
+                    source = parent_handle.path / source_name
                     source.rename(validated_stage)
                     shutil.copytree(validated_stage, source)
                     (source / "stata-core" / "SKILL.md").write_text(
                         "# Unvalidated placement\n",
                         encoding="utf-8",
                     )
-                real_rename(source, destination)
+                real_rename(
+                    parent_handle,
+                    source_name,
+                    destination_name,
+                )
 
             with patch.object(
                 render_skills,
-                "_atomic_rename_no_replace",
+                "_rename_render_entry",
                 side_effect=substitute_during_install,
             ), self.assertRaisesRegex(
                 render_skills.RenderTransactionError,
@@ -349,11 +887,125 @@ class AtomicRenderTests(unittest.TestCase):
                 if ".stage-" in path.name
             ]
             self.assertEqual(1, len(stages))
-            self.assertFalse((stages[0] / "stata-core" / "SKILL.md").exists())
+            self.assertTrue(stages[0].is_dir())
             self.assertIn(
-                "no trusted entry manifest was captured",
+                "staged render tree retained for explicit cleanup",
                 output.getvalue(),
             )
+
+    def test_stage_change_after_validation_is_not_trusted(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            real_validate = render_skills.validate_rendered_state
+            validation_count = 0
+            changed_stage: Path | None = None
+
+            def validate_then_change_same_file(
+                state: render_skills.RenderOutputState,
+                *args: object,
+            ) -> None:
+                nonlocal validation_count, changed_stage
+                real_validate(state, *args)
+                validation_count += 1
+                if validation_count == 1:
+                    changed_stage = next(
+                        path
+                        for path in self.transaction_artifacts(
+                            parent,
+                            target.name,
+                        )
+                        if ".stage-" in path.name
+                    )
+                    skill_file = changed_stage / "stata-core" / "SKILL.md"
+                    skill_file.write_text(
+                        "# Changed after validation\n",
+                        encoding="utf-8",
+                    )
+
+            output = io.StringIO()
+            with patch.object(
+                render_skills,
+                "validate_rendered_state",
+                side_effect=validate_then_change_same_file,
+            ), redirect_stdout(output), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "private pre-delete verification|descriptor capture",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertIsNotNone(changed_stage)
+            self.assertEqual(prior, self.snapshot(target))
+            self.assertEqual(
+                "# Changed after validation\n",
+                (
+                    changed_stage / "stata-core" / "SKILL.md"
+                ).read_text(encoding="utf-8"),
+            )
+            self.assertIn("staged render cleanup was skipped", output.getvalue())
+
+    def test_structural_validation_uses_retained_stage_inventory(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            displaced_parent = parent.parent / f"{parent.name}-displaced"
+            real_render = render_skills._render_tree
+            real_validate = render_skills.validate_rendered_state
+            alternate_tree_was_present = False
+
+            def render_missing_required_file(
+                output_root: Path,
+                *args: object,
+            ) -> None:
+                real_render(output_root, *args)
+                (output_root / "stata-core" / "SKILL.md").unlink()
+
+            def change_public_parent_during_validation(
+                state: render_skills.RenderOutputState,
+                *args: object,
+            ) -> None:
+                nonlocal alternate_tree_was_present
+                stage = next(
+                    path
+                    for path in self.transaction_artifacts(
+                        parent,
+                        target.name,
+                    )
+                    if ".stage-" in path.name
+                )
+                stage_name = stage.name
+                parent.rename(displaced_parent)
+                parent.mkdir()
+                shutil.copytree(
+                    displaced_parent / target.name,
+                    parent / stage_name,
+                )
+                alternate_tree_was_present = True
+                try:
+                    real_validate(state, *args)
+                finally:
+                    shutil.rmtree(parent)
+                    displaced_parent.rename(parent)
+
+            with patch.object(
+                render_skills,
+                "_render_tree",
+                side_effect=render_missing_required_file,
+            ), patch.object(
+                render_skills,
+                "validate_rendered_state",
+                side_effect=change_public_parent_during_validation,
+            ), self.assertRaisesRegex(
+                ValueError,
+                "missing files: stata-core/SKILL.md",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(alternate_tree_was_present)
+            self.assertEqual(prior, self.snapshot(target))
+            self.assert_single_retained_stage(parent, target.name)
 
     def test_truncated_skill_config_cannot_replace_complete_tree(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
@@ -387,19 +1039,27 @@ class AtomicRenderTests(unittest.TestCase):
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             before = self.snapshot(target)
-            real_replace = render_skills._atomic_rename_no_replace
+            real_replace = render_skills._rename_render_entry
             replace_count = 0
 
-            def fail_new_tree_swap(source: Path, destination: Path) -> None:
+            def fail_new_tree_swap(
+                parent_handle: render_skills.RenderParentHandle,
+                source_name: str,
+                destination_name: str,
+            ) -> None:
                 nonlocal replace_count
                 replace_count += 1
                 if replace_count == 2:
                     raise OSError("forced swap failure")
-                real_replace(source, destination)
+                real_replace(
+                    parent_handle,
+                    source_name,
+                    destination_name,
+                )
 
             with patch.object(
                 render_skills,
-                "_atomic_rename_no_replace",
+                "_rename_render_entry",
                 side_effect=fail_new_tree_swap,
             ):
                 with self.assertRaisesRegex(OSError, "forced swap failure"):
@@ -407,7 +1067,7 @@ class AtomicRenderTests(unittest.TestCase):
 
             self.assertEqual(3, replace_count)
             self.assertEqual(before, self.snapshot(target))
-            self.assertEqual([], self.transaction_artifacts(parent, target.name))
+            self.assert_single_retained_stage(parent, target.name)
 
     def test_keyboard_interrupt_after_backup_move_restores_previous_tree(
         self,
@@ -416,22 +1076,24 @@ class AtomicRenderTests(unittest.TestCase):
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             prior = self.snapshot(target)
-            real_verify = render_skills._verify_moved_output_state
+            real_verify = render_skills._verify_output_state_at
             interrupted = False
 
             def interrupt_after_backup_move(
+                parent_handle: render_skills.RenderParentHandle,
+                name: str,
                 backup: Path,
                 expected: render_skills.RenderOutputState,
             ) -> None:
                 nonlocal interrupted
-                if not interrupted:
+                if ".backup-" in name and not interrupted:
                     interrupted = True
                     raise KeyboardInterrupt("forced interrupt after backup move")
-                real_verify(backup, expected)
+                real_verify(parent_handle, name, backup, expected)
 
             with patch.object(
                 render_skills,
-                "_verify_moved_output_state",
+                "_verify_output_state_at",
                 side_effect=interrupt_after_backup_move,
             ), self.assertRaisesRegex(
                 KeyboardInterrupt,
@@ -441,7 +1103,7 @@ class AtomicRenderTests(unittest.TestCase):
 
             self.assertTrue(interrupted)
             self.assertEqual(prior, self.snapshot(target))
-            self.assertEqual([], self.transaction_artifacts(parent, target.name))
+            self.assert_single_retained_stage(parent, target.name)
 
     def test_interrupt_with_concurrent_output_preserves_backup_and_reports_recovery(
         self,
@@ -450,14 +1112,17 @@ class AtomicRenderTests(unittest.TestCase):
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             prior = self.snapshot(target)
+            real_verify = render_skills._verify_output_state_at
             interrupted = False
 
             def interrupt_after_concurrent_output(
-                _backup: Path,
-                _expected: render_skills.RenderOutputState,
+                parent_handle: render_skills.RenderParentHandle,
+                name: str,
+                backup: Path,
+                expected: render_skills.RenderOutputState,
             ) -> None:
                 nonlocal interrupted
-                if not interrupted:
+                if ".backup-" in name and not interrupted:
                     interrupted = True
                     target.mkdir()
                     (target / "valuable.txt").write_text(
@@ -467,10 +1132,11 @@ class AtomicRenderTests(unittest.TestCase):
                     raise KeyboardInterrupt(
                         "forced interrupt with concurrent output"
                     )
+                real_verify(parent_handle, name, backup, expected)
 
             with patch.object(
                 render_skills,
-                "_verify_moved_output_state",
+                "_verify_output_state_at",
                 side_effect=interrupt_after_concurrent_output,
             ), self.assertRaisesRegex(
                 render_skills.RenderTransactionError,
@@ -496,23 +1162,31 @@ class AtomicRenderTests(unittest.TestCase):
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             before = self.snapshot(target)
-            real_replace = render_skills._atomic_rename_no_replace
+            real_replace = render_skills._rename_render_entry
             replace_count = 0
 
-            def fail_swap_and_restore(source: Path, destination: Path) -> None:
+            def fail_swap_and_restore(
+                parent_handle: render_skills.RenderParentHandle,
+                source_name: str,
+                destination_name: str,
+            ) -> None:
                 nonlocal replace_count
                 replace_count += 1
                 if replace_count >= 2:
                     raise OSError(f"forced replace failure {replace_count}")
-                real_replace(source, destination)
+                real_replace(
+                    parent_handle,
+                    source_name,
+                    destination_name,
+                )
 
             with patch.object(
                 render_skills,
-                "_atomic_rename_no_replace",
+                "_rename_render_entry",
                 side_effect=fail_swap_and_restore,
             ), self.assertRaisesRegex(
                 render_skills.RenderTransactionError,
-                "prior tree remains at",
+                "retained prior-tree location",
             ):
                 render_skills.render_all(output_root=target)
 
@@ -525,6 +1199,60 @@ class AtomicRenderTests(unittest.TestCase):
             self.assertEqual(1, len(backups))
             self.assertEqual(before, self.snapshot(backups[0]))
 
+    def test_failed_restore_reports_moved_prior_tree_location(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            before = self.snapshot(target)
+            real_rename = render_skills._rename_render_entry
+            moved_prior = parent / ".relocated-prior-tree"
+            moved = False
+
+            def fail_install_and_move_before_restore(
+                parent_handle: render_skills.RenderParentHandle,
+                source_name: str,
+                destination_name: str,
+            ) -> None:
+                nonlocal moved
+                if ".stage-" in source_name and destination_name == target.name:
+                    raise OSError("forced staged install failure")
+                if (
+                    ".backup-" in source_name
+                    and destination_name == target.name
+                ):
+                    os.rename(
+                        source_name,
+                        moved_prior.name,
+                        src_dir_fd=parent_handle.descriptor,
+                        dst_dir_fd=parent_handle.descriptor,
+                    )
+                    moved = True
+                real_rename(
+                    parent_handle,
+                    source_name,
+                    destination_name,
+                )
+
+            with patch.object(
+                render_skills,
+                "_rename_render_entry",
+                side_effect=fail_install_and_move_before_restore,
+            ), self.assertRaises(
+                render_skills.RenderTransactionError
+            ) as raised:
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(moved)
+            self.assertFalse(target.exists())
+            self.assertTrue(moved_prior.is_dir())
+            self.assertEqual(before, self.snapshot(moved_prior))
+            message = str(raised.exception)
+            self.assertIn(
+                f"retained prior-tree location: {moved_prior.resolve()}",
+                message,
+            )
+            self.assertNotIn("the prior tree remains at", message)
+
     def test_backup_cleanup_failure_reports_warning_after_successful_commit(
         self,
     ) -> None:
@@ -536,13 +1264,14 @@ class AtomicRenderTests(unittest.TestCase):
             def fail_backup_cleanup(
                 path: Path,
                 expected: render_skills.RenderOutputState,
+                _parent_handle: render_skills.RenderParentHandle,
             ) -> None:
                 raise PermissionError("forced backup cleanup failure")
 
             output = io.StringIO()
             with patch.object(
                 render_skills,
-                "_remove_verified_backup",
+                "_retain_verified_backup",
                 side_effect=fail_backup_cleanup,
             ), redirect_stdout(output):
                 render_skills.render_all(output_root=target)
@@ -566,29 +1295,33 @@ class AtomicRenderTests(unittest.TestCase):
             sentinel = concurrent / "valuable.txt"
             sentinel.write_text("preserve concurrent bytes\n", encoding="utf-8")
             prior = self.snapshot(target)
-            real_remove = render_skills._remove_verified_backup
+            real_remove = render_skills._retain_verified_backup
             substituted = False
 
             def substitute_before_cleanup(
                 backup: Path,
                 expected: render_skills.RenderOutputState,
+                parent_handle: render_skills.RenderParentHandle,
             ) -> None:
                 nonlocal substituted
                 substituted = True
                 backup.rename(accepted_backup)
                 concurrent.rename(backup)
-                real_remove(backup, expected)
+                real_remove(backup, expected, parent_handle)
 
             output = io.StringIO()
             with patch.object(
                 render_skills,
-                "_remove_verified_backup",
+                "_retain_verified_backup",
                 side_effect=substitute_before_cleanup,
             ), redirect_stdout(output):
                 render_skills.render_all(output_root=target)
 
             self.assertTrue(substituted)
-            self.assertIn("backup could not be removed", output.getvalue())
+            self.assertIn(
+                "backup could not be verified for retention",
+                output.getvalue(),
+            )
             self.assertEqual(prior, self.snapshot(accepted_backup))
             backups = [
                 path
@@ -608,21 +1341,30 @@ class AtomicRenderTests(unittest.TestCase):
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             prior = self.snapshot(target)
-            real_clear = render_skills._clear_directory_descriptor
+            real_verify = render_skills._verify_directory_descriptor_tree
             injected = False
+            verification_count = 0
 
             def add_entry_after_backup_verification(
                 descriptor: int,
                 display_path: Path,
-                expected_entries: dict[
-                    str,
-                    render_skills.RenderTreeEntry,
-                ]
-                | None = None,
+                expected_entries: dict[str, render_skills.RenderTreeEntry],
                 relative_parts: tuple[str, ...] = (),
             ) -> None:
-                nonlocal injected
-                if not injected and expected_entries is not None:
+                nonlocal injected, verification_count
+                real_verify(
+                    descriptor,
+                    display_path,
+                    expected_entries,
+                    relative_parts,
+                )
+                if not relative_parts and ".backup-" in display_path.name:
+                    verification_count += 1
+                if (
+                    not relative_parts
+                    and ".backup-" in display_path.name
+                    and verification_count == 1
+                ):
                     injected = True
                     file_descriptor = os.open(
                         "late-added.txt",
@@ -634,23 +1376,20 @@ class AtomicRenderTests(unittest.TestCase):
                         os.write(file_descriptor, b"preserve late bytes\n")
                     finally:
                         os.close(file_descriptor)
-                real_clear(
-                    descriptor,
-                    display_path,
-                    expected_entries,
-                    relative_parts,
-                )
 
             output = io.StringIO()
             with patch.object(
                 render_skills,
-                "_clear_directory_descriptor",
+                "_verify_directory_descriptor_tree",
                 side_effect=add_entry_after_backup_verification,
             ), redirect_stdout(output):
                 render_skills.render_all(output_root=target)
 
             self.assertTrue(injected)
-            self.assertIn("backup could not be removed", output.getvalue())
+            self.assertIn(
+                "backup could not be verified for retention",
+                output.getvalue(),
+            )
             backups = [
                 path
                 for path in self.transaction_artifacts(parent, target.name)
@@ -944,6 +1683,90 @@ class AtomicRenderTests(unittest.TestCase):
             self.assertEqual(
                 "accepted generated bytes\nforeign post-hash bytes\n",
                 accepted.read_text(encoding="utf-8"),
+            )
+
+    def test_default_cleanup_retains_late_replacement_without_unlinking(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            backup = parent / ".generated.backup-retained"
+            backup.mkdir()
+            owned = backup / "owned.txt"
+            owned.write_text(
+                "accepted generated bytes\n",
+                encoding="utf-8",
+            )
+            metadata = backup.stat()
+            expected_entries = render_skills._capture_tree_entries(backup)
+            real_verify = render_skills._verify_directory_descriptor_tree
+            verification_count = 0
+            changed = False
+
+            def add_late_replacement_after_first_verification(
+                descriptor: int,
+                display_path: Path,
+                expected: dict[str, render_skills.RenderTreeEntry],
+                relative_parts: tuple[str, ...] = (),
+            ) -> None:
+                nonlocal verification_count, changed
+                real_verify(
+                    descriptor,
+                    display_path,
+                    expected,
+                    relative_parts,
+                )
+                if not relative_parts:
+                    verification_count += 1
+                    if verification_count == 1:
+                        os.rename(
+                            "owned.txt",
+                            "accepted.txt",
+                            src_dir_fd=descriptor,
+                            dst_dir_fd=descriptor,
+                        )
+                        replacement = os.open(
+                            "owned.txt",
+                            os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                            0o600,
+                            dir_fd=descriptor,
+                        )
+                        try:
+                            os.write(
+                                replacement,
+                                b"late replacement bytes\n",
+                            )
+                        finally:
+                            os.close(replacement)
+                        changed = True
+
+            with patch.object(
+                render_skills,
+                "_verify_directory_descriptor_tree",
+                side_effect=add_late_replacement_after_first_verification,
+            ), patch.object(
+                render_skills.os,
+                "unlink",
+                side_effect=AssertionError("automatic unlink is forbidden"),
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "changed during private pre-delete verification",
+            ):
+                render_skills._retain_owned_directory(
+                    backup,
+                    metadata.st_dev,
+                    metadata.st_ino,
+                    expected_entries,
+                )
+
+            self.assertTrue(changed)
+            self.assertEqual(
+                "accepted generated bytes\n",
+                (backup / "accepted.txt").read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                "late replacement bytes\n",
+                (backup / "owned.txt").read_text(encoding="utf-8"),
             )
 
     def test_empty_backup_directory_replacement_before_private_move_is_preserved(
@@ -1536,12 +2359,13 @@ class AtomicRenderTests(unittest.TestCase):
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             prior = self.snapshot(target)
-            real_replace = render_skills._atomic_rename_no_replace
+            real_replace = render_skills._rename_render_entry
             replace_count = 0
 
             def fail_install_after_concurrent_output(
-                source: Path,
-                destination: Path,
+                parent_handle: render_skills.RenderParentHandle,
+                source_name: str,
+                destination_name: str,
             ) -> None:
                 nonlocal replace_count
                 replace_count += 1
@@ -1552,11 +2376,15 @@ class AtomicRenderTests(unittest.TestCase):
                         encoding="utf-8",
                     )
                     raise OSError("forced install failure")
-                real_replace(source, destination)
+                real_replace(
+                    parent_handle,
+                    source_name,
+                    destination_name,
+                )
 
             with patch.object(
                 render_skills,
-                "_atomic_rename_no_replace",
+                "_rename_render_entry",
                 side_effect=fail_install_after_concurrent_output,
             ), self.assertRaisesRegex(
                 render_skills.RenderTransactionError,
@@ -1581,12 +2409,13 @@ class AtomicRenderTests(unittest.TestCase):
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             prior = self.snapshot(target)
-            real_rename = render_skills._atomic_rename_no_replace
+            real_rename = render_skills._rename_render_entry
             rename_count = 0
 
             def create_output_immediately_before_install(
-                source: Path,
-                destination: Path,
+                parent_handle: render_skills.RenderParentHandle,
+                source_name: str,
+                destination_name: str,
             ) -> None:
                 nonlocal rename_count
                 rename_count += 1
@@ -1596,11 +2425,15 @@ class AtomicRenderTests(unittest.TestCase):
                         "last-moment output\n",
                         encoding="utf-8",
                     )
-                real_rename(source, destination)
+                real_rename(
+                    parent_handle,
+                    source_name,
+                    destination_name,
+                )
 
             with patch.object(
                 render_skills,
-                "_atomic_rename_no_replace",
+                "_rename_render_entry",
                 side_effect=create_output_immediately_before_install,
             ), self.assertRaises(render_skills.RenderTransactionError):
                 render_skills.render_all(output_root=target)
@@ -1672,12 +2505,13 @@ class AtomicRenderTests(unittest.TestCase):
             parent = Path(temp_root)
             target = self.seeded_target(parent)
             prior = self.snapshot(target)
-            real_rename = render_skills._atomic_rename_no_replace
+            real_rename = render_skills._rename_render_entry
             rename_count = 0
 
             def fail_install_then_race_rollback(
-                source: Path,
-                destination: Path,
+                parent_handle: render_skills.RenderParentHandle,
+                source_name: str,
+                destination_name: str,
             ) -> None:
                 nonlocal rename_count
                 rename_count += 1
@@ -1689,11 +2523,15 @@ class AtomicRenderTests(unittest.TestCase):
                         "last-moment rollback output\n",
                         encoding="utf-8",
                     )
-                real_rename(source, destination)
+                real_rename(
+                    parent_handle,
+                    source_name,
+                    destination_name,
+                )
 
             with patch.object(
                 render_skills,
-                "_atomic_rename_no_replace",
+                "_rename_render_entry",
                 side_effect=fail_install_then_race_rollback,
             ), self.assertRaises(render_skills.RenderTransactionError):
                 render_skills.render_all(output_root=target)
@@ -1830,7 +2668,7 @@ class AtomicRenderTests(unittest.TestCase):
             sentinel = concurrent / "unrelated.md"
             sentinel.write_text("concurrent bytes\n", encoding="utf-8")
             before = self.snapshot(target)
-            real_validate = render_skills.validate_rendered_tree
+            real_validate = render_skills.validate_rendered_state
 
             def replace_target_after_staged_validation(*args: object) -> None:
                 real_validate(*args)
@@ -1839,7 +2677,7 @@ class AtomicRenderTests(unittest.TestCase):
 
             with patch.object(
                 render_skills,
-                "validate_rendered_tree",
+                "validate_rendered_state",
                 side_effect=replace_target_after_staged_validation,
             ), self.assertRaisesRegex(
                 render_skills.RenderTransactionError,
@@ -1853,7 +2691,7 @@ class AtomicRenderTests(unittest.TestCase):
                 sentinel.read_text(encoding="utf-8"),
             )
             self.assertEqual(before, self.snapshot(accepted))
-            self.assertEqual([], self.transaction_artifacts(parent, target.name))
+            self.assert_single_retained_stage(parent, target.name)
 
     def test_target_replacement_during_backup_move_is_preserved(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
@@ -1865,31 +2703,35 @@ class AtomicRenderTests(unittest.TestCase):
             sentinel = concurrent / "unrelated.md"
             sentinel.write_text("concurrent bytes\n", encoding="utf-8")
             accepted_before = self.snapshot(target)
-            real_replace = render_skills._atomic_rename_no_replace
+            real_replace = render_skills._rename_render_entry
             replaced = False
 
             def substitute_immediately_before_backup(
-                source: Path,
-                destination: Path,
+                parent_handle: render_skills.RenderParentHandle,
+                source_name: str,
+                destination_name: str,
             ) -> None:
                 nonlocal replaced
                 if (
                     not replaced
-                    and Path(source).resolve(strict=False)
-                    == target.resolve(strict=False)
+                    and source_name == target.name
                 ):
                     replaced = True
                     target.rename(accepted)
                     concurrent.rename(target)
-                real_replace(source, destination)
+                real_replace(
+                    parent_handle,
+                    source_name,
+                    destination_name,
+                )
 
             with patch.object(
                 render_skills,
-                "_atomic_rename_no_replace",
+                "_rename_render_entry",
                 side_effect=substitute_immediately_before_backup,
             ), self.assertRaisesRegex(
                 render_skills.RenderTransactionError,
-                "moved from the render output path",
+                "accepted identity",
             ):
                 render_skills.render_all(output_root=target)
 
@@ -2250,9 +3092,9 @@ class AtomicRenderTests(unittest.TestCase):
                 render_skills.render_all(output_root=build_root)
 
             self.assertEqual(before, self.snapshot(build_root))
-            self.assertEqual(
-                [],
-                self.transaction_artifacts(build_root.parent, build_root.name),
+            self.assert_single_retained_stage(
+                build_root.parent,
+                build_root.name,
             )
 
     def test_symlinked_build_ancestor_cannot_redirect_canonical_render(
@@ -2426,6 +3268,705 @@ class AtomicRenderTests(unittest.TestCase):
                         self.transaction_artifacts(case_root, output.name),
                     )
 
+    def test_invalid_content_directory_is_rejected_before_discovery(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            root = Path(temp_root)
+            content_root = root / "content"
+            shutil.copytree(REPO_ROOT / "content", content_root)
+            outside = root / "outside"
+            outside.mkdir()
+            outside_yaml = outside / "valuable.yaml"
+            outside_yaml.write_text(
+                "title: preserve outside bytes\n",
+                encoding="utf-8",
+            )
+            config = yaml.safe_load(
+                (REPO_ROOT / "config" / "skills.yaml").read_text(
+                    encoding="utf-8"
+                )
+            )
+            config["skills"]["core"]["content_dir"] = "../outside"
+            config_path = root / "skills.yaml"
+            config_path.write_text(
+                yaml.safe_dump(config, sort_keys=False),
+                encoding="utf-8",
+            )
+            captured_paths: list[Path] = []
+            real_capture = render_skills._capture_render_input_file
+
+            def record_capture(path: Path) -> render_skills.RenderInputFile:
+                captured_paths.append(Path(path))
+                return real_capture(path)
+
+            target = root / "output" / "generated"
+            with patch.object(
+                render_skills,
+                "_capture_render_input_file",
+                side_effect=record_capture,
+            ), self.assertRaisesRegex(
+                ValueError,
+                "content_dir must be one relative component",
+            ):
+                render_skills.render_all(
+                    output_root=target,
+                    content_root=content_root,
+                    config_path=config_path,
+                )
+
+            self.assertNotIn(outside_yaml, captured_paths)
+            self.assertFalse(target.parent.exists())
+            self.assertEqual(
+                "title: preserve outside bytes\n",
+                outside_yaml.read_text(encoding="utf-8"),
+            )
+
+    def test_content_change_after_validation_cannot_replace_prior_tree(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            content_root = parent / "content"
+            shutil.copytree(REPO_ROOT / "content", content_root)
+            changed_path = content_root / "core" / "panel-data.yaml"
+            real_validate = render_skills.validate_render_inputs
+            changed = False
+
+            def validate_then_change_content(
+                config: dict,
+                entries: tuple[render_skills.RenderContentEntry, ...],
+            ) -> None:
+                nonlocal changed
+                real_validate(config, entries)
+                entry = yaml.safe_load(
+                    changed_path.read_text(encoding="utf-8")
+                )
+                entry["title"] = ""
+                changed_path.write_text(
+                    yaml.safe_dump(entry, sort_keys=False),
+                    encoding="utf-8",
+                )
+                changed = True
+
+            with patch.object(
+                render_skills,
+                "validate_render_inputs",
+                side_effect=validate_then_change_content,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "render inputs changed after validation",
+            ):
+                render_skills.render_all(
+                    output_root=target,
+                    content_root=content_root,
+                )
+
+            self.assertTrue(changed)
+            self.assertEqual(prior, self.snapshot(target))
+            self.assertEqual(
+                [],
+                self.transaction_artifacts(parent, target.name),
+            )
+
+    def test_input_change_inside_transaction_restores_prior_tree(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            content_root = parent / "content"
+            shutil.copytree(REPO_ROOT / "content", content_root)
+            changed_path = content_root / "core" / "panel-data.yaml"
+            real_verify = render_skills.verify_render_inputs
+            verify_count = 0
+            changed = False
+
+            def change_after_transaction_checkpoint(
+                snapshot: render_skills.RenderInputSnapshot,
+            ) -> None:
+                nonlocal verify_count, changed
+                verify_count += 1
+                real_verify(snapshot)
+                if verify_count == 3:
+                    entry = yaml.safe_load(
+                        changed_path.read_text(encoding="utf-8")
+                    )
+                    entry["title"] = "Changed during placement"
+                    changed_path.write_text(
+                        yaml.safe_dump(entry, sort_keys=False),
+                        encoding="utf-8",
+                    )
+                    changed = True
+
+            with patch.object(
+                render_skills,
+                "verify_render_inputs",
+                side_effect=change_after_transaction_checkpoint,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "render inputs changed after validation",
+            ):
+                render_skills.render_all(
+                    output_root=target,
+                    content_root=content_root,
+                )
+
+            self.assertTrue(changed)
+            self.assertGreaterEqual(verify_count, 4)
+            self.assertEqual(prior, self.snapshot(target))
+            self.assert_single_retained_stage(parent, target.name)
+
+    def test_input_change_after_placement_restores_prior_tree(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            content_root = parent / "content"
+            shutil.copytree(REPO_ROOT / "content", content_root)
+            changed_path = content_root / "core" / "panel-data.yaml"
+            real_verify = render_skills.verify_render_inputs
+            verify_count = 0
+
+            def change_after_final_preplacement_check(
+                snapshot: render_skills.RenderInputSnapshot,
+            ) -> None:
+                nonlocal verify_count
+                verify_count += 1
+                real_verify(snapshot)
+                if verify_count == 4:
+                    entry = yaml.safe_load(
+                        changed_path.read_text(encoding="utf-8")
+                    )
+                    entry["title"] = "Changed after placement checkpoint"
+                    changed_path.write_text(
+                        yaml.safe_dump(entry, sort_keys=False),
+                        encoding="utf-8",
+                    )
+
+            with patch.object(
+                render_skills,
+                "verify_render_inputs",
+                side_effect=change_after_final_preplacement_check,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "placed staged tree failed",
+            ) as raised:
+                render_skills.render_all(
+                    output_root=target,
+                    content_root=content_root,
+                )
+
+            self.assertGreaterEqual(verify_count, 5)
+            self.assertIn(
+                "render inputs changed after validation",
+                str(raised.exception.__cause__),
+            )
+            self.assertEqual(prior, self.snapshot(target))
+            recoveries = [
+                path
+                for path in self.transaction_artifacts(parent, target.name)
+                if ".recovery-" in path.name
+            ]
+            self.assertEqual(1, len(recoveries))
+
+    def test_parent_change_after_success_cleanup_is_reported(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            root = Path(temp_root)
+            approved_parent = root / "approved-parent"
+            approved_parent.mkdir()
+            target = self.seeded_target(approved_parent)
+            displaced_parent = root / "displaced-parent"
+            real_cleanup = render_skills._retain_verified_backup
+            changed = False
+
+            def cleanup_then_change_parent(
+                *args: object,
+                **kwargs: object,
+            ) -> Path:
+                nonlocal changed
+                retained = real_cleanup(*args, **kwargs)
+                approved_parent.rename(displaced_parent)
+                approved_parent.mkdir()
+                (approved_parent / "sentinel.txt").write_text(
+                    "replacement parent bytes\n",
+                    encoding="utf-8",
+                )
+                changed = True
+                return retained
+
+            with patch.object(
+                render_skills,
+                "_retain_verified_backup",
+                side_effect=cleanup_then_change_parent,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                f"survives at {re.escape(str(displaced_parent.resolve()))}",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(changed)
+            self.assertEqual(
+                "replacement parent bytes\n",
+                (approved_parent / "sentinel.txt").read_text(encoding="utf-8"),
+            )
+            self.assertTrue((displaced_parent / target.name).is_dir())
+            self.assertFalse(target.exists())
+
+    def test_prior_tree_mode_change_at_backup_is_preserved(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            changed_file = target / "stata-core" / "SKILL.md"
+            real_rename = render_skills._rename_render_entry
+            changed = False
+
+            def change_mode_then_move(
+                parent_handle: render_skills.RenderParentHandle,
+                source_name: str,
+                destination_name: str,
+            ) -> None:
+                nonlocal changed
+                if source_name == target.name and ".backup-" in destination_name:
+                    changed_file.chmod(0o600)
+                    changed = True
+                real_rename(parent_handle, source_name, destination_name)
+
+            with patch.object(
+                render_skills,
+                "_rename_render_entry",
+                side_effect=change_mode_then_move,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "prior tree could not be restored.*remains at",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(changed)
+            backups = [
+                path
+                for path in self.transaction_artifacts(parent, target.name)
+                if ".backup-" in path.name
+            ]
+            self.assertEqual(1, len(backups))
+            self.assertEqual(
+                0o600,
+                stat.S_IMODE(
+                    (backups[0] / "stata-core" / "SKILL.md").stat().st_mode
+                ),
+            )
+            self.assertFalse(target.exists())
+
+    def test_backup_root_mode_change_at_cleanup_is_preserved(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            real_retain = render_skills._retain_owned_directory
+            changed_mode: int | None = None
+
+            def change_root_mode_before_cleanup(
+                directory: Path,
+                expected_device: int,
+                expected_inode: int,
+                expected_entries: tuple[
+                    render_skills.RenderTreeEntry, ...
+                ],
+                *,
+                expected_mode: int | None = None,
+                parent_descriptor: int | None = None,
+            ) -> None:
+                nonlocal changed_mode
+                changed_mode = (
+                    0o700 if expected_mode != 0o700 else 0o755
+                )
+                directory.chmod(changed_mode)
+                real_retain(
+                    directory,
+                    expected_device,
+                    expected_inode,
+                    expected_entries,
+                    expected_mode=expected_mode,
+                    parent_descriptor=parent_descriptor,
+                )
+
+            output = io.StringIO()
+            with patch.object(
+                render_skills,
+                "_retain_owned_directory",
+                side_effect=change_root_mode_before_cleanup,
+            ), redirect_stdout(output):
+                render_skills.render_all(output_root=target)
+
+            self.assertIsNotNone(changed_mode)
+            self.assertIn(
+                "backup could not be verified for retention",
+                output.getvalue(),
+            )
+            backups = [
+                path
+                for path in self.transaction_artifacts(parent, target.name)
+                if ".backup-" in path.name
+            ]
+            self.assertEqual(1, len(backups))
+            self.assertEqual(prior, self.snapshot(backups[0]))
+            self.assertEqual(
+                changed_mode,
+                stat.S_IMODE(backups[0].stat().st_mode),
+            )
+
+    def test_moved_rejected_tree_is_rescanned_for_final_report(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = parent / "generated"
+            relocated_recovery = parent / ".relocated-rejected-tree"
+            original_recovery: Path | None = None
+            real_verify = render_skills._verify_output_state_at
+            real_preserve = render_skills._preserve_installed_entry
+            forced_failure = False
+
+            def fail_first_post_placement_verification(
+                parent_handle: render_skills.RenderParentHandle,
+                name: str,
+                display_path: Path,
+                expected: render_skills.RenderOutputState,
+            ) -> None:
+                nonlocal forced_failure
+                real_verify(
+                    parent_handle,
+                    name,
+                    display_path,
+                    expected,
+                )
+                if name == target.name and not forced_failure:
+                    forced_failure = True
+                    raise render_skills.RenderTransactionError(
+                        "forced post-placement verification failure"
+                    )
+
+            def preserve_then_relocate(
+                parent_handle: render_skills.RenderParentHandle,
+                output_root: Path,
+                installed_identity: tuple[int, int],
+            ) -> Path:
+                nonlocal original_recovery
+                original_recovery = real_preserve(
+                    parent_handle,
+                    output_root,
+                    installed_identity,
+                )
+                original_recovery.rename(relocated_recovery)
+                return original_recovery
+
+            with patch.object(
+                render_skills,
+                "_verify_output_state_at",
+                side_effect=fail_first_post_placement_verification,
+            ), patch.object(
+                render_skills,
+                "_preserve_installed_entry",
+                side_effect=preserve_then_relocate,
+            ), self.assertRaises(
+                render_skills.RenderTransactionError,
+            ) as raised:
+                render_skills.render_all(output_root=target)
+
+            self.assertTrue(forced_failure)
+            self.assertIsNotNone(original_recovery)
+            assert original_recovery is not None
+            self.assertFalse(original_recovery.exists())
+            self.assertTrue(relocated_recovery.is_dir())
+            self.assertIn(
+                str(relocated_recovery.resolve()),
+                str(raised.exception),
+            )
+            self.assertNotIn(
+                str(original_recovery),
+                str(raised.exception),
+            )
+
+    def test_moved_retained_backup_is_rescanned_for_notice(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            relocated_backup = parent / ".relocated-prior-tree"
+            original_backup: Path | None = None
+            real_retain = render_skills._retain_verified_backup
+            output = io.StringIO()
+
+            def retain_then_relocate(
+                backup_root: Path,
+                expected: render_skills.RenderOutputState,
+                parent_handle: render_skills.RenderParentHandle | None = None,
+            ) -> Path:
+                nonlocal original_backup
+                original_backup = real_retain(
+                    backup_root,
+                    expected,
+                    parent_handle,
+                )
+                original_backup.rename(relocated_backup)
+                return original_backup
+
+            with patch.object(
+                render_skills,
+                "_retain_verified_backup",
+                side_effect=retain_then_relocate,
+            ), redirect_stdout(output):
+                render_skills.render_all(output_root=target)
+
+            self.assertIsNotNone(original_backup)
+            assert original_backup is not None
+            self.assertFalse(original_backup.exists())
+            self.assertTrue(relocated_backup.is_dir())
+            self.assertEqual(prior, self.snapshot(relocated_backup))
+            notice = next(
+                line
+                for line in output.getvalue().splitlines()
+                if "prior rendered tree retained for explicit cleanup" in line
+            )
+            self.assertIn(str(relocated_backup.resolve()), notice)
+            self.assertNotIn(str(original_backup), notice)
+
+    def test_staged_write_close_interruption_preserves_primary_and_closes_all(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-close-") as temp_root:
+            parent_path = Path(temp_root)
+            staged_root = parent_path / ".generated.stage-close"
+            staged_root.mkdir(mode=0o755)
+            staged_root.chmod(0o755)
+            parent_descriptor = os.open(
+                parent_path,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            parent_metadata = os.fstat(parent_descriptor)
+            staged_metadata = staged_root.stat()
+            parent = render_skills.RenderParentHandle(
+                path=parent_path,
+                device=parent_metadata.st_dev,
+                inode=parent_metadata.st_ino,
+                descriptor=parent_descriptor,
+            )
+            primary = RuntimeError("forced staged write failure")
+            real_close = os.close
+            close_calls: list[int] = []
+
+            def close_then_interrupt_first(descriptor: int) -> None:
+                close_calls.append(descriptor)
+                real_close(descriptor)
+                if len(close_calls) == 1:
+                    raise KeyboardInterrupt(
+                        "forced descriptor finalization interruption"
+                    )
+
+            try:
+                with patch.object(
+                    render_skills.os,
+                    "write",
+                    side_effect=primary,
+                ), patch.object(
+                    render_skills.os,
+                    "close",
+                    side_effect=close_then_interrupt_first,
+                ), self.assertRaises(RuntimeError) as raised:
+                    render_skills._write_staged_text(
+                        parent,
+                        staged_root,
+                        (
+                            staged_metadata.st_dev,
+                            staged_metadata.st_ino,
+                        ),
+                        {
+                            (): (
+                                staged_metadata.st_dev,
+                                staged_metadata.st_ino,
+                            )
+                        },
+                        Path("skill") / "SKILL.md",
+                        "# rendered\n",
+                    )
+            finally:
+                real_close(parent_descriptor)
+
+            self.assertIs(primary, raised.exception)
+            self.assertEqual(3, len(close_calls))
+            self.assertEqual(3, len(set(close_calls)))
+            for descriptor in close_calls:
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+
+    def test_open_directory_close_interruption_preserves_fstat_failure(
+        self,
+    ) -> None:
+        with TemporaryDirectory(prefix="atomic-render-open-") as temp_root:
+            parent = Path(temp_root)
+            child = parent / "child"
+            child.mkdir()
+            parent_descriptor = os.open(
+                parent,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+            )
+            primary = RuntimeError("forced directory fstat failure")
+            real_close = os.close
+            closed_descriptors: list[int] = []
+
+            def close_then_interrupt(descriptor: int) -> None:
+                closed_descriptors.append(descriptor)
+                real_close(descriptor)
+                raise KeyboardInterrupt(
+                    "forced directory close interruption"
+                )
+
+            try:
+                with patch.object(
+                    render_skills.os,
+                    "fstat",
+                    side_effect=primary,
+                ), patch.object(
+                    render_skills.os,
+                    "close",
+                    side_effect=close_then_interrupt,
+                ), self.assertRaises(RuntimeError) as raised:
+                    render_skills._open_directory_at(
+                        parent_descriptor,
+                        child.name,
+                        child,
+                    )
+            finally:
+                real_close(parent_descriptor)
+
+            self.assertIs(primary, raised.exception)
+            self.assertEqual(1, len(closed_descriptors))
+            with self.assertRaises(OSError):
+                os.fstat(closed_descriptors[0])
+
+    @unittest.skipUnless(
+        hasattr(os, "mkfifo") and bool(getattr(os, "O_NONBLOCK", 0)),
+        "nonblocking FIFO replacement requires POSIX",
+    )
+    def test_regular_file_helpers_reject_fifo_replacement_without_waiting(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "input capture",
+                lambda path, _metadata: (
+                    render_skills._capture_render_input_file(path)
+                ),
+                ValueError,
+            ),
+            (
+                "hash",
+                lambda path, metadata: (
+                    render_skills._sha256_regular_file_no_follow(
+                        path,
+                        expected_metadata=metadata,
+                    )
+                ),
+                render_skills.RenderTransactionError,
+            ),
+            (
+                "content read",
+                lambda path, metadata: (
+                    render_skills._read_regular_file_no_follow(
+                        path,
+                        expected_metadata=metadata,
+                    )
+                ),
+                render_skills.RenderTransactionError,
+            ),
+        )
+        for label, invoke, expected_exception in cases:
+            with self.subTest(label=label), TemporaryDirectory(
+                prefix="atomic-render-fifo-"
+            ) as temp_root:
+                root = Path(temp_root)
+                source = root / "source.txt"
+                accepted = root / "accepted-source.txt"
+                source.write_text("accepted bytes\n", encoding="utf-8")
+                expected_metadata = source.lstat()
+                real_open = os.open
+                observed_flags: list[int] = []
+
+                def replace_before_open(
+                    path: str | bytes | os.PathLike[str] | os.PathLike[bytes],
+                    flags: int,
+                    mode: int = 0o777,
+                    *,
+                    dir_fd: int | None = None,
+                ) -> int:
+                    observed_flags.append(flags)
+                    source.rename(accepted)
+                    os.mkfifo(source)
+                    if not flags & os.O_NONBLOCK:
+                        raise AssertionError(
+                            "ordinary-file open omitted O_NONBLOCK"
+                        )
+                    return real_open(
+                        path,
+                        flags,
+                        mode,
+                        dir_fd=dir_fd,
+                    )
+
+                with patch.object(
+                    render_skills.os,
+                    "open",
+                    side_effect=replace_before_open,
+                ), self.assertRaises(expected_exception):
+                    invoke(source, expected_metadata)
+
+                self.assertEqual(1, len(observed_flags))
+                self.assertTrue(observed_flags[0] & os.O_NONBLOCK)
+                self.assertTrue(source.exists())
+                self.assertTrue(stat.S_ISFIFO(source.lstat().st_mode))
+                self.assertEqual(
+                    "accepted bytes\n",
+                    accepted.read_text(encoding="utf-8"),
+                )
+
+    def test_top_level_render_rename_is_durably_synchronized(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            parent_path = Path(temp_root)
+            source = parent_path / "source"
+            source.mkdir()
+            parent_metadata = parent_path.stat()
+            parent_descriptor = os.open(parent_path, os.O_RDONLY)
+            parent = render_skills.RenderParentHandle(
+                path=parent_path,
+                device=parent_metadata.st_dev,
+                inode=parent_metadata.st_ino,
+                descriptor=parent_descriptor,
+            )
+            real_fsync = os.fsync
+            synchronized: list[int] = []
+
+            def record_fsync(descriptor: int) -> None:
+                synchronized.append(descriptor)
+                real_fsync(descriptor)
+
+            try:
+                with patch.object(
+                    render_skills.os,
+                    "fsync",
+                    side_effect=record_fsync,
+                ):
+                    render_skills._rename_render_entry(
+                        parent,
+                        source.name,
+                        "destination",
+                    )
+            finally:
+                os.close(parent_descriptor)
+
+            self.assertTrue((parent_path / "destination").is_dir())
+            self.assertIn(parent_descriptor, synchronized)
+
     def test_explicit_output_roots_remain_byte_identical(self) -> None:
         with TemporaryDirectory(prefix="atomic-render-") as temp_root:
             parent = Path(temp_root)
@@ -2438,6 +3979,800 @@ class AtomicRenderTests(unittest.TestCase):
             self.assertEqual(self.snapshot(first), self.snapshot(second))
             self.assertEqual([], self.transaction_artifacts(parent, first.name))
             self.assertEqual([], self.transaction_artifacts(parent, second.name))
+
+
+class CallerWorkspacePreservationTests(unittest.TestCase):
+    @staticmethod
+    def snapshot(root: Path) -> dict[str, bytes]:
+        return {
+            str(path.relative_to(root)): path.read_bytes()
+            for path in sorted(root.rglob("*"))
+            if path.is_file()
+        }
+
+    def assert_stage_initialization_interruption(
+        self,
+        failure_patch_factory,
+        expected_error: BaseException,
+        expected_mode: int,
+    ) -> None:
+        fixture_root = Path(
+            tempfile.mkdtemp(prefix="stage-initialization-test-")
+        )
+        parent_descriptor = os.open(
+            fixture_root,
+            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0),
+        )
+        parent_metadata = os.fstat(parent_descriptor)
+        parent = render_skills.RenderParentHandle(
+            path=fixture_root,
+            device=parent_metadata.st_dev,
+            inode=parent_metadata.st_ino,
+            descriptor=parent_descriptor,
+        )
+        real_retained_location = render_skills._retained_child_location
+        accepted_identities: list[tuple[int, int]] = []
+
+        def record_retained_location(
+            parent_handle: render_skills.RenderParentHandle,
+            expected_identity: tuple[int, int] | None,
+        ) -> str:
+            self.assertIsNotNone(expected_identity)
+            assert expected_identity is not None
+            accepted_identities.append(expected_identity)
+            return real_retained_location(parent_handle, expected_identity)
+
+        output = io.StringIO()
+        before_fds = len(os.listdir("/dev/fd"))
+        try:
+            with failure_patch_factory(parent_descriptor), patch.object(
+                render_skills,
+                "_retained_child_location",
+                side_effect=record_retained_location,
+            ), redirect_stdout(output), self.assertRaises(
+                type(expected_error)
+            ) as raised:
+                render_skills._create_staged_root_at(parent, "generated")
+
+            self.assertIs(expected_error, raised.exception)
+            stages = sorted(fixture_root.glob(".generated.stage-*"))
+            self.assertEqual(1, len(stages))
+            stage = stages[0]
+            stage_metadata = stage.lstat()
+            self.assertEqual(
+                [(stage_metadata.st_dev, stage_metadata.st_ino)],
+                accepted_identities,
+            )
+            self.assertEqual(expected_mode, stage_metadata.st_mode & 0o7777)
+            self.assertIn(
+                f"retained stage location: {stage}",
+                output.getvalue(),
+            )
+            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
+        finally:
+            os.close(parent_descriptor)
+            shutil.rmtree(fixture_root)
+
+    def test_stage_fchmod_interruption_retains_identity_and_primary(
+        self,
+    ) -> None:
+        primary = KeyboardInterrupt("forced stage fchmod interruption")
+
+        def failure_patch_factory(_parent_descriptor: int):
+            return patch.object(
+                render_skills.os,
+                "fchmod",
+                side_effect=primary,
+            )
+
+        self.assert_stage_initialization_interruption(
+            failure_patch_factory,
+            primary,
+            0o500,
+        )
+
+    def test_stage_child_fsync_interruption_retains_identity_and_primary(
+        self,
+    ) -> None:
+        primary = SystemExit("forced stage child-fsync interruption")
+        real_fsync = os.fsync
+
+        def failure_patch_factory(parent_descriptor: int):
+            def interrupt_child_fsync(descriptor: int) -> None:
+                if descriptor != parent_descriptor:
+                    raise primary
+                real_fsync(descriptor)
+
+            return patch.object(
+                render_skills.os,
+                "fsync",
+                side_effect=interrupt_child_fsync,
+            )
+
+        self.assert_stage_initialization_interruption(
+            failure_patch_factory,
+            primary,
+            render_skills.CANONICAL_DIRECTORY_MODE,
+        )
+
+    def test_stage_parent_fsync_interruption_retains_identity_and_primary(
+        self,
+    ) -> None:
+        primary = KeyboardInterrupt("forced stage parent-fsync interruption")
+        real_fsync = os.fsync
+
+        def failure_patch_factory(parent_descriptor: int):
+            def interrupt_parent_fsync(descriptor: int) -> None:
+                if descriptor == parent_descriptor:
+                    raise primary
+                real_fsync(descriptor)
+
+            return patch.object(
+                render_skills.os,
+                "fsync",
+                side_effect=interrupt_parent_fsync,
+            )
+
+        self.assert_stage_initialization_interruption(
+            failure_patch_factory,
+            primary,
+            render_skills.CANONICAL_DIRECTORY_MODE,
+        )
+
+    def test_stage_success_close_interruption_reports_retained_identity(
+        self,
+    ) -> None:
+        close_error = SystemExit("forced stage close interruption")
+        real_close = os.close
+
+        def failure_patch_factory(_parent_descriptor: int):
+            def close_then_interrupt(descriptor: int) -> None:
+                real_close(descriptor)
+                raise close_error
+
+            return patch.object(
+                render_skills.os,
+                "close",
+                side_effect=close_then_interrupt,
+            )
+
+        self.assert_stage_initialization_interruption(
+            failure_patch_factory,
+            close_error,
+            render_skills.CANONICAL_DIRECTORY_MODE,
+        )
+
+    def test_late_former_stage_reappearance_never_names_live_output_for_cleanup(
+        self,
+    ) -> None:
+        fixture_root = Path(
+            tempfile.mkdtemp(prefix="former-stage-reappearance-test-")
+        )
+        target = fixture_root / "generated"
+        real_replace = render_skills._replace_rendered_tree
+        reappeared_stage: Path | None = None
+        sentinel: Path | None = None
+
+        def replace_then_reappear(
+            parent: render_skills.RenderParentHandle,
+            staged_root: Path,
+            output_root: Path,
+            expected_output_state: render_skills.RenderOutputState,
+            expected_staged_state: render_skills.RenderOutputState,
+            validate_staged_state,
+            verify_current_inputs,
+        ) -> None:
+            nonlocal reappeared_stage, sentinel
+            real_replace(
+                parent,
+                staged_root,
+                output_root,
+                expected_output_state,
+                expected_staged_state,
+                validate_staged_state,
+                verify_current_inputs,
+            )
+            staged_root.mkdir(mode=0o700)
+            reappeared_stage = staged_root
+            sentinel = staged_root / "valuable.txt"
+            sentinel.write_text(
+                "preserve unrelated former-stage content\n",
+                encoding="utf-8",
+            )
+
+        output = io.StringIO()
+        try:
+            with patch.object(
+                render_skills,
+                "_replace_rendered_tree",
+                side_effect=replace_then_reappear,
+            ), redirect_stdout(output):
+                render_skills.render_all(output_root=target)
+
+            self.assertEqual(
+                {"stata-core", "stata-packages", "stata-c-plugins"},
+                {path.name for path in target.iterdir() if path.is_dir()},
+            )
+            self.assertIsNotNone(reappeared_stage)
+            self.assertIsNotNone(sentinel)
+            assert reappeared_stage is not None
+            assert sentinel is not None
+            self.assertEqual(
+                "preserve unrelated former-stage content\n",
+                sentinel.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(
+                {"valuable.txt"},
+                {path.name for path in reappeared_stage.iterdir()},
+            )
+            rendered_output = output.getvalue()
+            self.assertIn(
+                "former render stage name contains unverified state and was "
+                "left unchanged",
+                rendered_output,
+            )
+            self.assertIn(str(reappeared_stage), rendered_output)
+            cleanup_lines = [
+                line
+                for line in rendered_output.splitlines()
+                if (
+                    "explicit cleanup at:" in line.lower()
+                    or "retained stage location:" in line.lower()
+                )
+            ]
+            for line in cleanup_lines:
+                self.assertNotIn(str(target), line)
+        finally:
+            shutil.rmtree(fixture_root)
+
+    def test_determinism_failure_retains_and_reports_outer_workspace(
+        self,
+    ) -> None:
+        fixture_root = Path(
+            tempfile.mkdtemp(prefix="determinism-preservation-test-")
+        )
+        retained_root = fixture_root / "retained-workspace"
+        retained_root.mkdir(mode=0o700)
+        marker = retained_root / "first" / "partial.txt"
+        render_error = RuntimeError("forced partial deterministic render")
+
+        def fail_after_partial_render(*, output_root: Path) -> None:
+            output_root.mkdir(parents=True)
+            marker.write_text("preserve partial render\n", encoding="utf-8")
+            raise render_error
+
+        output = io.StringIO()
+        try:
+            with patch.object(
+                check_determinism.tempfile,
+                "mkdtemp",
+                return_value=str(retained_root),
+            ) as make_workspace, patch.object(
+                check_determinism.tempfile,
+                "TemporaryDirectory",
+                side_effect=AssertionError(
+                    "determinism caller must not auto-delete its workspace"
+                ),
+            ) as temporary_directory, patch.object(
+                check_determinism,
+                "render_all",
+                side_effect=fail_after_partial_render,
+            ), redirect_stdout(output), self.assertRaises(RuntimeError) as raised:
+                check_determinism.main()
+
+            self.assertIs(render_error, raised.exception)
+            make_workspace.assert_called_once_with(
+                prefix="stata-render-double-"
+            )
+            temporary_directory.assert_not_called()
+            self.assertTrue(retained_root.is_dir())
+            self.assertEqual(
+                "preserve partial render\n",
+                marker.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "deterministic-render workspace retained for explicit cleanup "
+                f"at: {retained_root.resolve()}",
+                output.getvalue(),
+            )
+        finally:
+            shutil.rmtree(fixture_root)
+
+    def test_determinism_reports_moved_outer_workspace(
+        self,
+    ) -> None:
+        fixture_root = Path(
+            tempfile.mkdtemp(prefix="determinism-moved-workspace-test-")
+        )
+        retained_root = fixture_root / "retained-workspace"
+        retained_root.mkdir(mode=0o700)
+        moved_root = fixture_root / "moved-workspace"
+        render_error = RuntimeError("forced moved deterministic render")
+
+        def move_after_partial_render(*, output_root: Path) -> None:
+            output_root.mkdir(parents=True)
+            (output_root / "partial.txt").write_text(
+                "preserve moved deterministic render\n",
+                encoding="utf-8",
+            )
+            retained_root.rename(moved_root)
+            raise render_error
+
+        output = io.StringIO()
+        try:
+            with patch.object(
+                check_determinism.tempfile,
+                "mkdtemp",
+                return_value=str(retained_root),
+            ), patch.object(
+                render_skills,
+                "_descriptor_reported_path",
+                return_value=None,
+            ), patch.object(
+                check_determinism,
+                "render_all",
+                side_effect=move_after_partial_render,
+            ), redirect_stdout(output), self.assertRaises(RuntimeError) as raised:
+                check_determinism.main()
+
+            self.assertIs(render_error, raised.exception)
+            self.assertFalse(retained_root.exists())
+            self.assertEqual(
+                "preserve moved deterministic render\n",
+                (moved_root / "first" / "partial.txt").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            self.assertIn(
+                "deterministic-render workspace retained for explicit cleanup "
+                f"at: {moved_root.resolve()}",
+                output.getvalue(),
+            )
+            self.assertNotIn(
+                f"at: {retained_root.resolve()}",
+                output.getvalue(),
+            )
+        finally:
+            shutil.rmtree(fixture_root)
+
+    def test_determinism_reports_cross_parent_workspace_move(
+        self,
+    ) -> None:
+        fixture_root = Path(
+            tempfile.mkdtemp(prefix="determinism-cross-parent-test-")
+        )
+        original_parent = fixture_root / "original"
+        moved_parent = fixture_root / "moved"
+        original_parent.mkdir()
+        moved_parent.mkdir()
+        retained_root = original_parent / "retained-workspace"
+        retained_root.mkdir(mode=0o700)
+        moved_root = moved_parent / "retained-workspace"
+        render_error = RuntimeError("forced cross-parent deterministic render")
+
+        def move_after_partial_render(*, output_root: Path) -> None:
+            output_root.mkdir(parents=True)
+            (output_root / "partial.txt").write_text(
+                "preserve cross-parent deterministic render\n",
+                encoding="utf-8",
+            )
+            retained_root.rename(moved_root)
+            raise render_error
+
+        output = io.StringIO()
+        try:
+            with patch.object(
+                check_determinism.tempfile,
+                "mkdtemp",
+                return_value=str(retained_root),
+            ), patch.object(
+                check_determinism,
+                "render_all",
+                side_effect=move_after_partial_render,
+            ), redirect_stdout(output), self.assertRaises(RuntimeError) as raised:
+                check_determinism.main()
+
+            self.assertIs(render_error, raised.exception)
+            self.assertFalse(retained_root.exists())
+            self.assertEqual(
+                "preserve cross-parent deterministic render\n",
+                (moved_root / "first" / "partial.txt").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            self.assertIn(
+                "deterministic-render workspace retained for explicit cleanup "
+                f"at: {moved_root.resolve()}",
+                output.getvalue(),
+            )
+            self.assertNotIn(
+                "unknown pathname",
+                output.getvalue(),
+            )
+        finally:
+            shutil.rmtree(fixture_root)
+
+    def test_caller_workspace_missing_parent_setup_closes_anchor_descriptor(
+        self,
+    ) -> None:
+        fixture_root = Path(
+            tempfile.mkdtemp(prefix="caller-workspace-setup-test-")
+        )
+        workspace = fixture_root / "missing-parent" / "workspace"
+        output = io.StringIO()
+        before_fds = len(os.listdir("/dev/fd"))
+        try:
+            with redirect_stdout(output), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "workspace parent is not an existing directory",
+            ):
+                with render_skills._retained_workspace_scope(
+                    workspace,
+                    "setup",
+                ):
+                    self.fail("invalid workspace setup must not yield")
+
+            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
+            self.assertIn(
+                "setup workspace retained for explicit cleanup at: "
+                "unknown pathname",
+                output.getvalue(),
+            )
+        finally:
+            shutil.rmtree(fixture_root)
+
+    def test_caller_workspace_close_interruption_preserves_render_failure(
+        self,
+    ) -> None:
+        fixture_root = Path(
+            tempfile.mkdtemp(prefix="caller-workspace-close-test-")
+        )
+        retained_root = fixture_root / "retained-workspace"
+        retained_root.mkdir(mode=0o700)
+        render_error = RuntimeError("forced caller render failure")
+        close_interruption = KeyboardInterrupt(
+            "forced caller workspace close interruption"
+        )
+        real_close = render_skills.os.close
+        close_calls: list[int] = []
+
+        def close_then_interrupt_first(descriptor: int) -> None:
+            close_calls.append(descriptor)
+            real_close(descriptor)
+            if len(close_calls) == 1:
+                raise close_interruption
+
+        output = io.StringIO()
+        try:
+            with patch.object(
+                check_determinism.tempfile,
+                "mkdtemp",
+                return_value=str(retained_root),
+            ), patch.object(
+                check_determinism,
+                "render_all",
+                side_effect=render_error,
+            ), patch.object(
+                render_skills.os,
+                "close",
+                side_effect=close_then_interrupt_first,
+            ), redirect_stdout(output), self.assertRaises(RuntimeError) as raised:
+                check_determinism.main()
+
+            self.assertIs(render_error, raised.exception)
+            self.assertEqual(2, len(close_calls))
+            self.assertEqual(2, len(set(close_calls)))
+            for descriptor in close_calls:
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+            self.assertTrue(retained_root.is_dir())
+            self.assertIn(
+                "deterministic-render workspace retained for explicit cleanup "
+                f"at: {retained_root.resolve()}",
+                output.getvalue(),
+            )
+        finally:
+            shutil.rmtree(fixture_root)
+
+    def test_caller_workspace_reporting_interruption_preserves_render_failure(
+        self,
+    ) -> None:
+        fixture_root = Path(
+            tempfile.mkdtemp(prefix="caller-workspace-report-test-")
+        )
+        retained_root = fixture_root / "retained-workspace"
+        retained_root.mkdir(mode=0o700)
+        render_error = RuntimeError("forced caller render failure")
+        reporting_interruption = KeyboardInterrupt(
+            "forced caller workspace reporting interruption"
+        )
+        before_fds = len(os.listdir("/dev/fd"))
+        try:
+            with patch.object(
+                check_determinism.tempfile,
+                "mkdtemp",
+                return_value=str(retained_root),
+            ), patch.object(
+                check_determinism,
+                "render_all",
+                side_effect=render_error,
+            ), patch.object(
+                render_skills,
+                "_descriptor_reported_path",
+                side_effect=reporting_interruption,
+            ), self.assertRaises(RuntimeError) as raised:
+                check_determinism.main()
+
+            self.assertIs(render_error, raised.exception)
+            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
+            self.assertIn(
+                "deterministic-render workspace retention descriptor "
+                "finalization also encountered: KeyboardInterrupt",
+                getattr(raised.exception, "__notes__", ()),
+            )
+        finally:
+            shutil.rmtree(fixture_root)
+
+    def test_generated_drift_failure_retains_and_reports_outer_workspace(
+        self,
+    ) -> None:
+        fixture_root = Path(
+            tempfile.mkdtemp(prefix="drift-preservation-test-")
+        )
+        retained_root = fixture_root / "retained-workspace"
+        retained_root.mkdir(mode=0o700)
+        build_root = fixture_root / "current-generated"
+        build_root.mkdir()
+        marker = retained_root / "generated" / "partial.txt"
+
+        def fail_after_partial_render(*, output_root: Path) -> None:
+            output_root.mkdir(parents=True)
+            marker.write_text("preserve partial drift render\n", encoding="utf-8")
+            raise RuntimeError("forced partial generated-drift render")
+
+        output = io.StringIO()
+        try:
+            with patch.object(
+                lint_skill_pack,
+                "BUILD_ROOT",
+                build_root,
+            ), patch.object(
+                lint_skill_pack.tempfile,
+                "mkdtemp",
+                return_value=str(retained_root),
+            ) as make_workspace, patch.object(
+                lint_skill_pack.tempfile,
+                "TemporaryDirectory",
+                side_effect=AssertionError(
+                    "generated-drift caller must not auto-delete its workspace"
+                ),
+            ) as temporary_directory, patch.object(
+                render_skills,
+                "render_all",
+                side_effect=fail_after_partial_render,
+            ), redirect_stdout(output):
+                errors = lint_skill_pack.lint_generated_drift()
+
+            self.assertEqual(
+                [
+                    "generated render failed: "
+                    "forced partial generated-drift render"
+                ],
+                errors,
+            )
+            make_workspace.assert_called_once_with(
+                prefix="stata-render-check-"
+            )
+            temporary_directory.assert_not_called()
+            self.assertTrue(retained_root.is_dir())
+            self.assertEqual(
+                "preserve partial drift render\n",
+                marker.read_text(encoding="utf-8"),
+            )
+            self.assertIn(
+                "generated-drift workspace retained for explicit cleanup "
+                f"at: {retained_root.resolve()}",
+                output.getvalue(),
+            )
+        finally:
+            shutil.rmtree(fixture_root)
+
+    def test_generated_drift_reports_moved_outer_workspace(
+        self,
+    ) -> None:
+        fixture_root = Path(
+            tempfile.mkdtemp(prefix="drift-moved-workspace-test-")
+        )
+        retained_root = fixture_root / "retained-workspace"
+        retained_root.mkdir(mode=0o700)
+        moved_root = fixture_root / "moved-workspace"
+        build_root = fixture_root / "current-generated"
+        build_root.mkdir()
+
+        def move_after_partial_render(*, output_root: Path) -> None:
+            output_root.mkdir(parents=True)
+            (output_root / "partial.txt").write_text(
+                "preserve moved drift render\n",
+                encoding="utf-8",
+            )
+            retained_root.rename(moved_root)
+            raise RuntimeError("forced moved generated-drift render")
+
+        output = io.StringIO()
+        try:
+            with patch.object(
+                lint_skill_pack,
+                "BUILD_ROOT",
+                build_root,
+            ), patch.object(
+                lint_skill_pack.tempfile,
+                "mkdtemp",
+                return_value=str(retained_root),
+            ), patch.object(
+                render_skills,
+                "render_all",
+                side_effect=move_after_partial_render,
+            ), redirect_stdout(output):
+                errors = lint_skill_pack.lint_generated_drift()
+
+            self.assertEqual(
+                [
+                    "generated render failed: "
+                    "forced moved generated-drift render"
+                ],
+                errors,
+            )
+            self.assertFalse(retained_root.exists())
+            self.assertEqual(
+                "preserve moved drift render\n",
+                (moved_root / "generated" / "partial.txt").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            self.assertIn(
+                "generated-drift workspace retained for explicit cleanup "
+                f"at: {moved_root.resolve()}",
+                output.getvalue(),
+            )
+            self.assertNotIn(
+                f"at: {retained_root.resolve()}",
+                output.getvalue(),
+            )
+        finally:
+            shutil.rmtree(fixture_root)
+
+    def test_generated_drift_reports_cross_parent_workspace_move(
+        self,
+    ) -> None:
+        fixture_root = Path(
+            tempfile.mkdtemp(prefix="drift-cross-parent-test-")
+        )
+        original_parent = fixture_root / "original"
+        moved_parent = fixture_root / "moved"
+        original_parent.mkdir()
+        moved_parent.mkdir()
+        retained_root = original_parent / "retained-workspace"
+        retained_root.mkdir(mode=0o700)
+        moved_root = moved_parent / "retained-workspace"
+        build_root = fixture_root / "current-generated"
+        build_root.mkdir()
+
+        def move_after_partial_render(*, output_root: Path) -> None:
+            output_root.mkdir(parents=True)
+            (output_root / "partial.txt").write_text(
+                "preserve cross-parent drift render\n",
+                encoding="utf-8",
+            )
+            retained_root.rename(moved_root)
+            raise RuntimeError("forced cross-parent generated-drift render")
+
+        output = io.StringIO()
+        try:
+            with patch.object(
+                lint_skill_pack,
+                "BUILD_ROOT",
+                build_root,
+            ), patch.object(
+                lint_skill_pack.tempfile,
+                "mkdtemp",
+                return_value=str(retained_root),
+            ), patch.object(
+                render_skills,
+                "render_all",
+                side_effect=move_after_partial_render,
+            ), redirect_stdout(output):
+                errors = lint_skill_pack.lint_generated_drift()
+
+            self.assertEqual(
+                [
+                    "generated render failed: "
+                    "forced cross-parent generated-drift render"
+                ],
+                errors,
+            )
+            self.assertFalse(retained_root.exists())
+            self.assertEqual(
+                "preserve cross-parent drift render\n",
+                (moved_root / "generated" / "partial.txt").read_text(
+                    encoding="utf-8"
+                ),
+            )
+            self.assertIn(
+                "generated-drift workspace retained for explicit cleanup "
+                f"at: {moved_root.resolve()}",
+                output.getvalue(),
+            )
+            self.assertNotIn(
+                "unknown pathname",
+                output.getvalue(),
+            )
+        finally:
+            shutil.rmtree(fixture_root)
+
+    def test_recovery_lookup_interruption_still_restores_prior_tree(
+        self,
+    ) -> None:
+        fixture_root = Path(
+            tempfile.mkdtemp(prefix="rollback-setup-test-")
+        )
+        target = fixture_root / "generated"
+        render_skills.render_all(output_root=target)
+        prior = self.snapshot(target)
+        placement_error = KeyboardInterrupt("forced placement interruption")
+        lookup_error = SystemExit("forced first recovery identity interruption")
+        real_rename = render_skills._rename_render_entry
+        real_entry_identity = render_skills._entry_identity_at
+        rename_calls = 0
+        recovery_started = False
+        lookup_interrupted = False
+        restoration_attempted = False
+
+        def interrupt_placement(
+            parent: render_skills.RenderParentHandle,
+            source_name: str,
+            destination_name: str,
+        ) -> None:
+            nonlocal rename_calls, recovery_started, restoration_attempted
+            rename_calls += 1
+            if rename_calls == 2:
+                recovery_started = True
+                raise placement_error
+            if recovery_started:
+                restoration_attempted = True
+            real_rename(parent, source_name, destination_name)
+
+        def interrupt_first_recovery_lookup(
+            parent: render_skills.RenderParentHandle,
+            name: str,
+        ) -> tuple[int, int] | None:
+            nonlocal lookup_interrupted
+            if recovery_started and not lookup_interrupted:
+                lookup_interrupted = True
+                raise lookup_error
+            return real_entry_identity(parent, name)
+
+        try:
+            with patch.object(
+                render_skills,
+                "_rename_render_entry",
+                side_effect=interrupt_placement,
+            ), patch.object(
+                render_skills,
+                "_entry_identity_at",
+                side_effect=interrupt_first_recovery_lookup,
+            ), self.assertRaises(KeyboardInterrupt) as raised:
+                render_skills.render_all(output_root=target)
+
+            self.assertIs(placement_error, raised.exception)
+            self.assertTrue(lookup_interrupted)
+            self.assertTrue(restoration_attempted)
+            self.assertEqual(prior, self.snapshot(target))
+            self.assertIn(
+                "render rollback setup also encountered: SystemExit",
+                getattr(raised.exception, "__notes__", ()),
+            )
+        finally:
+            shutil.rmtree(fixture_root)
 
 
 if __name__ == "__main__":

@@ -7,12 +7,12 @@ from pathlib import Path
 import tempfile
 
 from release_state import tree_digest, validate_complete_skill_tree
-from render_skills import render_all
+from render_skills import _retained_workspace_scope, render_all
 
 
 def main() -> int:
-    with tempfile.TemporaryDirectory(prefix="stata-render-double-") as temp_root:
-        root = Path(temp_root)
+    root = Path(tempfile.mkdtemp(prefix="stata-render-double-")).resolve()
+    with _retained_workspace_scope(root, "deterministic-render"):
         first = root / "first"
         second = root / "second"
         render_all(output_root=first)
@@ -31,7 +31,7 @@ def main() -> int:
             print(
                 "ERROR: clean renders are not byte-identical: "
                 f"{first_digest} != {second_digest}"
-            )
+                )
             return 1
     print(f"Deterministic double render passed: {first_digest}")
     return 0
