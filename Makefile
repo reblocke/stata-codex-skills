@@ -8,12 +8,14 @@ DEST ?=
 KEEP_WORKDIR ?=
 TEST_JOBS ?= 4
 TEST_TIMEOUT ?= 300
+TEST_GLOBAL_TIMEOUT ?= 360
 
 PACKAGE_ARGS = $(foreach package,$(PACKAGES),--package $(package))
 CORE_ARGS = $(foreach core,$(CORES),--core $(core))
 KEEP_WORKDIR_ARG = $(if $(strip $(KEEP_WORKDIR)),--keep-workdir,)
 DEST_ARG = $(if $(strip $(DEST)),--dest "$(DEST)",)
 TEST_RUN = TEST_JOBS="$(TEST_JOBS)" TEST_TIMEOUT="$(TEST_TIMEOUT)" \
+	TEST_GLOBAL_TIMEOUT="$(TEST_GLOBAL_TIMEOUT)" \
 	$(UV_RUN) python scripts/run_tests.py
 
 .PHONY: lock-check bootstrap doctor refresh fetch harvest build render \

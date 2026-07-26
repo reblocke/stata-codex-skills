@@ -23,6 +23,7 @@ from yaml.constructor import ConstructorError
 from yaml.nodes import MappingNode
 from yaml.resolver import BaseResolver
 
+from process_guard.authorization import allow_detached_process
 from runtime_guard import (
     REQUIRED_PYTHON,
     REQUIRED_UNICODE_VERSION,
@@ -834,14 +835,15 @@ def run_command(
     cwd: Path | None = None,
     timeout_seconds: float = 120,
 ) -> subprocess.CompletedProcess[str]:
-    process = subprocess.Popen(
-        args,
-        cwd=str(cwd) if cwd else None,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
+    with allow_detached_process():
+        process = subprocess.Popen(
+            args,
+            cwd=str(cwd) if cwd else None,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
     try:
         stdout, stderr = process.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
@@ -1195,15 +1197,16 @@ def run_stata_do(
 
     child_do_file = Path(os.path.relpath(do_file, start=cwd))
     deadline = time.monotonic() + timeout_seconds
-    process = subprocess.Popen(
-        _stata_launch_command(stata_binary, child_do_file),
-        cwd=str(cwd),
-        env={**os.environ, "PWD": str(cwd)},
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        start_new_session=True,
-    )
+    with allow_detached_process():
+        process = subprocess.Popen(
+            _stata_launch_command(stata_binary, child_do_file),
+            cwd=str(cwd),
+            env={**os.environ, "PWD": str(cwd)},
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
     marker_found = False
     timed_out = False
     try:

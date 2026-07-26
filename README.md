@@ -59,7 +59,14 @@ lint, unit tests, deterministic double rendering, and secret/artifact scanning.
 Both commands are deterministic and independent of Stata and package or
 upstream networks. `make all` is a compatibility alias for `make check`.
 Unit-test modules use four isolated workers by default; set `TEST_JOBS=1` for
-serial diagnosis or adjust the per-module `TEST_TIMEOUT` when needed.
+serial diagnosis or adjust the per-module `TEST_TIMEOUT` when needed. The
+module phase has a configurable six-minute global deadline
+(`TEST_GLOBAL_TIMEOUT=360`). CI allows 15 minutes for dependency setup, build,
+bounded cleanup, deterministic rerendering, and final scans around that phase.
+The cooperative process guard covers trusted Python-visible
+`Popen`/fork/`posix_spawn`/multiprocessing paths. It is not an operating-system
+sandbox against hostile native code or deliberate descriptor shedding; a lost
+lease or guard initialization error fails the test gate.
 
 Validation evidence is deliberately separated:
 

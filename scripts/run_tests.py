@@ -1,14 +1,23 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor, as_completed
+from concurrent.futures import (
+    FIRST_COMPLETED,
+    CancelledError,
+    Future,
+    ThreadPoolExecutor,
+    wait,
+)
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 import math
 import os
+import select
 import signal
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import traceback
@@ -24,16 +33,27 @@ from libskillpack import (
     _process_leader_state,
     _stop_process_group,
 )
+from process_guard.authorization import allow_detached_process
 
 
 TEST_ROOT = REPO_ROOT / "tests"
+PROCESS_GUARD_ROOT = REPO_ROOT / "scripts" / "process_guard"
 DEFAULT_TEST_JOBS = 4
 DEFAULT_TEST_TIMEOUT_SECONDS = 300.0
+DEFAULT_TEST_GLOBAL_TIMEOUT_SECONDS = 360.0
 PROCESS_POLL_SECONDS = 0.1
+PROCESS_GUARD_READY_TIMEOUT_SECONDS = 3.0
+DESCENDANT_CLEANUP_TIMEOUT_SECONDS = 3.0
+DESCENDANT_TRACKER_MAX_BYTES = 1024 * 1024
+PROCESS_GUARD_ERROR_MAX_BYTES = 64 * 1024
 DEFAULT_TEST_OUTPUT_MAX_BYTES = 1024 * 1024
 OUTPUT_DRAIN_CHUNK_BYTES = 64 * 1024
 OUTPUT_DRAIN_FINISH_TIMEOUT_SECONDS = 5.0
 OUTPUT_TRUNCATION_MARKER = b"\n... [test output truncated] ...\n"
+GLOBAL_TIMEOUT_REASON = "global test-runner deadline"
+TRACKER_FDS_ENV = "STATA_CODEX_TEST_TRACKER_FDS"
+STOP_FDS_ENV = "STATA_CODEX_TEST_STOP_FDS"
+GUARD_ERROR_PATH_ENV = "STATA_CODEX_TEST_GUARD_ERROR_PATH"
 
 
 class RunnerConfigurationError(ValueError):
@@ -42,6 +62,133 @@ class RunnerConfigurationError(ValueError):
 
 class RunnerStopping(RuntimeError):
     """Raised when a worker tries to start after interruption cleanup begins."""
+
+
+class DescendantTracker:
+    """Use an inherited pipe as a lease for all module descendants."""
+
+    def __init__(self, descriptor: int) -> None:
+        os.set_blocking(descriptor, False)
+        self._descriptor = descriptor
+        self._lock = threading.Lock()
+        self._ready_pids: set[int] = set()
+        self._errors: list[str] = []
+        self._partial = bytearray()
+        self._total_bytes = 0
+        self._eof = threading.Event()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(
+            target=self._drain,
+            name="test-descendant-tracker",
+            daemon=True,
+        )
+        self._thread.start()
+
+    def _record_line(self, line: bytes) -> None:
+        fields = line.split()
+        if (
+            len(fields) == 2
+            and fields[0] == b"READY"
+            and fields[1].isdigit()
+        ):
+            pid = int(fields[1])
+            if pid > 0:
+                with self._lock:
+                    self._ready_pids.add(pid)
+                return
+        with self._lock:
+            self._errors.append("malformed process-guard record")
+
+    def _append(self, chunk: bytes) -> None:
+        self._total_bytes += len(chunk)
+        if self._total_bytes > DESCENDANT_TRACKER_MAX_BYTES:
+            with self._lock:
+                self._errors.append(
+                    "process-guard records exceeded the bounded limit"
+                )
+            self._stop.set()
+            return
+        self._partial.extend(chunk)
+        while b"\n" in self._partial:
+            line, _, remainder = self._partial.partition(b"\n")
+            self._partial = bytearray(remainder)
+            self._record_line(line)
+
+    def _drain(self) -> None:
+        try:
+            while not self._stop.is_set():
+                readable, _, _ = select.select(
+                    [self._descriptor],
+                    [],
+                    [],
+                    PROCESS_POLL_SECONDS,
+                )
+                if not readable:
+                    continue
+                chunk = os.read(self._descriptor, 4096)
+                if not chunk:
+                    self._eof.set()
+                    break
+                self._append(chunk)
+        except BaseException as error:
+            with self._lock:
+                self._errors.append(
+                    "process-guard pipe failed: "
+                    f"{type(error).__name__}: {error}"
+                )
+        finally:
+            try:
+                os.close(self._descriptor)
+            except OSError:
+                pass
+
+    def wait_ready(self, pid: int) -> bool:
+        deadline = (
+            time.monotonic() + PROCESS_GUARD_READY_TIMEOUT_SECONDS
+        )
+        while time.monotonic() < deadline:
+            with self._lock:
+                if pid in self._ready_pids:
+                    return True
+                if self._errors:
+                    return False
+            if self._eof.wait(PROCESS_POLL_SECONDS):
+                break
+        with self._lock:
+            return pid in self._ready_pids
+
+    def confirm_closed(self, leader_pid: int) -> tuple[bool, str | None]:
+        deadline = (
+            time.monotonic() + DESCENDANT_CLEANUP_TIMEOUT_SECONDS
+        )
+        remaining = max(0.0, deadline - time.monotonic())
+        reached_eof = self._eof.wait(remaining)
+        self.close()
+        with self._lock:
+            ready = leader_pid in self._ready_pids
+            errors = tuple(self._errors)
+        diagnostics: list[str] = []
+        if not ready:
+            diagnostics.append(
+                "module process guard did not complete its handshake"
+            )
+        if not reached_eof:
+            diagnostics.append(
+                "an escaped or untracked descendant retained the "
+                "process lease"
+            )
+        if self._partial:
+            diagnostics.append("process-guard record ended mid-line")
+        diagnostics.extend(errors)
+        if self._thread.is_alive():
+            diagnostics.append("process-guard reader did not stop")
+        if diagnostics:
+            return False, "; ".join(dict.fromkeys(diagnostics))
+        return True, None
+
+    def close(self) -> None:
+        self._stop.set()
+        self._thread.join(timeout=PROCESS_POLL_SECONDS * 2)
 
 
 class BoundedOutputCapture:
@@ -186,6 +333,7 @@ class ModuleResult:
     output: str
     timed_out: bool = False
     cleanup_confirmed: bool = True
+    global_timed_out: bool = False
 
     @property
     def passed(self) -> bool:
@@ -243,6 +391,23 @@ def positive_timeout_setting(name: str, default: float) -> float:
     return value
 
 
+def _descriptor_chain(environment: dict[str, str], name: str) -> list[int]:
+    raw_value = environment.get(name, "")
+    if not raw_value:
+        return []
+    try:
+        descriptors = [int(value) for value in raw_value.split(",")]
+    except ValueError as error:
+        raise RunnerConfigurationError(
+            f"{name} contains a non-integer descriptor"
+        ) from error
+    if any(descriptor < 0 for descriptor in descriptors):
+        raise RunnerConfigurationError(
+            f"{name} contains an invalid descriptor"
+        )
+    return descriptors
+
+
 class ProcessRegistry:
     """Synchronize subprocess starts with interruption cleanup."""
 
@@ -251,6 +416,7 @@ class ProcessRegistry:
         self._processes: dict[int, subprocess.Popen[str]] = {}
         self._stopping = False
         self._stop_requested = threading.Event()
+        self._stop_reason: str | None = None
         self._cleanup_uncertainties: list[str] = []
 
     def spawn(self, module: str) -> subprocess.Popen[str]:
@@ -260,24 +426,170 @@ class ProcessRegistry:
             )
         environment = os.environ.copy()
         environment["PYTHONDONTWRITEBYTECODE"] = "1"
+        existing_pythonpath = environment.get("PYTHONPATH")
+        python_paths = [
+            str(PROCESS_GUARD_ROOT),
+            str(REPO_ROOT / "scripts"),
+        ]
+        if existing_pythonpath:
+            python_paths.append(existing_pythonpath)
+        environment["PYTHONPATH"] = os.pathsep.join(python_paths)
+        tracker_descriptors = _descriptor_chain(
+            environment,
+            TRACKER_FDS_ENV,
+        )
+        stop_descriptors = _descriptor_chain(
+            environment,
+            STOP_FDS_ENV,
+        )
 
-        with self._lock:
-            if self._stopping:
-                raise RunnerStopping(
-                    f"refusing to start {module}: test runner is stopping"
+        tracker_read: int | None = None
+        tracker_write: int | None = None
+        stop_read: int | None = None
+        stop_write: int | None = None
+        guard_error_fd: int | None = None
+        guard_error_path: str | None = None
+        tracker: DescendantTracker | None = None
+        process: subprocess.Popen[str] | None = None
+        transferred = False
+        setup_cleanup_errors: list[str] = []
+
+        def close_descriptor(
+            descriptor: int | None,
+            label: str,
+        ) -> None:
+            if descriptor is None:
+                return
+            try:
+                os.close(descriptor)
+            except OSError as error:
+                setup_cleanup_errors.append(
+                    f"could not close {label}: "
+                    f"{type(error).__name__}: {error}"
                 )
-            process = subprocess.Popen(
-                test_command(module),
-                cwd=REPO_ROOT,
-                env=environment,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                start_new_session=True,
+
+        try:
+            tracker_read, tracker_write = os.pipe()
+            stop_read, stop_write = os.pipe()
+            guard_error_fd, guard_error_path = tempfile.mkstemp(
+                prefix="stata-codex-test-guard-",
+                suffix=".errors",
             )
-            self._processes[process.pid] = process
+            tracker = DescendantTracker(tracker_read)
+            tracker_read = None
+            tracker_descriptors.append(tracker_write)
+            stop_descriptors.append(stop_read)
+            environment[TRACKER_FDS_ENV] = ",".join(
+                str(descriptor) for descriptor in tracker_descriptors
+            )
+            environment[STOP_FDS_ENV] = ",".join(
+                str(descriptor) for descriptor in stop_descriptors
+            )
+            environment[GUARD_ERROR_PATH_ENV] = guard_error_path
+
+            with self._lock:
+                if self._stopping:
+                    raise RunnerStopping(
+                        f"refusing to start {module}: "
+                        "test runner is stopping"
+                    )
+                with allow_detached_process():
+                    process = subprocess.Popen(
+                        test_command(module),
+                        cwd=REPO_ROOT,
+                        env=environment,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        start_new_session=True,
+                        pass_fds=tuple(
+                            sorted(
+                                set(
+                                    tracker_descriptors
+                                    + stop_descriptors
+                                )
+                            )
+                        ),
+                    )
+                setattr(process, "_test_guard_required", True)
+                setattr(process, "_test_descendant_tracker", tracker)
+                setattr(process, "_test_stop_write_fd", stop_write)
+                setattr(process, "_test_guard_error_fd", guard_error_fd)
+                setattr(process, "_test_guard_error_path", guard_error_path)
+                self._processes[process.pid] = process
+                transferred = True
+        except BaseException:
+            if process is not None:
+                close_descriptor(
+                    tracker_write,
+                    "local tracker descriptor",
+                )
+                tracker_write = None
+                close_descriptor(stop_read, "local stop descriptor")
+                stop_read = None
+                try:
+                    _stop_module_process(
+                        module,
+                        process,
+                        self,
+                        timed_out=False,
+                        reason="module spawn ownership-transfer failure",
+                    )
+                except BaseException as cleanup_error:
+                    self.record_cleanup_uncertainty(
+                        module,
+                        "module spawn ownership-transfer cleanup raised "
+                        f"{type(cleanup_error).__name__}: {cleanup_error}",
+                    )
+                stop_write = getattr(
+                    process,
+                    "_test_stop_write_fd",
+                    None,
+                )
+                guard_error_fd = getattr(
+                    process,
+                    "_test_guard_error_fd",
+                    None,
+                )
+                guard_error_path = getattr(
+                    process,
+                    "_test_guard_error_path",
+                    None,
+                )
+            raise
+        finally:
+            close_descriptor(tracker_write, "local tracker descriptor")
+            close_descriptor(stop_read, "local stop descriptor")
+            if not transferred:
+                close_descriptor(stop_write, "descendant stop descriptor")
+                close_descriptor(
+                    guard_error_fd,
+                    "process-guard error descriptor",
+                )
+                if guard_error_path is not None:
+                    try:
+                        os.unlink(guard_error_path)
+                    except FileNotFoundError:
+                        pass
+                    except OSError as error:
+                        setup_cleanup_errors.append(
+                            "could not remove process-guard error file: "
+                            f"{type(error).__name__}: {error}"
+                        )
+                if tracker is not None:
+                    tracker.close()
+                else:
+                    close_descriptor(
+                        tracker_read,
+                        "tracker read descriptor",
+                    )
+            if setup_cleanup_errors:
+                self.record_cleanup_uncertainty(
+                    module,
+                    "; ".join(setup_cleanup_errors),
+                )
         return process
 
     def discard(self, process: subprocess.Popen[str]) -> None:
@@ -295,6 +607,10 @@ class ProcessRegistry:
     def stop_requested(self) -> bool:
         return self._stop_requested.is_set()
 
+    def stop_reason(self) -> str | None:
+        with self._lock:
+            return self._stop_reason
+
     def record_cleanup_uncertainty(
         self,
         module: str,
@@ -309,12 +625,142 @@ class ProcessRegistry:
         with self._lock:
             return tuple(sorted(self._cleanup_uncertainties))
 
-    def stop_all(self) -> None:
+    def stop_all(
+        self,
+        *,
+        reason: str = "test-runner interruption",
+    ) -> None:
         """Request worker-owned cleanup without racing worker process reaps."""
 
         with self._lock:
             self._stopping = True
+            if self._stop_reason is None:
+                self._stop_reason = reason
             self._stop_requested.set()
+
+
+def _request_descendant_stop(
+    process: subprocess.Popen[str],
+) -> tuple[bool, str | None]:
+    if not getattr(process, "_test_guard_required", False):
+        return True, None
+    descriptor = getattr(process, "_test_stop_write_fd", None)
+    if descriptor is None:
+        return True, None
+    setattr(process, "_test_stop_write_fd", None)
+    try:
+        os.close(descriptor)
+    except OSError as error:
+        return (
+            False,
+            "could not close the descendant stop channel: "
+            f"{type(error).__name__}: {error}",
+        )
+    return True, None
+
+
+def _consume_guard_errors(
+    process: subprocess.Popen[str],
+) -> tuple[bool, str | None]:
+    if not getattr(process, "_test_guard_required", False):
+        return True, None
+    descriptor = getattr(process, "_test_guard_error_fd", None)
+    path = getattr(process, "_test_guard_error_path", None)
+    setattr(process, "_test_guard_error_fd", None)
+    setattr(process, "_test_guard_error_path", None)
+    if not isinstance(descriptor, int) or not isinstance(path, str):
+        return False, "module process-guard error channel is unavailable"
+
+    diagnostics: list[str] = []
+    payload = bytearray()
+    try:
+        metadata = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_nlink != 1
+            or metadata.st_uid != os.geteuid()
+        ):
+            diagnostics.append(
+                "module process-guard error channel changed identity"
+            )
+        os.lseek(descriptor, 0, os.SEEK_SET)
+        while len(payload) <= PROCESS_GUARD_ERROR_MAX_BYTES:
+            chunk = os.read(
+                descriptor,
+                min(
+                    4096,
+                    PROCESS_GUARD_ERROR_MAX_BYTES + 1 - len(payload),
+                ),
+            )
+            if not chunk:
+                break
+            payload.extend(chunk)
+        if len(payload) > PROCESS_GUARD_ERROR_MAX_BYTES:
+            diagnostics.append(
+                "module process-guard errors exceeded the bounded limit"
+            )
+        if payload:
+            diagnostics.append(
+                "a descendant could not initialize the process guard"
+            )
+        try:
+            path_metadata = os.lstat(path)
+        except FileNotFoundError:
+            diagnostics.append(
+                "module process-guard error path disappeared"
+            )
+        else:
+            if (
+                path_metadata.st_dev,
+                path_metadata.st_ino,
+            ) != (
+                metadata.st_dev,
+                metadata.st_ino,
+            ):
+                diagnostics.append(
+                    "module process-guard error path changed identity"
+                )
+            else:
+                os.unlink(path)
+    except OSError as error:
+        diagnostics.append(
+            "module process-guard error channel failed: "
+            f"{type(error).__name__}: {error}"
+        )
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    if diagnostics:
+        return False, "; ".join(dict.fromkeys(diagnostics))
+    return True, None
+
+
+def _confirm_descendant_cleanup(
+    process: subprocess.Popen[str],
+) -> tuple[bool, str | None]:
+    if not getattr(process, "_test_guard_required", False):
+        return True, None
+    tracker = getattr(process, "_test_descendant_tracker", None)
+    setattr(process, "_test_descendant_tracker", None)
+    if not isinstance(tracker, DescendantTracker):
+        lease_confirmed = False
+        lease_diagnostic = "module descendant tracker is unavailable"
+    else:
+        lease_confirmed, lease_diagnostic = tracker.confirm_closed(
+            process.pid
+        )
+    guard_confirmed, guard_diagnostic = _consume_guard_errors(process)
+    diagnostics = [
+        diagnostic
+        for diagnostic in (lease_diagnostic, guard_diagnostic)
+        if diagnostic
+    ]
+    return (
+        lease_confirmed and guard_confirmed,
+        "; ".join(diagnostics) if diagnostics else None,
+    )
 
 
 def _stop_module_process(
@@ -356,6 +802,24 @@ def _stop_module_process(
                 f"{reason}; process-group cleanup could not be confirmed"
             )
             registry.record_cleanup_uncertainty(module, diagnostic)
+
+    stop_requested, stop_diagnostic = _request_descendant_stop(process)
+    if stop_diagnostic:
+        diagnostic = f"{reason}; {stop_diagnostic}"
+        registry.record_cleanup_uncertainty(module, diagnostic)
+        output_parts.append(f"TEST RUNNER CLEANUP: {diagnostic}")
+    descendants_confirmed, descendant_diagnostic = (
+        _confirm_descendant_cleanup(process)
+    )
+    cleanup_confirmed = (
+        cleanup_confirmed
+        and stop_requested
+        and descendants_confirmed
+    )
+    if descendant_diagnostic:
+        diagnostic = f"{reason}; {descendant_diagnostic}"
+        registry.record_cleanup_uncertainty(module, diagnostic)
+        output_parts.append(f"TEST RUNNER CLEANUP: {diagnostic}")
 
     if capture is not None:
         try:
@@ -412,26 +876,61 @@ def run_module(
 
     try:
         capture = BoundedOutputCapture.attach(process)
-    except BaseException:
-        _stop_module_process(
+    except Exception:
+        exception_output = traceback.format_exc()
+        cleanup_result = _stop_module_process(
             module,
             process,
             registry,
             timed_out=False,
             reason="output capture setup failure",
         )
+        registry.discard(process)
+        return replace(
+            cleanup_result,
+            returncode=1,
+            output=cleanup_result.output + exception_output,
+        )
+    except BaseException:
+        try:
+            _stop_module_process(
+                module,
+                process,
+                registry,
+                timed_out=False,
+                reason="output capture setup failure",
+            )
+        finally:
+            registry.discard(process)
         raise
 
     try:
+        tracker = getattr(process, "_test_descendant_tracker", None)
+        if (
+            not isinstance(tracker, DescendantTracker)
+            or not tracker.wait_ready(process.pid)
+        ):
+            return _stop_module_process(
+                module,
+                process,
+                registry,
+                timed_out=False,
+                reason="module process-guard handshake failure",
+                capture=capture,
+            )
         deadline = time.monotonic() + timeout_seconds
         while True:
             if registry.stop_requested():
+                stop_reason = (
+                    registry.stop_reason()
+                    or "test-runner interruption"
+                )
                 return _stop_module_process(
                     module,
                     process,
                     registry,
-                    timed_out=False,
-                    reason="test-runner interruption",
+                    timed_out=stop_reason == GLOBAL_TIMEOUT_REASON,
+                    reason=stop_reason,
                     capture=capture,
                 )
             remaining = deadline - time.monotonic()
@@ -476,6 +975,21 @@ def run_module(
                     completed=True,
                 )
             time.sleep(min(PROCESS_POLL_SECONDS, remaining))
+    except Exception:
+        exception_output = traceback.format_exc()
+        cleanup_result = _stop_module_process(
+            module,
+            process,
+            registry,
+            timed_out=False,
+            reason="worker exception",
+            capture=capture,
+        )
+        return replace(
+            cleanup_result,
+            returncode=1,
+            output=cleanup_result.output + exception_output,
+        )
     except BaseException:
         _stop_module_process(
             module,
@@ -498,7 +1012,58 @@ def _worker_failure(module: str) -> ModuleResult:
             f"Internal test-runner failure for {module}:\n"
             f"{traceback.format_exc()}"
         ),
+        cleanup_confirmed=False,
     )
+
+
+def _global_timeout_result(
+    module: str,
+    global_timeout_seconds: float,
+    *,
+    result: ModuleResult | None = None,
+    never_started: bool = False,
+) -> ModuleResult:
+    if never_started:
+        return ModuleResult(
+            module=module,
+            returncode=124,
+            output=(
+                "TEST RUNNER GLOBAL TIMEOUT: module did not start before "
+                f"the {global_timeout_seconds:g}s global deadline; no "
+                "process cleanup was required.\n"
+            ),
+            timed_out=True,
+            cleanup_confirmed=True,
+            global_timed_out=True,
+        )
+    if result is None:
+        result = _worker_failure(module)
+    marker = (
+        "TEST RUNNER GLOBAL TIMEOUT: selected module was unfinished at "
+        f"the {global_timeout_seconds:g}s global deadline.\n"
+    )
+    return replace(
+        result,
+        returncode=124,
+        output=marker + result.output,
+        timed_out=True,
+        global_timed_out=True,
+    )
+
+
+def _completed_future_result(
+    module: str,
+    future: Future[ModuleResult],
+) -> ModuleResult:
+    try:
+        result = future.result()
+    except CancelledError:
+        raise
+    except Exception:
+        return _worker_failure(module)
+    if result.passed and result.output:
+        return replace(result, output="")
+    return result
 
 
 def run_modules(
@@ -506,6 +1071,7 @@ def run_modules(
     *,
     jobs: int,
     timeout_seconds: float,
+    global_timeout_seconds: float,
     registry: ProcessRegistry,
 ) -> list[ModuleResult]:
     """Run modules concurrently and return results in lexical order."""
@@ -520,6 +1086,8 @@ def run_modules(
     )
     futures: dict[Future[ModuleResult], str] = {}
     results: dict[str, ModuleResult] = {}
+    global_deadline = time.monotonic() + global_timeout_seconds
+    shutdown_completed = False
     try:
         for module in ordered_modules:
             future = executor.submit(
@@ -529,23 +1097,70 @@ def run_modules(
                 registry,
             )
             futures[future] = module
-        for future in as_completed(futures):
-            module = futures[future]
-            try:
-                result = future.result()
-                if result.passed and result.output:
-                    result = replace(result, output="")
-                results[module] = result
-            except Exception:
-                results[module] = _worker_failure(module)
+        pending = set(futures)
+        while pending:
+            remaining = global_deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            completed, _ = wait(
+                pending,
+                timeout=remaining,
+                return_when=FIRST_COMPLETED,
+            )
+            if not completed:
+                break
+            for future in completed:
+                module = futures[future]
+                results[module] = _completed_future_result(module, future)
+            pending.difference_update(completed)
+
+        if pending:
+            registry.stop_all(reason=GLOBAL_TIMEOUT_REASON)
+            for future in pending:
+                module = futures[future]
+                if future.cancel():
+                    results[module] = _global_timeout_result(
+                        module,
+                        global_timeout_seconds,
+                        never_started=True,
+                    )
+            executor.shutdown(wait=True, cancel_futures=True)
+            shutdown_completed = True
+            for future in pending:
+                module = futures[future]
+                if module in results:
+                    continue
+                try:
+                    result = _completed_future_result(module, future)
+                except CancelledError:
+                    results[module] = _global_timeout_result(
+                        module,
+                        global_timeout_seconds,
+                        never_started=True,
+                    )
+                    continue
+                results[module] = _global_timeout_result(
+                    module,
+                    global_timeout_seconds,
+                    result=result,
+                )
     except BaseException:
         registry.stop_all()
         for future in futures:
             future.cancel()
         executor.shutdown(wait=True, cancel_futures=True)
+        shutdown_completed = True
         raise
-    else:
-        executor.shutdown(wait=True)
+    finally:
+        if not shutdown_completed:
+            executor.shutdown(wait=True)
+
+    if set(results) != set(ordered_modules):
+        missing = sorted(set(ordered_modules) - set(results))
+        raise RuntimeError(
+            "test runner did not aggregate every selected module: "
+            + ", ".join(missing)
+        )
 
     return [results[module] for module in ordered_modules]
 
@@ -555,6 +1170,7 @@ def emit_results(
     *,
     stream: TextIO,
     timeout_seconds: float,
+    global_timeout_seconds: float,
 ) -> int:
     """Print stable concise status and complete output for failures only."""
 
@@ -564,7 +1180,13 @@ def emit_results(
             print(f"PASS {result.module}", file=stream)
             continue
 
-        if result.timed_out:
+        if result.global_timed_out:
+            print(
+                f"GLOBAL TIMEOUT {result.module} "
+                f"(runner limit {global_timeout_seconds:g}s)",
+                file=stream,
+            )
+        elif result.timed_out:
             print(
                 f"TIMEOUT {result.module} "
                 f"(limit {timeout_seconds:g}s)",
@@ -634,6 +1256,10 @@ def main() -> int:
             "TEST_TIMEOUT",
             DEFAULT_TEST_TIMEOUT_SECONDS,
         )
+        global_timeout_seconds = positive_timeout_setting(
+            "TEST_GLOBAL_TIMEOUT",
+            DEFAULT_TEST_GLOBAL_TIMEOUT_SECONDS,
+        )
     except RunnerConfigurationError as error:
         print(f"ERROR: {error}", file=sys.stderr)
         return 2
@@ -646,7 +1272,8 @@ def main() -> int:
     print(
         f"Running {len(modules)} test modules with "
         f"{min(jobs, len(modules))} worker(s); "
-        f"per-module timeout {timeout_seconds:g}s",
+        f"per-module timeout {timeout_seconds:g}s; "
+        f"global timeout {global_timeout_seconds:g}s",
         flush=True,
     )
     registry = ProcessRegistry()
@@ -656,6 +1283,7 @@ def main() -> int:
                 modules,
                 jobs=jobs,
                 timeout_seconds=timeout_seconds,
+                global_timeout_seconds=global_timeout_seconds,
                 registry=registry,
             )
     except KeyboardInterrupt:
@@ -683,8 +1311,12 @@ def main() -> int:
         results,
         stream=sys.stdout,
         timeout_seconds=timeout_seconds,
+        global_timeout_seconds=global_timeout_seconds,
     )
-    return 1 if failures else 0
+    cleanup_uncertainties = registry.cleanup_uncertainties()
+    for diagnostic in cleanup_uncertainties:
+        print(f"CLEANUP UNCERTAIN: {diagnostic}", file=sys.stderr)
+    return 1 if failures or cleanup_uncertainties else 0
 
 
 if __name__ == "__main__":

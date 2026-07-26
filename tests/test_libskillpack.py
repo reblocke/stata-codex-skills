@@ -22,6 +22,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "scripts"))
 
 import libskillpack  # noqa: E402
+from process_guard.authorization import allow_detached_process  # noqa: E402
 
 
 class FakeResponse:
@@ -605,13 +606,14 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
         "Darwin ctypes waitid fallback is macOS-specific",
     )
     def test_darwin_ctypes_waitid_fallback_preserves_anchor(self) -> None:
-        process = subprocess.Popen(
-            ["/usr/bin/true"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
+        with allow_detached_process():
+            process = subprocess.Popen(
+                ["/usr/bin/true"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
         try:
             with patch.object(
                 libskillpack.os,
@@ -641,13 +643,14 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
                 libskillpack._force_cleanup_process(process)
 
     def test_exited_anchored_leader_without_descendants_is_clean(self) -> None:
-        process = subprocess.Popen(
-            ["/usr/bin/true"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
+        with allow_detached_process():
+            process = subprocess.Popen(
+                ["/usr/bin/true"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
         try:
             deadline = time.monotonic() + 3
             while (
@@ -687,14 +690,15 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
                 "        time.sleep(1)\n"
                 "os._exit(0)\n"
             )
-            process = subprocess.Popen(
-                [sys.executable, "-c", source],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
-                pass_fds=(write_fd,),
-            )
+            with allow_detached_process():
+                process = subprocess.Popen(
+                    [sys.executable, "-c", source],
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    start_new_session=True,
+                    pass_fds=(write_fd,),
+                )
             os.close(write_fd)
             child_pid: int | None = None
             reached_eof = False
@@ -748,13 +752,14 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
                         pass
 
     def test_lost_waitable_child_prevents_stale_group_signal(self) -> None:
-        process = subprocess.Popen(
-            ["/usr/bin/true"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-        )
+        with allow_detached_process():
+            process = subprocess.Popen(
+                ["/usr/bin/true"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+            )
         os.waitpid(process.pid, 0)
         self.assertIsNone(process.returncode)
         try:
