@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 from contextlib import chdir
+import json
 import os
 from pathlib import Path
+import shutil
 import signal
+import subprocess
 from subprocess import CompletedProcess, TimeoutExpired
 from tempfile import TemporaryDirectory
 import sys
@@ -134,6 +137,18 @@ class PollingFailureProcess:
 
 class RunStataDoTests(unittest.TestCase):
     def setUp(self) -> None:
+        launcher_patcher = patch.object(
+            libskillpack,
+            "_stata_launch_command",
+            side_effect=lambda binary, do_file: [
+                str(binary),
+                "-e",
+                "do",
+                str(do_file),
+            ],
+        )
+        launcher_patcher.start()
+        self.addCleanup(launcher_patcher.stop)
         killpg_patcher = patch.object(
             libskillpack.os,
             "killpg",
@@ -447,271 +462,409 @@ class RunStataDoTests(unittest.TestCase):
             self.assertTrue(process.wait_called)
 
 
-class RunStataDescendantCleanupTests(unittest.TestCase):
-    def _assert_process_gone(self, pid: int) -> None:
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            try:
-                os.kill(pid, 0)
-            except ProcessLookupError:
-                return
-            time.sleep(0.02)
-        try:
-            os.kill(pid, signal.SIGKILL)
-        except ProcessLookupError:
-            return
-        self.fail(f"descendant process {pid} survived Stata cleanup")
+class StataContainmentCommandTests(unittest.TestCase):
+    def test_containment_probe_reports_nested_sandbox_failure(self) -> None:
+        with patch.object(libskillpack.sys, "platform", "darwin"), patch.object(
+            libskillpack,
+            "MACOS_SANDBOX_EXEC",
+            Path("/usr/bin/true"),
+        ), patch.object(
+            libskillpack.subprocess,
+            "run",
+            return_value=CompletedProcess(["sandbox-exec"], 1, "", "denied"),
+        ):
+            available, reason = libskillpack.stata_containment_status()
 
-    def _run_stub(self, *, write_marker: bool, timeout_seconds: float) -> int:
-        with TemporaryDirectory(prefix="stata-descendant-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            cwd.mkdir()
-            do_file = cwd / "smoke.do"
-            do_file.write_text("clear all\n", encoding="utf-8")
-            marker = "VALIDATION COMPLETE: descendant-cleanup"
-            marker_command = (
-                f"printf '%s\\n' '{marker}' > \"$log_file\"\n"
-                if write_marker
-                else ""
+        self.assertFalse(available)
+        self.assertIn("could not apply", reason)
+
+    def test_unsupported_platform_fails_before_launch(self) -> None:
+        with patch.object(libskillpack.sys, "platform", "linux"):
+            with self.assertRaisesRegex(OSError, "requires macOS"):
+                libskillpack._stata_launch_command(
+                    Path("/fake/stata"),
+                    Path("smoke.do"),
+                )
+
+    def test_launch_uses_fixed_fork_denying_profile(self) -> None:
+        with patch.object(libskillpack.sys, "platform", "darwin"), patch.object(
+            libskillpack,
+            "MACOS_SANDBOX_EXEC",
+            Path("/usr/bin/true"),
+        ), patch.object(
+            libskillpack,
+            "stata_containment_status",
+            return_value=(True, ""),
+        ):
+            command = libskillpack._stata_launch_command(
+                Path("/Applications/Stata/StataBE"),
+                Path("smoke.do"),
             )
+
+        self.assertEqual("/usr/bin/true", command[0])
+        self.assertEqual("-p", command[1])
+        self.assertEqual(
+            (
+                "(version 1)(allow default)(deny process-fork)"
+                "(deny lsopen)"
+                "(deny appleevent-send)"
+            ),
+            command[2],
+        )
+        self.assertEqual(
+            [
+                "/Applications/Stata/StataBE",
+                "-e",
+                "do",
+                "smoke.do",
+            ],
+            command[3:],
+        )
+
+
+def _macos_process_sandbox_available() -> bool:
+    return libskillpack.stata_containment_status()[0]
+
+
+@unittest.skipUnless(
+    _macos_process_sandbox_available(),
+    "requires usable macOS sandbox-exec containment",
+)
+class RunStataContainmentIntegrationTests(unittest.TestCase):
+    def _make_run(self, temp_root: str, marker: str) -> tuple[Path, Path]:
+        cwd = Path(temp_root) / "work"
+        cwd.mkdir()
+        do_file = cwd / "smoke.do"
+        do_file.write_text("clear all\n", encoding="utf-8")
+        return cwd, do_file
+
+    def test_benign_marker_succeeds(self) -> None:
+        with TemporaryDirectory(prefix="stata-contained-benign-") as temp_root:
+            marker = "VALIDATION COMPLETE: contained-benign"
+            cwd, do_file = self._make_run(temp_root, marker)
             stub = Path(temp_root) / "stata-stub"
             stub.write_text(
-                "#!/bin/sh\n"
-                'do_file="$3"\n'
-                'log_file="${do_file%.do}.log"\n'
-                "(trap '' TERM; exec sleep 30) >/dev/null 2>&1 &\n"
-                "child_pid=$!\n"
-                "printf '%s\\n' \"$child_pid\" > child.pid\n"
-                f"{marker_command}"
-                'wait "$child_pid"\n',
+                "#!/usr/bin/env python3\n"
+                "import time\n"
+                f"open('smoke.log', 'w').write('{marker}\\n')\n"
+                "while True:\n"
+                "    time.sleep(1)\n",
                 encoding="utf-8",
             )
             stub.chmod(0o755)
+
             result, _ = libskillpack.run_stata_do(
                 stub,
                 do_file,
                 cwd,
                 completion_marker=marker,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=2,
             )
-            child_pid = int((cwd / "child.pid").read_text(encoding="utf-8"))
-            self._assert_process_gone(child_pid)
-            return result.returncode
 
-    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
-    def test_marker_completion_removes_descendants(self) -> None:
-        self.assertEqual(0, self._run_stub(write_marker=True, timeout_seconds=2))
+        self.assertEqual(0, result.returncode, result.stderr)
 
-    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
-    def test_timeout_removes_descendants(self) -> None:
-        self.assertEqual(124, self._run_stub(write_marker=False, timeout_seconds=1))
-
-    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
-    def test_keyboard_interrupt_during_polling_cleans_and_reaps_group(self) -> None:
-        with TemporaryDirectory(prefix="stata-interrupt-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            cwd.mkdir()
-            do_file = cwd / "smoke.do"
-            do_file.write_text("clear all\n", encoding="utf-8")
+    def test_process_creation_is_denied_before_marker_success(self) -> None:
+        with TemporaryDirectory(prefix="stata-contained-fork-") as temp_root:
+            marker = "VALIDATION COMPLETE: fork-denied"
+            cwd, do_file = self._make_run(temp_root, marker)
             stub = Path(temp_root) / "stata-stub"
             stub.write_text(
-                "#!/bin/sh\n"
-                "(trap '' TERM; exec sleep 30) >/dev/null 2>&1 &\n"
-                "child_pid=$!\n"
-                "printf '%s\\n' \"$child_pid\" > child.pid\n"
-                "printf '%s\\n' 'polling' > smoke.log\n"
-                'wait "$child_pid"\n',
+                "#!/usr/bin/env python3\n"
+                "import subprocess\n"
+                "import sys\n"
+                "import time\n"
+                "try:\n"
+                "    child = subprocess.Popen(\n"
+                "        [sys.executable, '-c', 'import time; time.sleep(30)'],\n"
+                "        start_new_session=True,\n"
+                "    )\n"
+                "except OSError:\n"
+                "    open('fork-denied', 'w').write('denied\\n')\n"
+                "else:\n"
+                "    open('escaped.pid', 'w').write(str(child.pid))\n"
+                f"open('smoke.log', 'w').write('{marker}\\n')\n"
+                "while True:\n"
+                "    time.sleep(1)\n",
                 encoding="utf-8",
             )
             stub.chmod(0o755)
-            real_popen = libskillpack.subprocess.Popen
-            leaders = []
 
-            def capture_popen(*args, **kwargs):
-                process = real_popen(*args, **kwargs)
-                leaders.append(process)
-                return process
+            escaped_pid: int | None = None
+            try:
+                result, _ = libskillpack.run_stata_do(
+                    stub,
+                    do_file,
+                    cwd,
+                    completion_marker=marker,
+                    timeout_seconds=2,
+                )
+                if (cwd / "escaped.pid").exists():
+                    escaped_pid = int(
+                        (cwd / "escaped.pid").read_text(encoding="utf-8")
+                    )
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertTrue((cwd / "fork-denied").is_file())
+                self.assertIsNone(escaped_pid)
+            finally:
+                if escaped_pid is not None:
+                    try:
+                        os.kill(escaped_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
-            with patch.object(
-                libskillpack.subprocess,
-                "Popen",
-                side_effect=capture_popen,
-            ), patch.object(
-                libskillpack,
-                "read_text",
-                side_effect=KeyboardInterrupt,
-            ), patch.object(
-                libskillpack,
-                "STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS",
-                0.2,
+    def test_posix_spawn_is_denied_before_marker_success(self) -> None:
+        with TemporaryDirectory(prefix="stata-contained-posix-spawn-") as temp_root:
+            marker = "VALIDATION COMPLETE: posix-spawn-denied"
+            cwd, do_file = self._make_run(temp_root, marker)
+            stub = Path(temp_root) / "stata-stub"
+            stub.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os\n"
+                "import time\n"
+                "try:\n"
+                "    child_pid = os.posix_spawn('/usr/bin/sleep', ['sleep', '30'], {})\n"
+                "except OSError:\n"
+                "    open('posix-spawn-denied', 'w').write('denied\\n')\n"
+                "else:\n"
+                "    open('escaped.pid', 'w').write(str(child_pid))\n"
+                f"open('smoke.log', 'w').write('{marker}\\n')\n"
+                "while True:\n"
+                "    time.sleep(1)\n",
+                encoding="utf-8",
+            )
+            stub.chmod(0o755)
+
+            escaped_pid: int | None = None
+            try:
+                result, _ = libskillpack.run_stata_do(
+                    stub,
+                    do_file,
+                    cwd,
+                    completion_marker=marker,
+                    timeout_seconds=2,
+                )
+                if (cwd / "escaped.pid").exists():
+                    escaped_pid = int(
+                        (cwd / "escaped.pid").read_text(encoding="utf-8")
+                    )
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertTrue((cwd / "posix-spawn-denied").is_file())
+                self.assertIsNone(escaped_pid)
+            finally:
+                if escaped_pid is not None:
+                    try:
+                        os.kill(escaped_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_launch_services_cannot_delegate_background_process(self) -> None:
+        compiler = shutil.which("clang")
+        if compiler is None:
+            self.skipTest("requires clang")
+        with TemporaryDirectory(prefix="stata-contained-launch-services-") as temp_root:
+            root = Path(temp_root)
+            app_root = root / "Probe.app"
+            executable_dir = app_root / "Contents" / "MacOS"
+            executable_dir.mkdir(parents=True)
+            survivor_pid_path = root / "survivor.pid"
+            sleeper_source = root / "sleeper.c"
+            sleeper_source.write_text(
+                "#include <stdio.h>\n"
+                "#include <unistd.h>\n"
+                "int main(void) {\n"
+                f"  FILE *handle = fopen({json.dumps(str(survivor_pid_path))}, \"w\");\n"
+                "  if (handle == NULL) return 2;\n"
+                "  fprintf(handle, \"%d\\n\", getpid());\n"
+                "  fclose(handle);\n"
+                "  sleep(30);\n"
+                "  return 0;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            launcher_source = root / "launcher.c"
+            launcher_source.write_text(
+                "#include <CoreServices/CoreServices.h>\n"
+                "#include <string.h>\n"
+                "#include <unistd.h>\n"
+                "int main(void) {\n"
+                f"  const char *path = {json.dumps(str(app_root))};\n"
+                "  CFURLRef url = CFURLCreateFromFileSystemRepresentation(\n"
+                "      NULL, (const UInt8 *)path, (CFIndex)strlen(path), true);\n"
+                "  if (url == NULL) return 3;\n"
+                "  OSStatus status = LSOpenCFURLRef(url, NULL);\n"
+                "  CFRelease(url);\n"
+                "  sleep(2);\n"
+                "  return status == noErr ? 0 : 4;\n"
+                "}\n",
+                encoding="utf-8",
+            )
+            (app_root / "Contents" / "Info.plist").write_text(
+                '<?xml version="1.0" encoding="UTF-8"?>\n'
+                '<plist version="1.0"><dict>\n'
+                "<key>CFBundleExecutable</key><string>Probe</string>\n"
+                "<key>CFBundleIdentifier</key>"
+                f"<string>local.codex.stata-sandbox-probe.{os.getpid()}."
+                f"{time.time_ns()}</string>\n"
+                "<key>CFBundleName</key><string>Probe</string>\n"
+                "<key>CFBundlePackageType</key><string>APPL</string>\n"
+                "<key>CFBundleVersion</key><string>1</string>\n"
+                "<key>LSBackgroundOnly</key><true/>\n"
+                "</dict></plist>\n",
+                encoding="utf-8",
+            )
+            launcher = root / "launcher"
+            for command in (
+                [
+                    compiler,
+                    str(sleeper_source),
+                    "-o",
+                    str(executable_dir / "Probe"),
+                ],
+                [
+                    compiler,
+                    str(launcher_source),
+                    "-framework",
+                    "CoreServices",
+                    "-o",
+                    str(launcher),
+                ],
             ):
-                with self.assertRaises(KeyboardInterrupt):
-                    libskillpack.run_stata_do(
-                        stub,
-                        do_file,
-                        cwd,
-                        completion_marker="VALIDATION COMPLETE: interrupt",
-                        timeout_seconds=2,
+                compiled = subprocess.run(
+                    command,
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                self.assertEqual(0, compiled.returncode, compiled.stderr)
+
+            survivor_pid: int | None = None
+            try:
+                control = subprocess.run(
+                    [str(launcher)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(0, control.returncode, control.stderr)
+                self.assertTrue(
+                    survivor_pid_path.is_file(),
+                    "unsandboxed control did not launch the probe app",
+                )
+                survivor_pid = int(survivor_pid_path.read_text(encoding="utf-8"))
+                os.kill(survivor_pid, signal.SIGKILL)
+                survivor_pid = None
+                survivor_pid_path.unlink()
+                time.sleep(0.2)
+
+                contained = subprocess.run(
+                    [
+                        str(libskillpack.MACOS_SANDBOX_EXEC),
+                        "-p",
+                        libskillpack.STATA_SANDBOX_PROFILE,
+                        str(launcher),
+                    ],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertNotEqual(
+                    0,
+                    contained.returncode,
+                    "LaunchServices unexpectedly accepted the contained request",
+                )
+                self.assertFalse(
+                    survivor_pid_path.exists(),
+                    "LaunchServices delegated a process outside containment",
+                )
+            finally:
+                if survivor_pid_path.exists():
+                    survivor_pid = int(
+                        survivor_pid_path.read_text(encoding="utf-8")
                     )
+                if survivor_pid is not None:
+                    try:
+                        os.kill(survivor_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
 
-            child_pid = int((cwd / "child.pid").read_text(encoding="utf-8"))
-            self._assert_process_gone(child_pid)
-            self.assertEqual(1, len(leaders))
-            self.assertIsNotNone(leaders[0].returncode)
-            self.assertTrue(leaders[0].stdout.closed)
-            self.assertTrue(leaders[0].stderr.closed)
-
-    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
-    def test_escaped_child_holding_pipes_cannot_escape_bounded_timeout(self) -> None:
-        with TemporaryDirectory(prefix="stata-escaped-pipes-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            cwd.mkdir()
-            do_file = cwd / "smoke.do"
-            do_file.write_text("clear all\n", encoding="utf-8")
+    def test_rapid_double_fork_is_denied_before_orphaning(self) -> None:
+        with TemporaryDirectory(prefix="stata-contained-double-fork-") as temp_root:
+            marker = "VALIDATION COMPLETE: double-fork-denied"
+            cwd, do_file = self._make_run(temp_root, marker)
             stub = Path(temp_root) / "stata-stub"
             stub.write_text(
                 "#!/usr/bin/env python3\n"
-                "import subprocess\n"
-                "import sys\n"
+                "import os\n"
                 "import time\n"
-                "child = subprocess.Popen(\n"
-                "    [sys.executable, '-c', 'import time; time.sleep(30)'],\n"
-                "    start_new_session=True,\n"
-                ")\n"
-                "with open('escaped.pid', 'w', encoding='utf-8') as handle:\n"
-                "    handle.write(str(child.pid))\n"
+                "try:\n"
+                "    first = os.fork()\n"
+                "except OSError:\n"
+                "    open('double-fork-denied', 'w').write('denied\\n')\n"
+                "else:\n"
+                "    if first == 0:\n"
+                "        os.setsid()\n"
+                "        second = os.fork()\n"
+                "        if second > 0:\n"
+                "            os._exit(0)\n"
+                "        open('orphan.pid', 'w').write(str(os.getpid()))\n"
+                "        while True:\n"
+                "            time.sleep(1)\n"
+                f"open('smoke.log', 'w').write('{marker}\\n')\n"
                 "while True:\n"
                 "    time.sleep(1)\n",
                 encoding="utf-8",
             )
             stub.chmod(0o755)
-            real_popen = libskillpack.subprocess.Popen
-            leaders = []
 
-            def capture_popen(*args, **kwargs):
-                process = real_popen(*args, **kwargs)
-                leaders.append(process)
-                return process
-
-            escaped_pid: int | None = None
-            started = time.monotonic()
+            orphan_pid: int | None = None
             try:
-                with patch.object(
-                    libskillpack.subprocess,
-                    "Popen",
-                    side_effect=capture_popen,
-                ), patch.object(
-                    libskillpack,
-                    "STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS",
-                    0.1,
-                ):
-                    result, _ = libskillpack.run_stata_do(
-                        stub,
-                        do_file,
-                        cwd,
-                        completion_marker="VALIDATION COMPLETE: never",
-                        timeout_seconds=1,
-                    )
-                escaped_pid = int(
-                    (cwd / "escaped.pid").read_text(encoding="utf-8")
+                result, _ = libskillpack.run_stata_do(
+                    stub,
+                    do_file,
+                    cwd,
+                    completion_marker=marker,
+                    timeout_seconds=2,
                 )
-            finally:
-                if escaped_pid is None and (cwd / "escaped.pid").exists():
-                    escaped_pid = int(
-                        (cwd / "escaped.pid").read_text(encoding="utf-8")
+                if (cwd / "orphan.pid").exists():
+                    orphan_pid = int(
+                        (cwd / "orphan.pid").read_text(encoding="utf-8")
                     )
-                if escaped_pid is not None:
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertTrue((cwd / "double-fork-denied").is_file())
+                self.assertIsNone(orphan_pid)
+            finally:
+                if orphan_pid is not None:
                     try:
-                        os.kill(escaped_pid, signal.SIGKILL)
+                        os.kill(orphan_pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
 
-            self.assertEqual(124, result.returncode)
-            self.assertLess(time.monotonic() - started, 3)
-            self.assertIn("Post-kill pipe closure timed out", result.stderr)
-            self.assertEqual(1, len(leaders))
-            self.assertIsNotNone(leaders[0].returncode)
-            self.assertTrue(leaders[0].stdout.closed)
-            self.assertTrue(leaders[0].stderr.closed)
-
-    @unittest.skipUnless(hasattr(os, "killpg"), "requires POSIX process groups")
-    def test_marker_cannot_hide_unconfirmed_escaped_child_cleanup(self) -> None:
-        with TemporaryDirectory(prefix="stata-marker-escaped-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            cwd.mkdir()
-            do_file = cwd / "smoke.do"
-            do_file.write_text("clear all\n", encoding="utf-8")
-            marker = "VALIDATION COMPLETE: escaped-marker"
+    def test_timeout_reaps_contained_leader(self) -> None:
+        with TemporaryDirectory(prefix="stata-contained-timeout-") as temp_root:
+            marker = "VALIDATION COMPLETE: never"
+            cwd, do_file = self._make_run(temp_root, marker)
             stub = Path(temp_root) / "stata-stub"
             stub.write_text(
                 "#!/usr/bin/env python3\n"
-                "import subprocess\n"
-                "import sys\n"
                 "import time\n"
-                "child = subprocess.Popen(\n"
-                "    [sys.executable, '-c', 'import time; time.sleep(30)'],\n"
-                "    start_new_session=True,\n"
-                ")\n"
-                "with open('escaped.pid', 'w', encoding='utf-8') as handle:\n"
-                "    handle.write(str(child.pid))\n"
-                "with open('smoke.log', 'w', encoding='utf-8') as handle:\n"
-                f"    handle.write('{marker}\\n')\n"
                 "while True:\n"
                 "    time.sleep(1)\n",
                 encoding="utf-8",
             )
             stub.chmod(0o755)
-            real_popen = libskillpack.subprocess.Popen
-            leaders = []
 
-            def capture_popen(*args, **kwargs):
-                process = real_popen(*args, **kwargs)
-                leaders.append(process)
-                return process
+            result, _ = libskillpack.run_stata_do(
+                stub,
+                do_file,
+                cwd,
+                completion_marker=marker,
+                timeout_seconds=1,
+            )
 
-            escaped_pid: int | None = None
-            started = time.monotonic()
-            try:
-                with patch.object(
-                    libskillpack.subprocess,
-                    "Popen",
-                    side_effect=capture_popen,
-                ), patch.object(
-                    libskillpack,
-                    "STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS",
-                    0.1,
-                ):
-                    result, _ = libskillpack.run_stata_do(
-                        stub,
-                        do_file,
-                        cwd,
-                        completion_marker=marker,
-                        timeout_seconds=2,
-                    )
-                escaped_pid = int(
-                    (cwd / "escaped.pid").read_text(encoding="utf-8")
-                )
-                os.kill(escaped_pid, 0)
-                self.assertEqual(1, result.returncode)
-                self.assertLess(time.monotonic() - started, 3)
-                self.assertIn(
-                    "Post-kill pipe closure timed out",
-                    result.stderr,
-                )
-                self.assertEqual(1, len(leaders))
-                self.assertIsNotNone(leaders[0].returncode)
-                self.assertTrue(leaders[0].stdout.closed)
-                self.assertTrue(leaders[0].stderr.closed)
-            finally:
-                if escaped_pid is None and (cwd / "escaped.pid").exists():
-                    escaped_pid = int(
-                        (cwd / "escaped.pid").read_text(encoding="utf-8")
-                    )
-                if escaped_pid is not None:
-                    try:
-                        os.kill(escaped_pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+        self.assertEqual(124, result.returncode)
 
 
 class StrictYamlTests(unittest.TestCase):

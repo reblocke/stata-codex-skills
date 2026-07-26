@@ -35,6 +35,15 @@ UPSTREAM_REPO_DIR = RAW_ROOT / "upstream" / "stata-skill"
 STATA_ROOT = Path("/Applications/Stata")
 STATA_ADO_BASE = STATA_ROOT / "ado" / "base"
 STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS = 5
+MACOS_SANDBOX_EXEC = Path("/usr/bin/sandbox-exec")
+STATA_SANDBOX_PROFILE = (
+    "(version 1)"
+    "(allow default)"
+    "(deny process-fork)"
+    "(deny lsopen)"
+    "(deny appleevent-send)"
+)
+STATA_SANDBOX_PROBE_TIMEOUT_SECONDS = 5
 
 
 @dataclass(frozen=True)
@@ -659,6 +668,56 @@ def _stop_process_group(
         raise
 
 
+def stata_containment_status() -> tuple[bool, str]:
+    """Report whether the fixed Stata containment profile can be applied."""
+
+    if sys.platform != "darwin":
+        return False, "licensed Stata containment requires macOS"
+    if not MACOS_SANDBOX_EXEC.is_file():
+        return False, f"missing containment executable: {MACOS_SANDBOX_EXEC}"
+    try:
+        probe = subprocess.run(
+            [
+                str(MACOS_SANDBOX_EXEC),
+                "-p",
+                STATA_SANDBOX_PROFILE,
+                "/usr/bin/true",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=STATA_SANDBOX_PROBE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "containment probe timed out"
+    except OSError as error:
+        return False, f"containment probe could not start: {error}"
+    if probe.returncode != 0:
+        return False, "sandbox-exec could not apply the fixed containment profile"
+    return True, ""
+
+
+def _stata_launch_command(
+    stata_binary: Path,
+    child_do_file: Path,
+) -> list[str]:
+    containment_available, reason = stata_containment_status()
+    if not containment_available:
+        raise OSError(
+            "Licensed Stata validation requires usable macOS sandbox-exec "
+            f"process containment: {reason}."
+        )
+    return [
+        str(MACOS_SANDBOX_EXEC),
+        "-p",
+        STATA_SANDBOX_PROFILE,
+        str(stata_binary),
+        "-e",
+        "do",
+        str(child_do_file),
+    ]
+
+
 def run_stata_do(
     stata_binary: Path,
     do_file: Path,
@@ -681,7 +740,7 @@ def run_stata_do(
     child_do_file = Path(os.path.relpath(do_file, start=cwd))
     deadline = time.monotonic() + timeout_seconds
     process = subprocess.Popen(
-        [str(stata_binary), "-e", "do", str(child_do_file)],
+        _stata_launch_command(stata_binary, child_do_file),
         cwd=str(cwd),
         env={**os.environ, "PWD": str(cwd)},
         stdout=subprocess.PIPE,
