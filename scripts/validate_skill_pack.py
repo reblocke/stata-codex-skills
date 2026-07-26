@@ -29,6 +29,7 @@ from libskillpack import (
     download_binary,
     ensure_dir,
     has_stata_error,
+    is_safe_slug,
     read_text,
     read_yaml,
     run_command,
@@ -175,7 +176,7 @@ def verify_package_install_lock(slug: str, plus_dir: Path) -> tuple[bool, str]:
     expected under the isolated PLUS directory.
     """
 
-    if not re.fullmatch(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", slug):
+    if not is_safe_slug(slug):
         return False, f"Unsafe package lock slug: {slug!r}"
     lock_path = PACKAGE_LOCK_ROOT / f"{slug}.yaml"
     lock = read_yaml(lock_path)

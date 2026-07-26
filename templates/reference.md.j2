@@ -3,21 +3,9 @@
 ## When to use
 
 {{ entry.trigger }}
-
-## Routing terms
-
-{% for term in entry.routing_terms %}
-- `{{ term }}`
-{% endfor %}
-
-## Supported aliases and names
-
-{% for alias in entry.aliases %}
-- `{{ alias }}`
-{% endfor %}
 {% if entry.preflight_commands %}
 
-## Installation preflight
+## Installation preflight (read-only)
 
 Run these read-only checks before proposing installation:
 
@@ -29,10 +17,12 @@ Run these read-only checks before proposing installation:
 {% endif %}
 {% if entry.install_commands %}
 
-## Optional installation
+## Optional installation (authorization required; isolated directory)
 
-These commands change the active Stata environment. Ask before running them
-outside an isolated validation directory.
+These commands change the Stata environment.
+Run them only with user authorization.
+Use only an isolated validation directory; never use the user's normal `PLUS`
+or `PERSONAL` paths.
 
 ```stata
 {% for line in entry.install_commands %}
@@ -76,6 +66,7 @@ outside an isolated validation directory.
 {% for item in entry.workflows %}
 - {{ item }}
 {% endfor %}
+
 ## Validation
 
 - Mode: `{{ entry.validation_mode }}`
@@ -88,7 +79,3 @@ outside an isolated validation directory.
 - `{{ item.qualified_path }}`{{ item.instruction }}
 {% endfor %}
 {% endif %}
-
-## Provenance
-
-See `{{ entry.provenance_index_path }}` for reviewed source files and lock coverage.

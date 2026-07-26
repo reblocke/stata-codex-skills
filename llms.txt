@@ -1,45 +1,51 @@
 # stata-codex-skills
 
 Repository: https://github.com/reblocke/stata-codex-skills
-Purpose: Builds local Codex skills for Stata from structured YAML and local help sources
-Status: No manuscript version is expected. This repository contains code and generated instructions; respect third-party Stata help and source licensing.
+Purpose: Build local Codex skills for built-in Stata, community packages, and
+Stata C/C++ plugins.
 
-## Human-Readable Entry Points
-- `README.md` is the primary human-facing overview.
-- `llms.txt` is a compact machine-readable index and should not replace the README.
+## Authority
 
-## Repository Layout
-- `LICENSE`
-- `Makefile`
-- `README.md`
-- `manifests/package-map.yaml`
-- `manifests/plugin-map.yaml`
-- `manifests/topic-map.yaml`
-- `pyproject.toml`
-- `scripts/fetch_upstream.py`
-- `scripts/harvest_stata_help.py`
-- `scripts/libskillpack.py`
-- `scripts/lint_skill_pack.py`
-- `scripts/publish_local.py`
-- `scripts/render_skills.py`
-- `scripts/scaffold_content.py`
+- `content/**/*.yaml` is the sole executable publication source.
+- `config/` defines deterministic routing and compatibility aliases.
+- `locks/` and `manifests/` record provenance; they do not control publication.
+- `build/generated/` is derived, ignored, and never edited by hand.
 
-## Data and Reuse Boundaries
-No clinical data expected
+## Entry points
 
-## Workflow
-Run project tests if present
+- `README.md`: workflow, validation boundaries, publication, and recovery
+- `Makefile`: frozen build, checks, licensed validation, and publication
+- `scripts/render_skills.py`: deterministic transactional renderer
+- `scripts/lint_skill_pack.py`: schema, routing, provenance, lock, and output lint
+- `scripts/validate_skill_pack.py`: static and licensed integration suites
+- `scripts/publish_local.py`: receipt-gated three-skill publication
+- `tests/prompts/cases.yaml`: independently written routing fixtures
 
-## Dependencies
-Python dependency metadata
+## Core commands
 
-## Citation
-No publication DOI is assigned to this repository. Cite the GitHub repository URL and the commit or release used.
+```text
+make bootstrap
+make doctor
+make check
+make validate
+make publish
+```
 
-## License
-MIT License for repository code; see `LICENSE`. Third-party and publisher materials remain under their original terms.
+`make check` is offline and does not invoke Stata. `make validate` requires
+licensed Stata, package-network access, and plugin compilation. Plugin execution
+is an explicit optional integration test, not part of the default gate.
 
-## Agent Cautions
-- Do not re-add a README appendix aimed primarily at LLMs; integrate user-facing details into normal README sections.
-- Keep restricted clinical data, private drafts, publisher PDFs, local paths, and generated outputs out of public documentation unless explicitly reviewed.
-- Prefer concise summaries plus links to citable records over copied manuscript or publisher text.
+## Safety and reuse
+
+- Treat this repository as public: no PHI, restricted data, credentials,
+  private drafts, proprietary help text, generated outputs, or package code.
+- Package installation requires user authorization and an isolated Stata path.
+- Publication requires a fresh digest-bound receipt and preserves uncertain
+  transaction state for exact-path human recovery.
+- Codex skills are installed per machine under `~/.codex/skills/` or
+  `$CODEX_HOME/skills/`; installation does not synchronize across machines.
+
+## License and citation
+
+Repository code is MIT licensed. Third-party materials retain their original
+terms. Cite the repository URL and the exact commit or release used.

@@ -611,7 +611,7 @@ class DeterministicRenderTests(unittest.TestCase):
             "cross-skill: load the `stata-core` skill first",
             rdrobust,
         )
-        self.assertIn("## Supported aliases and names", rdrobust)
+        self.assertNotIn("## Supported aliases and names", rdrobust)
         self.assertIn("- `rdplot`", rdrobust)
         self.assertNotIn("## Smoke test", rdrobust)
 
