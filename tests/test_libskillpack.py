@@ -413,6 +413,44 @@ class RunStataDoTests(unittest.TestCase):
                 self.killpg.call_args_list,
             )
 
+    def test_natural_nonzero_exit_after_marker_is_not_suppressed(self) -> None:
+        with TemporaryDirectory(prefix="stata-run-") as temp_root:
+            cwd = Path(temp_root) / "work"
+            do_file = self._make_do_file(cwd)
+            marker = "VALIDATION COMPLETE: natural-race"
+            process = ImmediateProcess(returncode=7)
+
+            def fake_popen(*args, **kwargs) -> ImmediateProcess:
+                del args, kwargs
+                (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
+                return process
+
+            states = [
+                libskillpack._ProcessLeaderState.LIVE_ANCHORED,
+                libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+                libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+                libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+            ]
+            with patch.object(
+                libskillpack.subprocess,
+                "Popen",
+                side_effect=fake_popen,
+            ), patch.object(
+                libskillpack,
+                "_process_leader_state",
+                side_effect=states,
+            ):
+                result, _ = libskillpack.run_stata_do(
+                    Path("/fake/stata"),
+                    do_file,
+                    cwd,
+                    completion_marker=marker,
+                    timeout_seconds=1,
+                )
+
+            self.assertEqual(7, result.returncode)
+            self.killpg.assert_called_once_with(process.pid, signal.SIGKILL)
+
     def test_already_reaped_process_group_is_never_signaled(self) -> None:
         with TemporaryDirectory(prefix="stata-run-") as temp_root:
             cwd = Path(temp_root) / "work"

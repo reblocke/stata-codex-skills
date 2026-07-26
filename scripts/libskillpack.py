@@ -752,8 +752,6 @@ def run_stata_do(
     )
     marker_found = False
     timed_out = False
-    leader_exited = False
-    stopped_after_marker = False
     try:
         while True:
             if log_path.exists():
@@ -769,9 +767,6 @@ def run_stata_do(
                             "Lost ownership of the Stata process-group leader "
                             "before cleanup."
                         )
-                    leader_exited = (
-                        leader_state is _ProcessLeaderState.EXITED_ANCHORED
-                    )
                     break
             leader_state = _process_leader_state(process)
             if leader_state is _ProcessLeaderState.UNANCHORED:
@@ -780,7 +775,6 @@ def run_stata_do(
                     "cleanup."
                 )
             if leader_state is _ProcessLeaderState.EXITED_ANCHORED:
-                leader_exited = True
                 break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -791,13 +785,16 @@ def run_stata_do(
         _force_cleanup_process(process)
         raise
 
-    stopped_after_marker = marker_found and not leader_exited
     stop_result = _stop_process_group(process)
 
     log_text = read_text(log_path) if log_path.exists() else ""
     marker_found = any(line.strip() == completion_marker for line in log_text.splitlines())
     diagnostics: list[str] = []
     process_returncode = process.returncode if process.returncode is not None else 1
+    killed_after_marker = (
+        marker_found
+        and process_returncode == -int(signal.SIGKILL)
+    )
     if not log_path.exists():
         diagnostics.append(f"Stata did not create the expected log {log_path.name}.")
     elif not marker_found:
@@ -808,7 +805,7 @@ def run_stata_do(
         diagnostics.append(f"Stata timed out after {timeout_seconds} seconds.")
     elif not stop_result.cleanup_confirmed:
         effective_returncode = 1
-    elif process_returncode != 0 and not stopped_after_marker:
+    elif process_returncode != 0 and not killed_after_marker:
         effective_returncode = process_returncode
     elif not log_path.exists():
         effective_returncode = 1
