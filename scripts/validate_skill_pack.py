@@ -35,6 +35,8 @@ from lint_skill_pack import lint_repo
 from render_skills import (
     _capture_directory_descriptor_tree,
     _close_descriptor_list,
+    _remove_owned_directory,
+    _remove_verified_empty_directory_via_quarantine,
     _raise_after_descriptor_finalization,
     _retain_owned_directory,
 )
@@ -1231,6 +1233,80 @@ def _retain_validation_workdir(
     )
 
 
+def _remove_owned_validation_workspace(
+    workspace: ValidationWorkspace,
+) -> None:
+    """Remove one run-private workspace through verified quarantine moves."""
+
+    if (
+        not workspace.owns_transaction_root
+        or workspace.temp_parent_descriptor is None
+    ):
+        raise OSError(
+            "validation workspace is not an owned run-private transaction"
+        )
+
+    transaction_root = _required_descriptor_path(
+        workspace.transaction_descriptor,
+        workspace.transaction_root,
+        "validation transaction",
+    )
+    work_root = _required_descriptor_path(
+        workspace.work_descriptor,
+        workspace.work_root,
+        "validation workdir",
+    )
+    expected_entries = _capture_directory_descriptor_tree(
+        workspace.work_descriptor,
+        work_root,
+    )
+    _remove_owned_directory(
+        work_root,
+        workspace.work_identity[0],
+        workspace.work_identity[1],
+        expected_entries,
+        expected_mode=workspace.work_mode,
+        parent_descriptor=workspace.transaction_descriptor,
+    )
+
+    held_transaction = os.fstat(workspace.transaction_descriptor)
+    public_transaction = os.stat(
+        transaction_root.name,
+        dir_fd=workspace.temp_parent_descriptor,
+        follow_symlinks=False,
+    )
+    if (
+        not stat.S_ISDIR(held_transaction.st_mode)
+        or not stat.S_ISDIR(public_transaction.st_mode)
+        or (
+            held_transaction.st_dev,
+            held_transaction.st_ino,
+        )
+        != workspace.transaction_identity
+        or (
+            public_transaction.st_dev,
+            public_transaction.st_ino,
+        )
+        != workspace.transaction_identity
+        or stat.S_IMODE(held_transaction.st_mode)
+        != workspace.transaction_mode
+        or stat.S_IMODE(public_transaction.st_mode)
+        != workspace.transaction_mode
+        or os.listdir(workspace.transaction_descriptor)
+    ):
+        raise OSError(
+            "validation transaction changed after workdir cleanup; "
+            "preserving it"
+        )
+
+    _remove_verified_empty_directory_via_quarantine(
+        workspace.temp_parent_descriptor,
+        transaction_root.name,
+        transaction_root,
+        held_transaction,
+    )
+
+
 def _validation_workspace_recovery_path(
     workspace: ValidationWorkspace,
 ) -> Path:
@@ -1411,8 +1487,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--keep-workdir",
         action="store_true",
         help=(
-            "Accepted for compatibility; validation transactions are retained "
-            "after every run."
+            "Retain the run-private validation transaction for explicit "
+            "inspection. Without this flag, ordinary completed runs remove "
+            "their verified workspace."
         ),
     )
     parser.add_argument(
@@ -1763,29 +1840,37 @@ def main(argv: list[str] | None = None) -> int:
             if safe:
                 safe_finalization_print(safe)
 
+        retain_workspace = (
+            args.keep_workdir
+            or validation_error is not None
+            or not workspace.owns_transaction_root
+        )
         try:
-            retained_work_root = _retain_validation_workdir(
-                work_root,
-                workspace.transaction_descriptor,
-                workspace.work_descriptor,
-                workspace.work_identity,
-                workspace.work_mode,
-            )
-            cleanup_path = _validation_cleanup_path(workspace)
-            cleanup_label = (
-                "transaction"
-                if workspace.owns_transaction_root
-                else "workdir"
-            )
-            safe_finalization_print(
-                f"validation {cleanup_label} retained for explicit cleanup "
-                f"at: {cleanup_path}"
-            )
-            if workspace.owns_transaction_root:
-                safe_finalization_print(
-                    "validation workdir retained for inspection at: "
-                    f"{retained_work_root}"
+            if retain_workspace:
+                retained_work_root = _retain_validation_workdir(
+                    work_root,
+                    workspace.transaction_descriptor,
+                    workspace.work_descriptor,
+                    workspace.work_identity,
+                    workspace.work_mode,
                 )
+                cleanup_path = _validation_cleanup_path(workspace)
+                cleanup_label = (
+                    "transaction"
+                    if workspace.owns_transaction_root
+                    else "workdir"
+                )
+                safe_finalization_print(
+                    f"validation {cleanup_label} retained for explicit cleanup "
+                    f"at: {cleanup_path}"
+                )
+                if workspace.owns_transaction_root:
+                    safe_finalization_print(
+                        "validation workdir retained for inspection at: "
+                        f"{retained_work_root}"
+                    )
+            else:
+                _remove_owned_validation_workspace(workspace)
         except Exception as cleanup_error:
             recovery_path = safe_descriptor_location(
                 workspace.work_descriptor,
@@ -1800,7 +1885,11 @@ def main(argv: list[str] | None = None) -> int:
                 else recovery_path
             )
             record_finalization_failure(
-                "validation workspace retention verification",
+                (
+                    "validation workspace retention verification"
+                    if retain_workspace
+                    else "validation workspace cleanup"
+                ),
                 (
                     f"{type(cleanup_error).__name__}: {cleanup_error}; "
                     "preserved validation state is at "
@@ -1809,8 +1898,13 @@ def main(argv: list[str] | None = None) -> int:
                 ),
             )
             safe_finalization_print(
-                "validation workdir retention verification failed; inspect "
-                "the preservation "
+                "validation workdir "
+                + (
+                    "retention verification"
+                    if retain_workspace
+                    else "cleanup"
+                )
+                + " failed closed; inspect the preservation "
                 f"details above before retrying: {cleanup_path}"
             )
         except BaseException as cleanup_error:
@@ -1828,8 +1922,13 @@ def main(argv: list[str] | None = None) -> int:
                 else recovery_path
             )
             safe_finalization_print(
-                "validation workdir retention verification was interrupted; "
-                "the validation "
+                "validation workdir "
+                + (
+                    "retention verification"
+                    if retain_workspace
+                    else "cleanup"
+                )
+                + " was interrupted; the validation "
                 f"state may remain at or beneath: {recovery_path}; exact "
                 f"retained cleanup unit is {cleanup_path}"
             )

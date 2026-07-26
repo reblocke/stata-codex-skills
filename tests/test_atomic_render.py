@@ -3268,6 +3268,39 @@ class AtomicRenderTests(unittest.TestCase):
                         self.transaction_artifacts(case_root, output.name),
                     )
 
+    def test_duplicate_config_key_fails_during_input_capture(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-") as temp_root:
+            config_path = Path(temp_root) / "skills.yaml"
+            config_path.write_text(
+                (
+                    REPO_ROOT / "config" / "skills.yaml"
+                ).read_text(encoding="utf-8")
+                + "\nskills: {}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                ValueError,
+                r"duplicate key 'skills'.*first occurrence was at line",
+            ) as caught:
+                render_skills.capture_render_inputs(
+                    config_path,
+                    REPO_ROOT / "content",
+                )
+
+            self.assertIn(str(config_path), str(caught.exception))
+
+    def test_shared_atomic_rename_unavailability_is_normalized(self) -> None:
+        with patch.object(
+            render_skills,
+            "_shared_atomic_rename_at_no_replace",
+            side_effect=RuntimeError("primitive unavailable"),
+        ), self.assertRaisesRegex(
+            render_skills.RenderTransactionError,
+            "primitive unavailable",
+        ):
+            render_skills._atomic_rename_at_no_replace(1, "source", 2, "target")
+
     def test_invalid_content_directory_is_rejected_before_discovery(
         self,
     ) -> None:

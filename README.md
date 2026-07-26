@@ -97,7 +97,7 @@ offline, so dependency edits without a reviewed lock update fail.
 
 The default licensed validation additionally requires:
 
-- macOS with Stata under `/Applications/Stata`
+- macOS with Stata under `/Applications/Stata` and `/usr/bin/sandbox-exec`
 - network access for isolated community-package installation
 - `clang` and network access to the checksum-pinned plugin SDK sources
 
@@ -169,10 +169,10 @@ uv run --frozen python scripts/validate_skill_pack.py \
 `--suite default` is used when no suite is supplied. It runs static checks, the
 core smoke test, every package smoke test, and plugin compilation. It does not
 execute the plugin. Every run uses a private `stata-codex-validate-*`
-transaction, retains that transaction root after the run, and prints both its
-exact cleanup path and the inner `work` path for inspection. On a failed run,
-`--keep-workdir` is accepted for compatibility but no longer changes this
-retain-after-every-run behavior. See **Retained transaction cleanup** below.
+transaction outside the repository and removes it after verified ordinary
+completion. On failure, `--keep-workdir` retains the transaction and prints its
+exact path for inspection. Cleanup uncertainty also preserves the best
+verified recovery unit and fails the run.
 
 If this is the first installation on a machine, restart Codex after
 `make publish`.
@@ -324,13 +324,14 @@ dedicated three-skill generated-tree layout.
 
 ### Retained transaction cleanup
 
-Repeated `make build`, `make check`, and validation commands can accumulate
-reported backup, stage, deterministic-render, generated-drift, or
-validation-workspace directories, plus hidden validation-receipt backup or
+Repeated `make build` and `make check` commands can accumulate reported backup,
+stage, deterministic-render, or generated-drift directories, plus explicitly
+retained validation workspaces and hidden validation-receipt backup or
 temporary files. The deterministic and generated-drift callers retain their
 outer workspace even after success so a late or partial render is not erased
-by an enclosing temporary-directory finalizer. Validation receipt state is
-also retained whenever its ownership or publication cannot be confirmed.
+by an enclosing temporary-directory finalizer. Validation state is retained
+only when requested or when its cleanup, ownership, or publication cannot be
+confirmed.
 Removal is an explicit human step:
 
 1. Copy the exact path printed by the command; do not use a wildcard or prefix
@@ -424,13 +425,20 @@ never considered. Every selected result is aggregated, and any failure makes
 the validator and corresponding Make target exit nonzero.
 
 The validator uses bounded network, compiler, subprocess, and Stata timeouts
-and terminates lingering Stata processes. Failed runs print bounded diagnostics
-with repository, home-directory, temporary-path, and Stata license metadata
-sanitized. The workspace is verified and retained after every run, and its exact
-path is printed for the explicit cleanup workflow above. If retention
-verification fails, the gate fails without issuing a receipt and reports the
-best descriptor-derived path for inspection. On a failed run, `--keep-workdir`
-is accepted for compatibility and has no additional effect.
+and launches licensed Stata checks inside a preflighted, fixed macOS sandbox
+that denies child-process creation, LaunchServices opens, and AppleEvent sends
+before Stata starts. This prevents detached, double-forked, or delegated
+background processes from escaping process-group cleanup. Shell and
+external-executable behavior therefore requires a separate, explicitly
+authorized integration test; the default core smoke only queries the configured
+Python integration.
+
+Failed runs print bounded diagnostics with repository, home-directory,
+temporary-path, and Stata license metadata sanitized. Ordinary successful and
+failed transactions are removed after verified cleanup. `--keep-workdir`
+retains a failed transaction outside the repository for inspection. Cleanup or
+retention uncertainty fails the gate, blocks receipt creation, and reports the
+best descriptor-derived recovery path.
 Package tests use isolated temporary `PLUS` and `PERSONAL` paths, and stochastic
 smoke tests use a fixed seed.
 

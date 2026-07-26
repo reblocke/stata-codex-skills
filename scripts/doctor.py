@@ -15,7 +15,12 @@ import tomllib
 import jinja2
 import yaml
 
-from libskillpack import BUILD_ROOT, REPO_ROOT, detect_stata_binary
+from libskillpack import (
+    BUILD_ROOT,
+    REPO_ROOT,
+    detect_stata_binary,
+    stata_containment_status,
+)
 
 
 def required_uv_version() -> str:
@@ -85,8 +90,16 @@ def main() -> int:
         errors.append("git is not available on PATH")
     if shutil.which("clang") is None:
         warnings.append("clang is unavailable; plugin compilation validation will fail")
-    if detect_stata_binary() is None:
+    stata_binary = detect_stata_binary()
+    if stata_binary is None:
         warnings.append("Stata is unavailable; licensed core/package validation cannot run")
+    else:
+        containment_available, reason = stata_containment_status()
+        if not containment_available:
+            warnings.append(
+                "macOS sandbox-exec containment is unavailable; licensed "
+                f"core/package validation will fail before Stata starts ({reason})"
+            )
     build_parent = BUILD_ROOT.parent
     if not build_parent.exists():
         nearest = build_parent.parent

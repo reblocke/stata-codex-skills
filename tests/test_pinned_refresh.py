@@ -2845,6 +2845,44 @@ class PinnedRefreshTests(unittest.TestCase):
             )
             self.assertFalse(checkout.exists())
 
+    def test_duplicate_report_key_is_preserved_as_foreign(self) -> None:
+        with TemporaryDirectory(prefix="pinned-report-duplicate-") as temp_root:
+            root = Path(temp_root)
+            raw_root = root / "raw"
+            checkout = raw_root / "upstream" / "stata-skill"
+            report_path = raw_root / "candidates" / "upstream-comparison.yaml"
+            report_path.parent.mkdir(parents=True)
+            duplicate = (
+                "schema_version: 1\n"
+                "schema_version: 1\n"
+                "report_type: upstream-comparison\n"
+                f"report_owner: {fetch_upstream.REPORT_OWNER}\n"
+            )
+            report_path.write_text(duplicate, encoding="utf-8")
+
+            with patch.multiple(
+                fetch_upstream,
+                REPO_ROOT=root,
+                RAW_ROOT=raw_root,
+                UPSTREAM_REPO_DIR=checkout,
+            ), patch("builtins.print") as mocked_print:
+                exit_code = fetch_upstream.main(
+                    [
+                        "--upstream-ref",
+                        "a" * 40,
+                        "--report",
+                        str(report_path),
+                    ]
+                )
+
+            output = "\n".join(
+                str(call.args[0]) for call in mocked_print.call_args_list
+            )
+            self.assertEqual(1, exit_code)
+            self.assertIn("foreign; preserving it", output)
+            self.assertEqual(duplicate, report_path.read_text(encoding="utf-8"))
+            self.assertFalse(checkout.exists())
+
     def test_oversized_canonical_report_is_rejected_before_hashing(self) -> None:
         with TemporaryDirectory(prefix="pinned-report-oversized-") as temp_root:
             root = Path(temp_root)

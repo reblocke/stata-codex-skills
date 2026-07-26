@@ -1,16 +1,24 @@
 from __future__ import annotations
 
 import ctypes
+from dataclasses import dataclass
+import errno
+from enum import Enum
 from functools import lru_cache
 import hashlib
+import io
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import time
 import urllib.request
 import yaml
+from yaml.constructor import ConstructorError
+from yaml.nodes import MappingNode
+from yaml.resolver import BaseResolver
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -28,6 +36,116 @@ UPSTREAM_REPO_URL = "https://github.com/dylantmoore/stata-skill.git"
 UPSTREAM_REPO_DIR = RAW_ROOT / "upstream" / "stata-skill"
 STATA_ROOT = Path("/Applications/Stata")
 STATA_ADO_BASE = STATA_ROOT / "ado" / "base"
+STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS = 5
+MACOS_SANDBOX_EXEC = Path("/usr/bin/sandbox-exec")
+STATA_SANDBOX_PROFILE = (
+    "(version 1)"
+    "(allow default)"
+    "(deny process-fork)"
+    "(deny lsopen)"
+    "(deny appleevent-send)"
+)
+STATA_SANDBOX_PROBE_TIMEOUT_SECONDS = 5
+
+
+@dataclass(frozen=True)
+class _ProcessStopResult:
+    stdout: str
+    stderr: str
+    diagnostic: str
+    cleanup_confirmed: bool
+    leader_kill_sent: bool
+
+
+@dataclass(frozen=True)
+class _ProcessGroupSignalResult:
+    cleanup_confirmed: bool
+    live_leader_signaled: bool
+
+
+class _ProcessLeaderState(Enum):
+    LIVE_ANCHORED = "live-anchored"
+    EXITED_ANCHORED = "exited-anchored"
+    UNANCHORED = "unanchored"
+
+
+class _DarwinSiginfo(ctypes.Structure):
+    """Darwin siginfo_t layout from <sys/signal.h>."""
+
+    _fields_ = [
+        ("si_signo", ctypes.c_int),
+        ("si_errno", ctypes.c_int),
+        ("si_code", ctypes.c_int),
+        ("si_pid", ctypes.c_int),
+        ("si_uid", ctypes.c_uint),
+        ("si_status", ctypes.c_int),
+        ("si_addr", ctypes.c_void_p),
+        ("si_value", ctypes.c_void_p),
+        ("si_band", ctypes.c_long),
+        ("_pad", ctypes.c_ulong * 7),
+    ]
+
+
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    """Safe YAML loader that refuses ambiguous mapping keys."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeySafeLoader,
+    node: MappingNode,
+    deep: bool = False,
+) -> dict:
+    if not isinstance(node, MappingNode):
+        raise ConstructorError(
+            None,
+            None,
+            f"expected a mapping node, but found {node.id}",
+            node.start_mark,
+        )
+    loader.flatten_mapping(node)
+    mapping: dict = {}
+    key_marks: dict = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        try:
+            duplicate = key in mapping
+        except TypeError as error:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                "found an unhashable key",
+                key_node.start_mark,
+            ) from error
+        if duplicate:
+            first_mark = key_marks[key]
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                (
+                    f"found duplicate key {key!r}; first occurrence was at "
+                    f"line {first_mark.line + 1}, column {first_mark.column + 1}"
+                ),
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+        key_marks[key] = key_node.start_mark
+    return mapping
+
+
+_UniqueKeySafeLoader.add_constructor(
+    BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
+
+
+def parse_yaml(data: str | bytes, *, source: str | Path) -> object:
+    """Parse safe YAML while rejecting duplicate keys at every nesting level."""
+
+    if isinstance(data, bytes):
+        data = data.decode("utf-8")
+    stream = io.StringIO(data)
+    stream.name = os.fspath(source)
+    return yaml.load(stream, Loader=_UniqueKeySafeLoader)
 
 
 def atomic_rename_at_no_replace(
@@ -115,7 +233,7 @@ def write_text(path: Path, text: str) -> None:
 def read_yaml(path: Path) -> dict:
     if not path.exists():
         return {}
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    data = parse_yaml(path.read_text(encoding="utf-8"), source=path)
     return data or {}
 
 
@@ -409,6 +527,287 @@ def detect_stata_binary() -> Path | None:
     return None
 
 
+def _signal_process_group(
+    process: subprocess.Popen[str],
+    process_signal: signal.Signals,
+) -> _ProcessGroupSignalResult:
+    # Confirm immediately before signaling that this Popen still owns a
+    # waitable leader.  A reaped leader no longer reserves its PID, so its
+    # former PGID is unsafe to signal.
+    leader_state = _process_leader_state(process)
+    if leader_state is _ProcessLeaderState.UNANCHORED:
+        return _ProcessGroupSignalResult(False, False)
+    try:
+        os.killpg(process.pid, process_signal)
+    except (ProcessLookupError, PermissionError):
+        # macOS reports EPERM for a group containing only an exited, waitable
+        # leader.  ESRCH has the same safe interpretation.  Refresh the state
+        # to cover exit races; a live member would keep the owned group
+        # signalable, while lost ownership remains a closed failure.
+        cleanup_confirmed = (
+            _process_leader_state(process)
+            is _ProcessLeaderState.EXITED_ANCHORED
+        )
+        return _ProcessGroupSignalResult(cleanup_confirmed, False)
+    return _ProcessGroupSignalResult(
+        cleanup_confirmed=True,
+        live_leader_signaled=(
+            leader_state is _ProcessLeaderState.LIVE_ANCHORED
+        ),
+    )
+
+
+@lru_cache(maxsize=1)
+def _darwin_waitid_function():
+    """Return Darwin waitid for Python builds that do not expose os.waitid."""
+
+    if sys.platform != "darwin":
+        raise RuntimeError("Darwin waitid fallback requested off macOS")
+    libc = ctypes.CDLL(None, use_errno=True)
+    try:
+        waitid = libc.waitid
+    except AttributeError as error:
+        raise RuntimeError(
+            "This macOS runtime lacks non-reaping waitid support"
+        ) from error
+    waitid.argtypes = [
+        ctypes.c_int,
+        ctypes.c_uint,
+        ctypes.POINTER(_DarwinSiginfo),
+        ctypes.c_int,
+    ]
+    waitid.restype = ctypes.c_int
+    return waitid
+
+
+def _leader_exited_with_darwin_waitid(pid: int) -> bool:
+    info = _DarwinSiginfo()
+    ctypes.set_errno(0)
+    result = _darwin_waitid_function()(
+        1,  # P_PID
+        pid,
+        ctypes.byref(info),
+        0x01 | 0x04 | 0x20,  # WNOHANG | WEXITED | WNOWAIT
+    )
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+    return info.si_pid != 0
+
+
+def _leader_exited_without_reaping(pid: int) -> bool:
+    native_waitid = getattr(os, "waitid", None)
+    if native_waitid is not None:
+        return (
+            native_waitid(
+                os.P_PID,
+                pid,
+                os.WEXITED | os.WNOHANG | os.WNOWAIT,
+            )
+            is not None
+        )
+    if sys.platform == "darwin":
+        return _leader_exited_with_darwin_waitid(pid)
+    raise RuntimeError(
+        "This runtime lacks the non-reaping waitid support required for "
+        "process-group cleanup"
+    )
+
+
+def _process_leader_state(
+    process: subprocess.Popen[str],
+) -> _ProcessLeaderState:
+    """Observe leader state without releasing its PID for group reuse."""
+
+    if process.returncode is not None or getattr(
+        process,
+        "_skillpack_process_group_anchor_lost",
+        False,
+    ):
+        return _ProcessLeaderState.UNANCHORED
+    try:
+        leader_exited = _leader_exited_without_reaping(process.pid)
+    except OSError as error:
+        if not isinstance(error, ChildProcessError) and error.errno != errno.ECHILD:
+            raise
+        setattr(process, "_skillpack_process_group_anchor_lost", True)
+        return _ProcessLeaderState.UNANCHORED
+    if leader_exited:
+        return _ProcessLeaderState.EXITED_ANCHORED
+    return _ProcessLeaderState.LIVE_ANCHORED
+
+
+def _normalize_process_text(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return value
+
+
+def _close_process_pipes(
+    process: subprocess.Popen[str],
+    *,
+    suppress_base_exceptions: bool = False,
+) -> None:
+    for stream in (process.stdout, process.stderr):
+        if stream is not None:
+            try:
+                stream.close()
+            except (OSError, ValueError):
+                pass
+            except BaseException:
+                if not suppress_base_exceptions:
+                    raise
+
+
+def _bounded_process_wait(process: subprocess.Popen[str]) -> bool:
+    try:
+        process.wait(timeout=STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return True
+
+
+def _force_cleanup_process(process: subprocess.Popen[str]) -> None:
+    """Best-effort cleanup that never replaces an active caller exception."""
+
+    try:
+        _signal_process_group(process, signal.SIGKILL)
+    except BaseException:
+        pass
+    try:
+        _close_process_pipes(
+            process,
+            suppress_base_exceptions=True,
+        )
+    except BaseException:
+        pass
+    try:
+        _bounded_process_wait(process)
+    except BaseException:
+        pass
+
+
+def _stop_process_group(
+    process: subprocess.Popen[str],
+) -> _ProcessStopResult:
+    """Signal one anchored group before reaping its leader and collect output."""
+
+    try:
+        cleanup_confirmed = False
+        leader_kill_sent = False
+        diagnostic = ""
+        if (
+            _process_leader_state(process)
+            is _ProcessLeaderState.UNANCHORED
+        ):
+            diagnostic = (
+                "The process-group leader was already reaped; cleanup cannot "
+                "be verified without risking a reused process-group ID."
+            )
+        else:
+            # Signal the whole group before communicate() can reap its leader.
+            # A single uncatchable signal leaves no escape interval between a
+            # nominally graceful signal and the enforced group stop.
+            signal_result = _signal_process_group(
+                process,
+                signal.SIGKILL,
+            )
+            cleanup_confirmed = signal_result.cleanup_confirmed
+            leader_kill_sent = signal_result.live_leader_signaled
+            if not cleanup_confirmed:
+                diagnostic = "Could not confirm process-group termination."
+        try:
+            stdout, stderr = process.communicate(
+                timeout=STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS
+            )
+        except subprocess.TimeoutExpired as timeout:
+            stdout = _normalize_process_text(timeout.output)
+            stderr = _normalize_process_text(timeout.stderr)
+            _close_process_pipes(process)
+            reaped = _bounded_process_wait(process)
+            timeout_note = (
+                "Post-kill pipe closure timed out; closed local pipes and "
+                "used a bounded process reap."
+            )
+            if not reaped:
+                timeout_note += (
+                    " Could not confirm process reap within the bounded "
+                    "cleanup window."
+                )
+            diagnostic = " ".join(
+                part for part in (diagnostic, timeout_note) if part
+            )
+            return _ProcessStopResult(
+                stdout=stdout,
+                stderr=stderr,
+                diagnostic=diagnostic,
+                cleanup_confirmed=False,
+                leader_kill_sent=leader_kill_sent,
+            )
+        return _ProcessStopResult(
+            stdout=_normalize_process_text(stdout),
+            stderr=_normalize_process_text(stderr),
+            diagnostic=diagnostic,
+            cleanup_confirmed=cleanup_confirmed,
+            leader_kill_sent=leader_kill_sent,
+        )
+    except BaseException:
+        _force_cleanup_process(process)
+        raise
+
+
+def stata_containment_status() -> tuple[bool, str]:
+    """Report whether the fixed Stata containment profile can be applied."""
+
+    if sys.platform != "darwin":
+        return False, "licensed Stata containment requires macOS"
+    if not MACOS_SANDBOX_EXEC.is_file():
+        return False, f"missing containment executable: {MACOS_SANDBOX_EXEC}"
+    try:
+        probe = subprocess.run(
+            [
+                str(MACOS_SANDBOX_EXEC),
+                "-p",
+                STATA_SANDBOX_PROFILE,
+                "/usr/bin/true",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=STATA_SANDBOX_PROBE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired:
+        return False, "containment probe timed out"
+    except OSError as error:
+        return False, f"containment probe could not start: {error}"
+    if probe.returncode != 0:
+        return False, "sandbox-exec could not apply the fixed containment profile"
+    return True, ""
+
+
+def _stata_launch_command(
+    stata_binary: Path,
+    child_do_file: Path,
+) -> list[str]:
+    containment_available, reason = stata_containment_status()
+    if not containment_available:
+        raise OSError(
+            "Licensed Stata validation requires usable macOS sandbox-exec "
+            f"process containment: {reason}."
+        )
+    return [
+        str(MACOS_SANDBOX_EXEC),
+        "-p",
+        STATA_SANDBOX_PROFILE,
+        str(stata_binary),
+        "-e",
+        "do",
+        str(child_do_file),
+    ]
+
+
 def run_stata_do(
     stata_binary: Path,
     do_file: Path,
@@ -429,49 +828,62 @@ def run_stata_do(
         log_path.unlink()
 
     child_do_file = Path(os.path.relpath(do_file, start=cwd))
+    deadline = time.monotonic() + timeout_seconds
     process = subprocess.Popen(
-        [str(stata_binary), "-e", "do", str(child_do_file)],
+        _stata_launch_command(stata_binary, child_do_file),
         cwd=str(cwd),
         env={**os.environ, "PWD": str(cwd)},
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        start_new_session=True,
     )
     marker_found = False
     timed_out = False
-    stopped_after_marker = False
-    deadline = time.monotonic() + timeout_seconds
-    while True:
-        if log_path.exists():
-            log_text = read_text(log_path)
-            marker_found = any(
-                line.strip() == completion_marker for line in log_text.splitlines()
-            )
-            if marker_found:
+    try:
+        while True:
+            if log_path.exists():
+                log_text = read_text(log_path)
+                marker_found = any(
+                    line.strip() == completion_marker
+                    for line in log_text.splitlines()
+                )
+                if marker_found:
+                    leader_state = _process_leader_state(process)
+                    if leader_state is _ProcessLeaderState.UNANCHORED:
+                        raise RuntimeError(
+                            "Lost ownership of the Stata process-group leader "
+                            "before cleanup."
+                        )
+                    break
+            leader_state = _process_leader_state(process)
+            if leader_state is _ProcessLeaderState.UNANCHORED:
+                raise RuntimeError(
+                    "Lost ownership of the Stata process-group leader before "
+                    "cleanup."
+                )
+            if leader_state is _ProcessLeaderState.EXITED_ANCHORED:
                 break
-        if process.poll() is not None:
-            break
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            timed_out = True
-            break
-        time.sleep(min(0.1, remaining))
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                timed_out = True
+                break
+            time.sleep(min(0.1, remaining))
+    except BaseException:
+        _force_cleanup_process(process)
+        raise
 
-    if process.poll() is None:
-        stopped_after_marker = marker_found
-        process.terminate()
-        try:
-            stdout, stderr = process.communicate(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            stdout, stderr = process.communicate(timeout=5)
-    else:
-        stdout, stderr = process.communicate()
+    stop_result = _stop_process_group(process)
 
     log_text = read_text(log_path) if log_path.exists() else ""
     marker_found = any(line.strip() == completion_marker for line in log_text.splitlines())
     diagnostics: list[str] = []
     process_returncode = process.returncode if process.returncode is not None else 1
+    killed_after_marker = (
+        marker_found
+        and stop_result.leader_kill_sent
+        and process_returncode == -int(signal.SIGKILL)
+    )
     if not log_path.exists():
         diagnostics.append(f"Stata did not create the expected log {log_path.name}.")
     elif not marker_found:
@@ -480,7 +892,9 @@ def run_stata_do(
     if timed_out:
         effective_returncode = 124
         diagnostics.append(f"Stata timed out after {timeout_seconds} seconds.")
-    elif process_returncode != 0 and not stopped_after_marker:
+    elif not stop_result.cleanup_confirmed:
+        effective_returncode = 1
+    elif process_returncode != 0 and not killed_after_marker:
         effective_returncode = process_returncode
     elif not log_path.exists():
         effective_returncode = 1
@@ -489,12 +903,16 @@ def run_stata_do(
     else:
         effective_returncode = 0
 
-    stderr_parts = [stderr or "", *diagnostics]
+    stderr_parts = [
+        stop_result.stderr,
+        stop_result.diagnostic,
+        *diagnostics,
+    ]
     effective_stderr = "\n".join(part for part in stderr_parts if part).strip()
     result = subprocess.CompletedProcess(
         process.args,
         effective_returncode,
-        stdout,
+        stop_result.stdout,
         effective_stderr,
     )
     return result, log_path
