@@ -36,17 +36,21 @@ class FakeResponse:
 
 
 class ImmediateProcess:
-    def __init__(self, returncode: int = 0) -> None:
+    def __init__(self, returncode: int = 0, *, reaped: bool = False) -> None:
         self.args = ["stata"]
         self.pid = 999_999_991
-        self.returncode = returncode
+        self.exit_code = returncode
+        self.exited = True
+        self.returncode: int | None = returncode if reaped else None
         self.terminate_called = False
 
     def poll(self) -> int:
-        return self.returncode
+        self.returncode = self.exit_code
+        return self.exit_code
 
     def communicate(self, timeout: int | float | None = None) -> tuple[str, str]:
         del timeout
+        self.returncode = self.exit_code
         return "", ""
 
     def terminate(self) -> None:
@@ -58,6 +62,7 @@ class HangingProcess:
         self.args = ["stata"]
         self.pid = 999_999_992
         self.returncode: int | None = None
+        self.exited = False
         self.terminate_called = False
         self.kill_called = False
         self.communicate_calls = 0
@@ -70,6 +75,7 @@ class HangingProcess:
 
     def kill(self) -> None:
         self.kill_called = True
+        self.exited = True
 
     def communicate(self, timeout: int | float | None = None) -> tuple[str, str]:
         self.communicate_calls += 1
@@ -84,6 +90,8 @@ class MarkerThenNonexitProcess:
         self.args = ["stata"]
         self.pid = 999_999_993
         self.returncode: int | None = None
+        self.exit_code: int | None = None
+        self.exited = False
         self.terminate_called = False
         self.kill_called = False
 
@@ -92,16 +100,19 @@ class MarkerThenNonexitProcess:
 
     def terminate(self) -> None:
         self.terminate_called = True
-        self.returncode = -15
+        self.exit_code = -15
+        self.exited = True
 
     def kill(self) -> None:
         self.kill_called = True
-        self.returncode = -9
+        self.exit_code = -9
+        self.exited = True
 
     def communicate(
         self, timeout: int | float | None = None
     ) -> tuple[str, str]:
         del timeout
+        self.returncode = self.exit_code
         return "", ""
 
 
@@ -121,12 +132,13 @@ class PollingFailureProcess:
         self.args = ["stata"]
         self.pid = 999_999_994
         self.returncode: int | None = None
+        self.exited = False
         self.stdout = InterruptingPipe(interrupt=True)
         self.stderr = InterruptingPipe()
         self.wait_called = False
 
     def poll(self) -> None:
-        return None
+        raise OSError("poll must not be used before process-group cleanup")
 
     def wait(self, timeout: int | float | None = None) -> int:
         del timeout
@@ -156,6 +168,28 @@ class RunStataDoTests(unittest.TestCase):
         )
         self.killpg = killpg_patcher.start()
         self.addCleanup(killpg_patcher.stop)
+        real_state_observer = libskillpack._process_leader_state
+
+        def observe_state(
+            process: subprocess.Popen[str],
+        ) -> libskillpack._ProcessLeaderState:
+            if process.returncode is not None:
+                return libskillpack._ProcessLeaderState.UNANCHORED
+            if hasattr(process, "exited"):
+                return (
+                    libskillpack._ProcessLeaderState.EXITED_ANCHORED
+                    if process.exited
+                    else libskillpack._ProcessLeaderState.LIVE_ANCHORED
+                )
+            return real_state_observer(process)
+
+        exit_observer_patcher = patch.object(
+            libskillpack,
+            "_process_leader_state",
+            side_effect=observe_state,
+        )
+        exit_observer_patcher.start()
+        self.addCleanup(exit_observer_patcher.stop)
 
     def _make_do_file(self, root: Path, name: str = "smoke.do") -> Path:
         root.mkdir(parents=True, exist_ok=True)
@@ -343,7 +377,7 @@ class RunStataDoTests(unittest.TestCase):
 
             self.assertNotEqual(0, result.returncode)
 
-    def test_exact_marker_stops_nonexiting_process_and_succeeds(self) -> None:
+    def test_exact_marker_kills_anchored_process_group_and_succeeds(self) -> None:
         with TemporaryDirectory(prefix="stata-run-") as temp_root:
             cwd = Path(temp_root) / "work"
             do_file = self._make_do_file(cwd)
@@ -356,12 +390,10 @@ class RunStataDoTests(unittest.TestCase):
                 return process
 
             def signal_group(_pid: int, sent_signal: int) -> None:
-                if sent_signal == signal.SIGTERM:
-                    process.terminate()
-                elif process.returncode is None:
+                if sent_signal == signal.SIGKILL:
                     process.kill()
                 else:
-                    raise ProcessLookupError
+                    self.fail(f"unexpected signal: {sent_signal}")
 
             self.killpg.side_effect = signal_group
             with patch.object(libskillpack.subprocess, "Popen", side_effect=fake_popen):
@@ -374,10 +406,10 @@ class RunStataDoTests(unittest.TestCase):
                 )
 
             self.assertEqual(0, result.returncode)
-            self.assertTrue(process.terminate_called)
-            self.assertFalse(process.kill_called)
+            self.assertFalse(process.terminate_called)
+            self.assertTrue(process.kill_called)
             self.assertEqual(
-                [call(process.pid, signal.SIGTERM)],
+                [call(process.pid, signal.SIGKILL)],
                 self.killpg.call_args_list,
             )
 
@@ -390,22 +422,25 @@ class RunStataDoTests(unittest.TestCase):
             def fake_popen(*args, **kwargs) -> ImmediateProcess:
                 del args, kwargs
                 (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
-                return ImmediateProcess(returncode=0)
+                return ImmediateProcess(returncode=0, reaped=True)
 
             with patch.object(
                 libskillpack.subprocess,
                 "Popen",
                 side_effect=fake_popen,
             ):
-                result, _ = libskillpack.run_stata_do(
-                    Path("/fake/stata"),
-                    do_file,
-                    cwd,
-                    completion_marker=marker,
-                    timeout_seconds=1,
-                )
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "Lost ownership",
+                ):
+                    libskillpack.run_stata_do(
+                        Path("/fake/stata"),
+                        do_file,
+                        cwd,
+                        completion_marker=marker,
+                        timeout_seconds=1,
+                    )
 
-            self.assertEqual(0, result.returncode)
             self.killpg.assert_not_called()
 
     def test_wrong_marker_fails(self) -> None:
@@ -438,9 +473,9 @@ class RunStataDoTests(unittest.TestCase):
             process = HangingProcess()
 
             self.killpg.side_effect = (
-                lambda _pid, sent_signal: process.terminate()
-                if sent_signal == signal.SIGTERM
-                else process.kill()
+                lambda _pid, sent_signal: process.kill()
+                if sent_signal == signal.SIGKILL
+                else self.fail(f"unexpected signal: {sent_signal}")
             )
             with patch.object(libskillpack.subprocess, "Popen", return_value=process):
                 result, log_path = libskillpack.run_stata_do(
@@ -452,9 +487,9 @@ class RunStataDoTests(unittest.TestCase):
                 )
 
             self.assertEqual(124, result.returncode)
-            self.assertTrue(process.terminate_called)
+            self.assertFalse(process.terminate_called)
             self.assertTrue(process.kill_called)
-            self.assertEqual(2, process.communicate_calls)
+            self.assertEqual(1, process.communicate_calls)
             self.assertEqual(cwd / "smoke.log", log_path)
 
     def test_polling_exception_survives_interrupting_pipe_cleanup(self) -> None:
@@ -491,6 +526,143 @@ class RunStataDoTests(unittest.TestCase):
             self.assertTrue(process.stdout.closed)
             self.assertTrue(process.stderr.closed)
             self.assertTrue(process.wait_called)
+            self.killpg.assert_called_once_with(process.pid, signal.SIGKILL)
+
+
+@unittest.skipUnless(
+    hasattr(os, "fork") and hasattr(os, "waitid"),
+    "requires POSIX fork and waitid",
+)
+class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
+    def test_exited_anchored_leader_without_descendants_is_clean(self) -> None:
+        process = subprocess.Popen(
+            ["/usr/bin/true"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        try:
+            deadline = time.monotonic() + 3
+            while (
+                libskillpack._process_leader_state(process)
+                is libskillpack._ProcessLeaderState.LIVE_ANCHORED
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.02)
+            self.assertIs(
+                libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+                libskillpack._process_leader_state(process),
+            )
+
+            stopped = libskillpack._stop_process_group(process)
+
+            self.assertTrue(stopped.cleanup_confirmed, stopped.diagnostic)
+            self.assertEqual(0, process.returncode)
+        finally:
+            if process.returncode is None:
+                libskillpack._force_cleanup_process(process)
+
+    def test_exited_leader_anchor_kills_same_group_descendant(self) -> None:
+        with TemporaryDirectory(prefix="stata-group-anchor-") as temp_root:
+            child_pid_path = Path(temp_root) / "child.pid"
+            read_fd, write_fd = os.pipe()
+            os.set_blocking(read_fd, False)
+            source = (
+                "import os, signal, time\n"
+                "child = os.fork()\n"
+                "if child == 0:\n"
+                "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
+                f"    open({str(child_pid_path)!r}, 'w').write(str(os.getpid()))\n"
+                "    os.close(1)\n"
+                "    os.close(2)\n"
+                "    while True:\n"
+                "        time.sleep(1)\n"
+                "os._exit(0)\n"
+            )
+            process = subprocess.Popen(
+                [sys.executable, "-c", source],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+                pass_fds=(write_fd,),
+            )
+            os.close(write_fd)
+            child_pid: int | None = None
+            reached_eof = False
+            try:
+                deadline = time.monotonic() + 3
+                while time.monotonic() < deadline:
+                    if child_pid_path.exists():
+                        child_pid = int(child_pid_path.read_text(encoding="utf-8"))
+                    if (
+                        child_pid is not None
+                        and libskillpack._process_leader_state(process)
+                        is libskillpack._ProcessLeaderState.EXITED_ANCHORED
+                    ):
+                        break
+                    time.sleep(0.02)
+                self.assertIsNotNone(child_pid)
+                self.assertIs(
+                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+                    libskillpack._process_leader_state(process),
+                )
+                self.assertIsNone(process.returncode)
+                with self.assertRaises(BlockingIOError):
+                    os.read(read_fd, 1)
+
+                stopped = libskillpack._stop_process_group(process)
+
+                self.assertTrue(stopped.cleanup_confirmed, stopped.diagnostic)
+                self.assertEqual(0, process.returncode)
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    try:
+                        reached_eof = os.read(read_fd, 1) == b""
+                    except BlockingIOError:
+                        reached_eof = False
+                    if reached_eof:
+                        break
+                    time.sleep(0.02)
+                self.assertTrue(reached_eof)
+            finally:
+                if process.returncode is None:
+                    libskillpack._force_cleanup_process(process)
+                try:
+                    os.close(read_fd)
+                except OSError:
+                    pass
+                if child_pid is not None and not reached_eof:
+                    try:
+                        os.kill(child_pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+
+    def test_lost_waitable_child_prevents_stale_group_signal(self) -> None:
+        process = subprocess.Popen(
+            ["/usr/bin/true"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            start_new_session=True,
+        )
+        os.waitpid(process.pid, 0)
+        self.assertIsNone(process.returncode)
+        try:
+            with patch.object(libskillpack.os, "killpg") as killpg:
+                self.assertIs(
+                    libskillpack._ProcessLeaderState.UNANCHORED,
+                    libskillpack._process_leader_state(process),
+                )
+
+                libskillpack._force_cleanup_process(process)
+
+            killpg.assert_not_called()
+        finally:
+            for stream in (process.stdout, process.stderr):
+                if stream is not None and not stream.closed:
+                    stream.close()
 
 
 class StataContainmentCommandTests(unittest.TestCase):

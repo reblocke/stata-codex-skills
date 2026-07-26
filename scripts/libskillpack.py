@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ctypes
 from dataclasses import dataclass
+import errno
+from enum import Enum
 from functools import lru_cache
 import hashlib
 import io
@@ -52,6 +54,12 @@ class _ProcessStopResult:
     stderr: str
     diagnostic: str
     cleanup_confirmed: bool
+
+
+class _ProcessLeaderState(Enum):
+    LIVE_ANCHORED = "live-anchored"
+    EXITED_ANCHORED = "exited-anchored"
+    UNANCHORED = "unanchored"
 
 
 class _UniqueKeySafeLoader(yaml.SafeLoader):
@@ -499,22 +507,51 @@ def _signal_process_group(
     process: subprocess.Popen[str],
     process_signal: signal.Signals,
 ) -> bool:
-    # poll() either confirms the leader is still unreaped (so its PID cannot
-    # yet be reused) or reaps it and lets us avoid signaling a stale PGID.
-    if process.poll() is not None:
-        return True
+    # Confirm immediately before signaling that this Popen still owns a
+    # waitable leader.  A reaped leader no longer reserves its PID, so its
+    # former PGID is unsafe to signal.
+    leader_state = _process_leader_state(process)
+    if leader_state is _ProcessLeaderState.UNANCHORED:
+        return False
     try:
         os.killpg(process.pid, process_signal)
-    except ProcessLookupError:
-        return True
-    except PermissionError:
-        # macOS can report EPERM for a vanished group after its leader is
-        # already reaped. Treat that state as ambiguous rather than success;
-        # a live leader remains a real cleanup failure.
-        if process.poll() is None:
-            raise
-        return False
+    except (ProcessLookupError, PermissionError):
+        # macOS reports EPERM for a group containing only an exited, waitable
+        # leader.  ESRCH has the same safe interpretation.  Refresh the state
+        # to cover exit races; a live member would keep the owned group
+        # signalable, while lost ownership remains a closed failure.
+        return (
+            _process_leader_state(process)
+            is _ProcessLeaderState.EXITED_ANCHORED
+        )
     return True
+
+
+def _process_leader_state(
+    process: subprocess.Popen[str],
+) -> _ProcessLeaderState:
+    """Observe leader state without releasing its PID for group reuse."""
+
+    if process.returncode is not None or getattr(
+        process,
+        "_skillpack_process_group_anchor_lost",
+        False,
+    ):
+        return _ProcessLeaderState.UNANCHORED
+    try:
+        status = os.waitid(
+            os.P_PID,
+            process.pid,
+            os.WEXITED | os.WNOHANG | os.WNOWAIT,
+        )
+    except OSError as error:
+        if not isinstance(error, ChildProcessError) and error.errno != errno.ECHILD:
+            raise
+        setattr(process, "_skillpack_process_group_anchor_lost", True)
+        return _ProcessLeaderState.UNANCHORED
+    if status is None:
+        return _ProcessLeaderState.LIVE_ANCHORED
+    return _ProcessLeaderState.EXITED_ANCHORED
 
 
 def _normalize_process_text(value: str | bytes | None) -> str:
@@ -523,23 +560,6 @@ def _normalize_process_text(value: str | bytes | None) -> str:
     if isinstance(value, bytes):
         return value.decode("utf-8", errors="replace")
     return value
-
-
-def _merge_process_text(
-    first: str | bytes | None,
-    second: str | bytes | None,
-) -> str:
-    first_text = _normalize_process_text(first)
-    second_text = _normalize_process_text(second)
-    if not first_text:
-        return second_text
-    if not second_text:
-        return first_text
-    if second_text.startswith(first_text):
-        return second_text
-    if first_text.startswith(second_text):
-        return first_text
-    return f"{first_text}\n{second_text}"
 
 
 def _close_process_pipes(
@@ -589,78 +609,62 @@ def _force_cleanup_process(process: subprocess.Popen[str]) -> None:
 def _stop_process_group(
     process: subprocess.Popen[str],
 ) -> _ProcessStopResult:
-    """Stop one group and collect output without trusting inherited pipe EOF."""
+    """Signal one anchored group before reaping its leader and collect output."""
 
     try:
-        term_confirmed = _signal_process_group(process, signal.SIGTERM)
+        cleanup_confirmed = False
+        diagnostic = ""
+        if (
+            _process_leader_state(process)
+            is _ProcessLeaderState.UNANCHORED
+        ):
+            diagnostic = (
+                "The process-group leader was already reaped; cleanup cannot "
+                "be verified without risking a reused process-group ID."
+            )
+        else:
+            # Signal the whole group before communicate() can reap its leader.
+            # A single uncatchable signal leaves no escape interval between a
+            # nominally graceful signal and the enforced group stop.
+            cleanup_confirmed = _signal_process_group(
+                process,
+                signal.SIGKILL,
+            )
+            if not cleanup_confirmed:
+                diagnostic = "Could not confirm process-group termination."
         try:
             stdout, stderr = process.communicate(
                 timeout=STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS
             )
-        except subprocess.TimeoutExpired as first_timeout:
-            kill_confirmed = _signal_process_group(
-                process,
-                signal.SIGKILL,
+        except subprocess.TimeoutExpired as timeout:
+            stdout = _normalize_process_text(timeout.output)
+            stderr = _normalize_process_text(timeout.stderr)
+            _close_process_pipes(process)
+            reaped = _bounded_process_wait(process)
+            timeout_note = (
+                "Post-kill pipe closure timed out; closed local pipes and "
+                "used a bounded process reap."
             )
-            try:
-                stdout, stderr = process.communicate(
-                    timeout=STATA_PROCESS_CLEANUP_TIMEOUT_SECONDS
+            if not reaped:
+                timeout_note += (
+                    " Could not confirm process reap within the bounded "
+                    "cleanup window."
                 )
-            except subprocess.TimeoutExpired as second_timeout:
-                stdout = _merge_process_text(
-                    first_timeout.output,
-                    second_timeout.output,
-                )
-                stderr = _merge_process_text(
-                    first_timeout.stderr,
-                    second_timeout.stderr,
-                )
-                _close_process_pipes(process)
-                reaped = _bounded_process_wait(process)
-                note = (
-                    "Post-kill pipe closure timed out; closed local pipes and "
-                    "used a bounded process reap."
-                )
-                if not reaped:
-                    note += (
-                        " Could not confirm process reap within the bounded "
-                        "cleanup window."
-                    )
-                return _ProcessStopResult(
-                    stdout=stdout,
-                    stderr=stderr,
-                    diagnostic=note,
-                    cleanup_confirmed=False,
-                )
-            diagnostic = (
-                ""
-                if kill_confirmed
-                else (
-                    "Could not confirm process-group termination after the "
-                    "leader exited."
-                )
+            diagnostic = " ".join(
+                part for part in (diagnostic, timeout_note) if part
             )
             return _ProcessStopResult(
-                stdout=_merge_process_text(first_timeout.output, stdout),
-                stderr=_merge_process_text(first_timeout.stderr, stderr),
+                stdout=stdout,
+                stderr=stderr,
                 diagnostic=diagnostic,
-                cleanup_confirmed=kill_confirmed,
+                cleanup_confirmed=False,
             )
-        else:
-            diagnostic = (
-                ""
-                if term_confirmed
-                else (
-                    "Could not confirm process-group termination after the "
-                    "leader exited."
-                )
-            )
-            return _ProcessStopResult(
-                stdout=_normalize_process_text(stdout),
-                stderr=_normalize_process_text(stderr),
-                diagnostic=diagnostic,
-                cleanup_confirmed=term_confirmed,
-            )
+        return _ProcessStopResult(
+            stdout=_normalize_process_text(stdout),
+            stderr=_normalize_process_text(stderr),
+            diagnostic=diagnostic,
+            cleanup_confirmed=cleanup_confirmed,
+        )
     except BaseException:
         _force_cleanup_process(process)
         raise
@@ -748,6 +752,7 @@ def run_stata_do(
     )
     marker_found = False
     timed_out = False
+    leader_exited = False
     stopped_after_marker = False
     try:
         while True:
@@ -758,8 +763,24 @@ def run_stata_do(
                     for line in log_text.splitlines()
                 )
                 if marker_found:
+                    leader_state = _process_leader_state(process)
+                    if leader_state is _ProcessLeaderState.UNANCHORED:
+                        raise RuntimeError(
+                            "Lost ownership of the Stata process-group leader "
+                            "before cleanup."
+                        )
+                    leader_exited = (
+                        leader_state is _ProcessLeaderState.EXITED_ANCHORED
+                    )
                     break
-            if process.poll() is not None:
+            leader_state = _process_leader_state(process)
+            if leader_state is _ProcessLeaderState.UNANCHORED:
+                raise RuntimeError(
+                    "Lost ownership of the Stata process-group leader before "
+                    "cleanup."
+                )
+            if leader_state is _ProcessLeaderState.EXITED_ANCHORED:
+                leader_exited = True
                 break
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -770,7 +791,7 @@ def run_stata_do(
         _force_cleanup_process(process)
         raise
 
-    stopped_after_marker = marker_found and process.poll() is None
+    stopped_after_marker = marker_found and not leader_exited
     stop_result = _stop_process_group(process)
 
     log_text = read_text(log_path) if log_path.exists() else ""
