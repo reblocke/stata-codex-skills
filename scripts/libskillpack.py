@@ -908,11 +908,12 @@ def _signal_process_group(
         return _ProcessGroupSignalResult(False, False)
     try:
         os.killpg(process.pid, process_signal)
-    except ProcessLookupError:
-        # ESRCH can race with a natural leader exit between the anchored state
-        # observation and killpg().  Keep the waitable leader as the PID
-        # anchor, never retry the signal, and briefly observe whether it reaches
-        # the exited-but-unreaped state that proves the group disappeared.
+    except (ProcessLookupError, PermissionError):
+        # On macOS, ESRCH or EPERM can race with a natural leader exit between
+        # the anchored state observation and killpg().  Keep the waitable leader
+        # as the PID anchor, never retry the signal, and briefly observe whether
+        # it reaches the exited-but-unreaped state.  A still-live leader or lost
+        # ownership remains an explicit cleanup failure.
         deadline = (
             time.monotonic() + PROCESS_SIGNAL_EXIT_RACE_TIMEOUT_SECONDS
         )
@@ -928,15 +929,6 @@ def _signal_process_group(
             leader_state is _ProcessLeaderState.EXITED_ANCHORED,
             False,
         )
-    except PermissionError:
-        # macOS reports EPERM for a group containing only an exited, waitable
-        # leader.  Refresh once; unlike ESRCH, do not wait because a
-        # permission-denied live group must remain an explicit failure.
-        cleanup_confirmed = (
-            _process_leader_state(process)
-            is _ProcessLeaderState.EXITED_ANCHORED
-        )
-        return _ProcessGroupSignalResult(cleanup_confirmed, False)
     return _ProcessGroupSignalResult(
         cleanup_confirmed=True,
         live_leader_signaled=(

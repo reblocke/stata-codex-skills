@@ -596,60 +596,71 @@ class RunStataDoTests(unittest.TestCase):
 
 
 class ProcessGroupSignalTests(unittest.TestCase):
-    def test_esrch_exit_race_confirms_anchored_natural_exit(self) -> None:
-        process = MarkerThenNonexitProcess()
-        states = [
-            libskillpack._ProcessLeaderState.LIVE_ANCHORED,
-            libskillpack._ProcessLeaderState.LIVE_ANCHORED,
-            libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-        ]
+    def test_signal_error_exit_race_confirms_anchored_natural_exit(
+        self,
+    ) -> None:
+        for signal_error in (ProcessLookupError, PermissionError):
+            with self.subTest(signal_error=signal_error.__name__):
+                process = MarkerThenNonexitProcess()
+                states = [
+                    libskillpack._ProcessLeaderState.LIVE_ANCHORED,
+                    libskillpack._ProcessLeaderState.LIVE_ANCHORED,
+                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
+                ]
 
-        with patch.object(
-            libskillpack,
-            "_process_leader_state",
-            side_effect=states,
-        ) as observe, patch.object(
-            libskillpack.os,
-            "killpg",
-            side_effect=ProcessLookupError,
-        ) as killpg, patch.object(
-            libskillpack.time,
-            "sleep",
-        ) as sleep:
-            result = libskillpack._signal_process_group(
-                process,
-                signal.SIGKILL,
-            )
+                with patch.object(
+                    libskillpack,
+                    "_process_leader_state",
+                    side_effect=states,
+                ) as observe, patch.object(
+                    libskillpack.os,
+                    "killpg",
+                    side_effect=signal_error,
+                ) as killpg, patch.object(
+                    libskillpack.time,
+                    "sleep",
+                ) as sleep:
+                    result = libskillpack._signal_process_group(
+                        process,
+                        signal.SIGKILL,
+                    )
 
-        self.assertTrue(result.cleanup_confirmed)
-        self.assertFalse(result.live_leader_signaled)
-        self.assertEqual(3, observe.call_count)
-        killpg.assert_called_once_with(process.pid, signal.SIGKILL)
-        sleep.assert_called_once()
+                self.assertTrue(result.cleanup_confirmed)
+                self.assertFalse(result.live_leader_signaled)
+                self.assertEqual(3, observe.call_count)
+                killpg.assert_called_once_with(
+                    process.pid,
+                    signal.SIGKILL,
+                )
+                sleep.assert_called_once()
 
-    def test_esrch_live_leader_remains_cleanup_failure(self) -> None:
-        process = MarkerThenNonexitProcess()
+    def test_signal_error_live_leader_remains_cleanup_failure(self) -> None:
+        for signal_error in (ProcessLookupError, PermissionError):
+            with self.subTest(signal_error=signal_error.__name__):
+                process = MarkerThenNonexitProcess()
 
-        with patch.object(
-            libskillpack,
-            "_process_leader_state",
-            return_value=libskillpack._ProcessLeaderState.LIVE_ANCHORED,
-        ), patch.object(
-            libskillpack.os,
-            "killpg",
-            side_effect=ProcessLookupError,
-        ), patch.object(
-            libskillpack,
-            "PROCESS_SIGNAL_EXIT_RACE_TIMEOUT_SECONDS",
-            0,
-        ):
-            result = libskillpack._signal_process_group(
-                process,
-                signal.SIGKILL,
-            )
+                with patch.object(
+                    libskillpack,
+                    "_process_leader_state",
+                    return_value=(
+                        libskillpack._ProcessLeaderState.LIVE_ANCHORED
+                    ),
+                ), patch.object(
+                    libskillpack.os,
+                    "killpg",
+                    side_effect=signal_error,
+                ), patch.object(
+                    libskillpack,
+                    "PROCESS_SIGNAL_EXIT_RACE_TIMEOUT_SECONDS",
+                    0,
+                ):
+                    result = libskillpack._signal_process_group(
+                        process,
+                        signal.SIGKILL,
+                    )
 
-        self.assertFalse(result.cleanup_confirmed)
-        self.assertFalse(result.live_leader_signaled)
+                self.assertFalse(result.cleanup_confirmed)
+                self.assertFalse(result.live_leader_signaled)
 
 
 @unittest.skipUnless(
@@ -740,7 +751,12 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
                 "child = os.fork()\n"
                 "if child == 0:\n"
                 "    signal.signal(signal.SIGTERM, signal.SIG_IGN)\n"
-                f"    open({str(child_pid_path)!r}, 'w').write(str(os.getpid()))\n"
+                f"    pid_path = {str(child_pid_path)!r}\n"
+                "    with open(pid_path + '.tmp', 'w') as stream:\n"
+                "        stream.write(str(os.getpid()))\n"
+                "        stream.flush()\n"
+                "        os.fsync(stream.fileno())\n"
+                "    os.replace(pid_path + '.tmp', pid_path)\n"
                 "    os.close(1)\n"
                 "    os.close(2)\n"
                 "    while True:\n"
