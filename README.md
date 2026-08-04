@@ -1,5 +1,7 @@
 # stata-codex-skills
 
+## Overview
+
 `stata-codex-skills` builds and locally publishes three Codex skills for Stata:
 
 - `stata-core` for built-in commands, do-files, data management, estimation,
