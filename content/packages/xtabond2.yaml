@@ -1,9 +1,9 @@
 slug: xtabond2
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 190
-title: "xtabond2: Difference and System GMM for Dynamic Panels"
-trigger: Use when the user asks for xtabond2, Arellano-Bond difference GMM, Blundell-Bond system GMM, dynamic panels, gmmstyle()/ivstyle() instruments, collapsed instruments, Windmeijer-corrected two-step errors, AR tests, or Hansen and difference-in-Hansen diagnostics.
+title: "`xtabond2`: Difference and system GMM for dynamic panels"
+trigger: Use when the user asks for `xtabond2`, Arellano-Bond difference GMM, Blundell-Bond system GMM, dynamic panels, `gmmstyle()`/`ivstyle()` instruments, collapsed instruments, Windmeijer-corrected two-step errors, AR tests, or Hansen and difference-in-Hansen diagnostics.
 aliases:
 - xtabond2
 - Arellano-Bond
@@ -30,13 +30,13 @@ assumptions:
 - Serial-correlation and stationarity restrictions needed for the selected difference/system-GMM moment conditions are plausible.
 gotchas:
 - Instrument proliferation can overfit endogenous variables and weaken Hansen tests; cap lag ranges, collapse instruments, and report instrument count relative to groups.
-- Classify each regressor as endogenous, predetermined, or strictly exogenous before assigning gmm() or iv() instruments.
+- Classify each regressor as endogenous, predetermined, or strictly exogenous before assigning `gmm()` or `iv()` instruments.
 - AR(1) in differences is expected, AR(2) threatens moment validity, and a comfortable Hansen p-value is not proof of a valid design.
 workflows:
-- Preflight xtabond2, ranktest, and ado describe xtabond2; ask before installing or updating packages.
-- xtset the panel, inspect gaps and group counts, fit pooled/within benchmarks, then build a parsimonious difference or system-GMM instrument set.
-- Report one- versus two-step choice, robust/small corrections, instrument count, AR tests, Hansen tests, and sensitivity to lag limits and collapse.
-validation_case: Run a collapsed dynamic-panel model on abdata with a bounded lag range, verify positive observations/groups, and require AR and Hansen diagnostics in an error-free log.
+- Preflight `xtabond2` and `ranktest`, and run `ado describe xtabond2`; ask before installing or updating packages.
+- "`xtset` the panel, inspect gaps and group counts, fit pooled/within benchmarks, then build a parsimonious difference or system-GMM instrument set."
+- Report one- versus two-step choice, `robust`/`small` corrections, instrument count, AR tests, Hansen tests, and sensitivity to lag limits and `collapse`.
+validation_case: Run a collapsed dynamic-panel model on `abdata` with a bounded lag range, verify positive observations/groups, and require AR and Hansen diagnostics in an error-free log.
 validation_mode: stata
 related_refs:
 - panel-data

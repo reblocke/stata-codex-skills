@@ -12,16 +12,16 @@ skills:
     folder: stata-core
     content_dir: core
     route_dir: references
-    heading: Stata Core Skill
+    heading: Stata core skill
     description: Use when tasks involve built-in Stata commands, do-files, data management, estimation, graphics, or Mata.
     summary: This skill covers built-in Stata workflows. Load only the references that match the task intent.
     section_order:
       - Programming and Mata
-      - Data Operations
-      - Statistics and Econometrics
-      - Causal Inference
-      - Output and Workflow
-      - Advanced Methods
+      - Data operations
+      - Statistics and econometrics
+      - Causal inference
+      - Output and workflow
+      - Advanced methods
     validation_modes:
       - stata
     rules:
@@ -31,17 +31,17 @@ skills:
       - Validate merge results, missing-value handling, and stored results before chaining commands.
     critical_gotchas:
       - title: Missing values
-        body: Numeric missing values sort above all real numbers, so guard comparisons with !missing(...).
+        body: Numeric missing values sort above all real numbers, so guard comparisons with `!missing(...)`.
       - title: Comparison syntax
-        body: Use = for assignment and == for comparisons.
+        body: Use `=` for assignment and `==` for comparisons.
       - title: by-groups
-        body: Use bysort unless the data are already sorted on the grouping variables.
+        body: Use `bysort` unless the data are already sorted on the grouping variables.
       - title: Factor variables
-        body: Use i. for categorical variables and c. for continuous interactions.
+        body: Use `i.` for categorical variables and `c.` for continuous interactions.
       - title: Merge diagnostics
-        body: Inspect _merge before dropping it or asserting matched records.
+        body: Inspect `_merge` before dropping it or asserting matched records.
     interface:
-      display_name: Stata Core
+      display_name: Stata core
       short_description: Built-in Stata workflows, commands, data management, and estimation
       default_prompt: Use $stata-core for built-in Stata commands and workflows, loading only the references whose curated routing terms and task intent match the request.
 
@@ -50,24 +50,24 @@ skills:
     folder: stata-packages
     content_dir: packages
     route_dir: packages
-    heading: Stata Community Packages Skill
+    heading: Stata community packages skill
     description: Use when tasks involve community-contributed Stata packages such as reghdfe, estout, rdrobust, synth, or xtabond2.
     summary: This skill covers community-contributed packages. Confirm installation and load only the package references that match the task intent.
     section_order:
-      - Tables and Reporting
-      - Estimation Packages
-      - Graphics and Diagnostics
-      - Data and Workflow Utilities
+      - Tables and reporting
+      - Estimation packages
+      - Graphics and diagnostics
+      - Data and workflow utilities
     validation_modes:
       - stata
     rules:
       - Confirm the package and its dependencies are installed before writing dependent code.
-      - Use an isolated temporary PLUS directory for automated package tests.
+      - Use an isolated temporary `PLUS` directory for automated package tests.
       - Prefer the smallest reproducible example that exercises the required package syntax.
       - Do not install or update packages in a user's normal Stata environment without authorization.
     critical_gotchas: []
     interface:
-      display_name: Stata Packages
+      display_name: Stata packages
       short_description: Community-contributed Stata package workflows and validation
       default_prompt: Use $stata-packages for community-contributed Stata packages, routing by curated terms and task intent and checking installation before use.
 
@@ -76,27 +76,27 @@ skills:
     folder: stata-c-plugins
     content_dir: plugins
     route_dir: references
-    heading: Stata C Plugins Skill
+    heading: Stata C plugins skill
     description: Use when tasks involve building, debugging, packaging, or validating Stata C or C++ plugins.
     summary: This skill covers Stata C and C++ plugin work. Load only the workflow references that match the requested build or validation task.
     section_order:
-      - SDK and Entry Points
-      - C++ Wrapping
-      - Packaging and Distribution
-      - Performance Patterns
-      - Testing and Validation
-      - Translation Workflow
+      - SDK and entry points
+      - C++ wrapping
+      - Packaging and distribution
+      - Performance patterns
+      - Testing and validation
+      - Translation workflow
     validation_modes:
       - compilation
       - manual-review
     rules:
       - Plan the interface and validation path before writing plugin code.
       - Prefer wrapping an existing C or C++ backend over reimplementing an algorithm.
-      - Catch every exception that could escape stata_call and validate return codes in batch mode.
+      - Catch every exception that could escape `stata_call` and validate return codes in batch mode.
       - Treat plugin crashes as high risk because they terminate the Stata session.
     critical_gotchas: []
     interface:
-      display_name: Stata C Plugins
+      display_name: Stata C plugins
       short_description: Build, package, and validate Stata C and C++ plugins
       default_prompt: Use $stata-c-plugins for Stata C or C++ plugin work, routing by curated terms and the requested build, packaging, or validation intent.
 
@@ -106,19 +106,19 @@ routing_boundaries:
       - core/difference-in-differences
       - packages/did
     action: clarify
-    guidance: Ask whether the user wants built-in didregress or a community staggered-adoption estimator such as csdid.
+    guidance: Ask whether the user wants built-in `didregress` or a community staggered-adoption estimator such as `csdid`.
   - term: propensity score matching
     routes:
       - core/matching-methods
       - packages/psmatch2
     action: clarify
-    guidance: Ask whether the user wants built-in teffects matching or the community psmatch2 workflow.
+    guidance: Ask whether the user wants built-in `teffects` matching or the community `psmatch2` workflow.
   - term: regression discontinuity
     routes:
       - core/regression-discontinuity
       - packages/rdrobust
     action: clarify
-    guidance: Ask whether the user wants a transparent built-in manual workflow or rdrobust bias-corrected inference.
+    guidance: Ask whether the user wants a transparent built-in manual workflow or `rdrobust` bias-corrected inference.
   - term: regression table
     routes:
       - core/tables-reporting
@@ -126,14 +126,14 @@ routing_boundaries:
       - packages/estout
       - packages/outreg2
     action: clarify
-    guidance: Ask whether results should use built-in collect or etable, a sequential asdoc report, stored-model esttab, or immediate outreg2 export.
+    guidance: Ask whether results should use built-in `collect` or `etable`, a sequential `asdoc` report, stored-model `esttab`, or immediate `outreg2` export.
   - term: local polynomial regression
     routes:
       - core/nonparametric-methods
       - packages/nprobust
     action: clarify
-    guidance: Ask whether the user wants built-in npregress or community nprobust and lprobust robust bias-corrected inference.
-  - term: accelerate a computational kernel beyond ado code
+    guidance: Ask whether the user wants built-in `npregress` or community `nprobust` and `lprobust` robust bias-corrected inference.
+  - term: accelerate a computational kernel beyond .ado code
     routes:
       - core/mata-programming
       - plugins/performance_patterns

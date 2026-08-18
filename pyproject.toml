@@ -5,6 +5,7 @@ description = "Builds local Codex skills for Stata from structured YAML and loca
 requires-python = "==3.11.*"
 dependencies = [
   "Jinja2>=3.1",
+  "markdown-it-py>=3,<5",
   "PyYAML>=6.0",
 ]
 

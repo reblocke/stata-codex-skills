@@ -2,10 +2,10 @@ slug: advanced-programming
 skill: core
 section: Programming and Mata
 order: 20
-title: Reusable Stata Programs and Returned Results
+title: Reusable Stata programs and returned results
 trigger: >-
-  Use for defining ado-style programs, parsing syntax, respecting if/in and weights, returning r() or e()
-  results, managing program versions, preserving data, and writing estimation-command interfaces.
+  Use for defining `.ado` programs, parsing `syntax`, respecting `if`/`in` qualifiers and weights, returning
+  `r()` or `e()` results, managing program versions, preserving data, and writing estimation-command interfaces.
 commands: [program define, syntax, marksample, return, ereturn, preserve, restore, version]
 aliases: [ado programming, Stata program, rclass, eclass, syntax parser, returned results]
 routing_terms:
@@ -25,17 +25,17 @@ syntax_patterns:
 - ereturn post b V, esample(touse)
 assumptions:
 - The program contract defines accepted arguments, data changes, returned results, and minimum Stata version.
-- if/in qualifiers, weights, missingness, and current estimation state are handled deliberately.
+- "`if`/`in` qualifiers, weights, missingness, and current estimation state are handled deliberately."
 gotchas:
-- A program that ignores marksample can silently estimate on observations excluded by the caller.
-- r() results are overwritten by many commands; copy values before issuing another r-class command.
-- preserve must be paired with restore on every exit path, including handled errors.
-- An eclass command must post conformable coefficient and variance matrices with stable names.
+- A program that ignores `marksample` can silently estimate on observations excluded by the caller.
+- "`r()` results are overwritten by many commands; copy values before issuing another `rclass` command."
+- "`preserve` must be paired with `restore` on every exit path, including handled errors."
+- An `eclass` command must post conformable coefficient and variance matrices with stable names.
 workflows:
 - Write the public syntax and returned-results contract first, then implement a minimal valid path and explicit error checks.
 - Test valid, boundary, and invalid inputs in clean sessions; verify data restoration and returned results after each path.
 validation_case: >-
-  Define a numeric-variable rclass command, parse its argument, return the mean, and verify the result against summarize.
+  Define a numeric-variable `rclass` command, parse its argument, return the mean, and verify the result against `summarize`.
 validation_mode: stata
 related_refs: [programming-basics, mata-programming]
 install_commands: []

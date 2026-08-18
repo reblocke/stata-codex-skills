@@ -1,10 +1,10 @@
 slug: variables-operators
 skill: core
-section: Data Operations
+section: Data operations
 order: 140
-title: Variables, Types, Missing Values, and Operators
+title: Variables, types, missing values, and operators
 trigger: >-
-  Use for generate and replace expressions, numeric and string storage types, missing values, if qualifiers,
+  Use for `generate` and `replace` expressions, numeric and string storage types, missing values, `if` qualifiers,
   logical and arithmetic operators, factor-variable notation, and observation subscripting.
 commands:
 - generate
@@ -38,13 +38,13 @@ assumptions:
 - Each variable's storage type, coding scheme, unit, and missing-value representation are understood.
 - Boolean classifications define how missing and out-of-domain values should be handled.
 gotchas:
-- Numeric missing values sort above every real number, so age > 65 also selects missing age unless guarded.
-- A single equals sign assigns a value; double equals tests equality inside expressions and qualifiers.
-- Float storage can lose decimal precision; use double for identifiers or calculations requiring exact precision.
+- Numeric missing values sort above every real number, so `age > 65` also selects missing age unless guarded.
+- A single equals sign (`=`) assigns a value; double equals (`==`) tests equality inside expressions and qualifiers.
+- "`float` storage can lose decimal precision; use `double` for identifiers or calculations requiring exact precision."
 - Logical expressions involving strings and numeric missing values follow different missing-value conventions.
 workflows:
-- Inspect storage types and missingness, generate into a new variable, tabulate the result including missing, then replace only verified cases.
-- Use explicit parentheses in mixed and/or expressions and assert impossible states after classification.
+- Inspect storage types and missingness, `generate` into a new variable, `tabulate` the result with `missing`, then `replace` only verified cases.
+- Use explicit parentheses in expressions that mix `&` and `|`, and `assert` impossible states after classification.
 validation_case: >-
   Construct real and missing values, classify them with guarded comparisons, and assert that missing observations
   are not inadvertently treated as high values.

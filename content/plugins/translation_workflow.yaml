@@ -1,9 +1,9 @@
 slug: translation_workflow
 skill: plugins
-section: Translation Workflow
+section: Translation workflow
 order: 60
-title: Translating Python or R Statistical Packages into Stata Plugins
-trigger: Use when scoping or auditing a port from Python/R to Stata, inventorying feature parity, choosing ado/Mata versus wrapping a compiled backend, mapping APIs and licenses, pinning source versions, generating reference fixtures, or conducting a final fidelity audit.
+title: Translate Python or R statistical packages into Stata plugins
+trigger: Use when scoping or auditing a port from Python/R to Stata, inventorying feature parity, choosing `.ado`/Mata versus wrapping a compiled backend, mapping APIs and licenses, pinning source versions, generating reference fixtures, or conducting a final fidelity audit.
 aliases:
 - Python to Stata
 - R to Stata
@@ -37,16 +37,16 @@ syntax_patterns:
 - 'extern "C" { STDLL stata_call(int argc, char *argv[]); }'
 - "assert abs(stata_output - pinned_reference) < declared_tolerance"
 assumptions:
-- The exact source package version, license, public API, compiled backend, original tests, and supported platforms are identified before implementation.
+- The project identifies the exact source package version, license, public API, compiled backend, original tests, and supported platforms before implementation.
 - The desired parity boundary is explicit, and every omitted feature has a documented technical or product justification.
 gotchas:
 - Reimplementing an available C/C++ backend adds avoidable numerical and maintenance divergence; wrap the pinned backend when licensing and ABI constraints permit.
 - Source defaults, missing-data behavior, categorical encodings, RNGs, sorting, and zero/one-based indexing are frequent silent parity failures.
 - Matching the source is necessary but not sufficient when the source itself can be wrong; include analytical or simulated ground-truth checks.
-- Vendored dependencies carry license, security, and update obligations that must be recorded with the release.
+- Vendored dependencies carry license, security, and update obligations that the release must record.
 workflows:
 - Inventory every public feature/default and original test, inspect compiled backends and licenses, pin versions, then define a decision-complete architecture and parity matrix.
-- Implement in reviewable slices with reference fixtures, Stata interface tests, compilation/runtime gates, and independent correctness/completeness review at each slice.
+- Implement in reviewable slices with reference fixtures, Stata interface tests, compilation and runtime gates, and independent correctness and completeness review at each slice.
 - Finish with a full feature-parity and provenance audit across supported platforms; publish only documented, passing capabilities.
 validation_case: Produce a reviewed parity matrix mapping every pinned source API/default to a Stata interface and test, demonstrate one end-to-end fixture against source and ground truth, and record all unsupported features and license obligations.
 validation_mode: manual-review

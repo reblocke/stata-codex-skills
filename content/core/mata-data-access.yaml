@@ -2,10 +2,10 @@ slug: mata-data-access
 skill: core
 section: Programming and Mata
 order: 60
-title: Mata Access to Stata Data and Metadata
+title: Mata access to Stata data and metadata
 trigger: >-
   Use for reading Stata observations into Mata views or copies, adding variables, writing results back,
-  respecting if/in samples, and exchanging scalars, macros, and matrices through st_*() functions.
+  respecting `if`/`in` samples, and exchanging scalars, macros, and matrices through `st_*()` functions.
 commands: [st_data(), st_view(), st_store(), st_addvar(), st_matrix(), st_local(), st_numscalar()]
 aliases: [Mata Stata interface, st_data, st_view, st_store, data access]
 routing_terms:
@@ -25,14 +25,14 @@ assumptions:
 - Observation order and sample-selection expressions are stable between reading and writing data.
 - Destination variables have intentional storage types and the returned values have matching dimensions.
 gotchas:
-- st_view() is linked to Stata data; sorting, dropping observations, or changing variables can invalidate assumptions about the view.
-- st_data() copies values and may consume substantial memory, while st_view() avoids copies but requires more lifecycle care.
-- st_store() writes by observation position, so dimension or ordering mistakes can silently attach results to the wrong rows.
+- "`st_view()` is linked to Stata data; sorting, dropping observations, or changing variables can invalidate assumptions about the view."
+- "`st_data()` copies values and may consume substantial memory, while `st_view()` avoids copies but requires more lifecycle care."
+- "`st_store()` writes by observation position, so dimension or ordering mistakes can silently attach results to the wrong rows."
 workflows:
 - Mark the estimation sample in Stata, read only required variables, assert dimensions, compute, and write to a new typed variable.
 - Use views for large read-heavy work, copies when data may change, and verify written results on known observations.
 validation_case: >-
-  Read a known variable into Mata, add a double variable, store a deterministic transformation, and assert row-level alignment.
+  Read a known variable into Mata, add a `double` variable, store a deterministic transformation, and assert row-level alignment.
 validation_mode: stata
 related_refs: [mata-introduction, mata-programming]
 install_commands: []

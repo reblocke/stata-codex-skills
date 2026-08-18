@@ -1,9 +1,9 @@
 slug: ivreg2
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 130
-title: "ivreg2, xtivreg2, and ivreghdfe: Instrumental-Variables Workflows"
-trigger: Use when the user asks for ivreg2, xtivreg2, ivreghdfe, ranktest, weak-instrument diagnostics, first-stage statistics, LIML, GMM, overidentification tests, endogenous-regressor tests, HAC inference, or IV with high-dimensional fixed effects.
+title: "`ivreg2`, `xtivreg2`, and `ivreghdfe`: Instrumental-variables workflows"
+trigger: Use when the user asks for `ivreg2`, `xtivreg2`, `ivreghdfe`, `ranktest`, weak-instrument diagnostics, first-stage statistics, LIML, GMM, overidentification tests, endogenous-regressor tests, HAC inference, or IV with high-dimensional fixed effects.
 aliases:
 - ivreg2
 - xtivreg2
@@ -39,12 +39,12 @@ assumptions:
 gotchas:
 - Instrument relevance does not establish exclusion. State and defend the exclusion restriction before interpreting any IV estimate.
 - Use heteroskedasticity- or cluster-robust weak-identification statistics that correspond to the requested VCE; the conventional first-stage F is not a universal threshold.
-- ivreghdfe has additional ftools/reghdfe dependencies and option differences. Verify installed versions together before debugging syntax.
+- "`ivreghdfe` has additional `ftools` and `reghdfe` dependencies and option differences. Verify installed versions together before debugging syntax."
 workflows:
-- Preflight every requested command with which and ado describe; request authorization before installing or changing the dependency stack.
+- Preflight every requested command with `which` and `ado describe`; request authorization before installing or changing the dependency stack.
 - Inspect the first stage, weak-identification statistic, reduced form, overidentification conditions, and clustering structure before selecting 2SLS, LIML, or GMM.
-- For high-dimensional fixed effects, document absorbed effects and cluster dimensions and compare a smaller ivreg2 specification when feasible.
-validation_case: In auto.dta, construct two excluded instruments, run a robust ivreg2 model with first-stage output, and verify e(N), the coefficient vector, and an error-free log.
+- For high-dimensional fixed effects, document absorbed effects and cluster dimensions and compare a smaller `ivreg2` specification when feasible.
+validation_case: In `auto.dta`, construct two excluded instruments, run a robust `ivreg2` model with first-stage output, and verify `e(N)`, the coefficient vector, and an error-free log.
 validation_mode: stata
 related_refs:
 - linear-regression

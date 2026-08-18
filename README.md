@@ -60,10 +60,17 @@ replaces the prior tree transactionally. `make check` adds generated-drift
 lint, unit tests, deterministic double rendering, and secret/artifact scanning.
 Both commands are deterministic and independent of Stata and package or
 upstream networks. `make all` is a compatibility alias for `make check`.
+The offline gate also applies a dated profile of the
+[Google developer documentation style guide](https://developers.google.com/style)
+in `config/documentation-style.yaml`. Project safety, scientific precision, exact
+Stata syntax, and established interfaces take precedence over general writing
+guidance. Objective CommonMark/project structure checks and Google-style checks
+fail the gate; judgment-based candidates remain advisory and are available with
+`make style-report`.
 Unit-test modules use four isolated workers by default; set `TEST_JOBS=1` for
 serial diagnosis or adjust the per-module `TEST_TIMEOUT` when needed. The
-module phase has a configurable six-minute global deadline
-(`TEST_GLOBAL_TIMEOUT=360`). CI allows 15 minutes for dependency setup, build,
+module phase has a configurable eight-minute global deadline
+(`TEST_GLOBAL_TIMEOUT=480`). CI allows 15 minutes for dependency setup, build,
 bounded cleanup, deterministic rerendering, and final scans around that phase.
 The cooperative process guard covers trusted Python-visible
 `Popen`/fork/`posix_spawn`/multiprocessing paths. It is not an operating-system

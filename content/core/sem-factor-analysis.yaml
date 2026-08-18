@@ -1,8 +1,8 @@
 slug: sem-factor-analysis
 skill: core
-section: Advanced Methods
+section: Advanced methods
 order: 620
-title: Factor Analysis and Structural Equation Models
+title: Factor analysis and structural equation models
 trigger: >-
   Use for exploratory factor analysis, latent-variable measurement models, path models, SEM, generalized SEM,
   identification constraints, standardized estimates, fit statistics, and latent-variable predictions.
@@ -23,7 +23,7 @@ syntax_patterns:
 - estat gof, stats(all)
 assumptions:
 - The latent-variable structure is identified through adequate indicators, scale constraints, and substantively justified paths.
-- Distributional, link-function, and missing-data assumptions match the selected factor, sem, or gsem estimator.
+- Distributional, link-function, and missing-data assumptions match the selected `factor`, `sem`, or `gsem` estimator.
 gotchas:
 - Good global fit does not validate causal direction or rescue a model chosen by modification indices alone.
 - Latent-variable scales depend on marker or variance constraints, which affect coefficient interpretation.

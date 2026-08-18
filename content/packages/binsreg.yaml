@@ -1,9 +1,9 @@
 slug: binsreg
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 110
-title: "binsreg Suite: Binned-Scatter Estimation and Inference"
-trigger: Use when the user asks for binsreg, binslogit, binsprobit, binsqreg, binstest, binspwc, binsregselect, a binscatter replacement, data-driven bin selection, or inference for a binned relationship.
+title: "`binsreg` suite: Binned-scatter estimation and inference"
+trigger: Use when the user asks for `binsreg`, `binslogit`, `binsprobit`, `binsqreg`, `binstest`, `binspwc`, `binsregselect`, a `binscatter` replacement, data-driven bin selection, or inference for a binned relationship.
 aliases:
 - binsreg
 - binslogit
@@ -39,14 +39,14 @@ assumptions:
 - The running variable has enough support for the requested bins and subgroup comparisons.
 - Covariates, outcome family, derivative order, and inferential target are specified before selecting bins or polynomial orders.
 gotchas:
-- Controls belong directly in binsreg; residualizing the outcome and running variable separately is generally not equivalent to the package's covariate-adjusted estimator.
+- Controls belong directly in `binsreg`; residualizing the outcome and running variable separately is generally not equivalent to the package's covariate-adjusted estimator.
 - Bin count, polynomial orders, derivative order, and confidence-band choices answer different questions. Do not tune them only for visual smoothness.
-- Group comparisons require common support and an interpretable by() variable; inspect subgroup sample sizes before relying on binspwc.
+- Group comparisons require common support and an interpretable `by()` variable; inspect subgroup sample sizes before relying on `binspwc`.
 workflows:
-- Preflight with which binsreg and ado describe binsreg, then obtain authorization before installing the pinned source in the active environment.
-- Plot the raw relationship, select bins or assess specification with binsregselect/binstest, then fit the final curve and uncertainty display.
+- Preflight with `which binsreg` and `ado describe binsreg`, then obtain authorization before installing the pinned source in the active environment.
+- Plot the raw relationship, select bins or assess specification with `binsregselect` or `binstest`, then fit the final curve and uncertainty display.
 - Keep estimation options and graph styling separate so a visual revision cannot silently alter the estimand.
-validation_case: Run binsreg on price versus mpg in auto.dta using the immutable package source, verify the command returns without r() errors, and retain no graph or data artifact outside the temporary run directory.
+validation_case: Run `binsreg` on `price` versus `mpg` in `auto.dta` using the immutable package source, verify the command returns without `r()` errors, and retain no graph or data artifact outside the temporary run directory.
 validation_mode: stata
 related_refs:
 - nonparametric-methods

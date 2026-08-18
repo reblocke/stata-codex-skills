@@ -1,9 +1,9 @@
 slug: rdrobust
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 160
-title: "rdrobust Suite: Regression-Discontinuity Estimation and Diagnostics"
-trigger: Use when the user asks for rdrobust, rdbwselect, rdplot, rddensity, the rdlocrand package and its rdrandinf or rdwinselect commands, rdmulti, sharp or fuzzy regression discontinuity, robust bias-corrected inference, bandwidth selection, manipulation testing, or multi-cutoff RD.
+title: "`rdrobust` suite: Regression-discontinuity estimation and diagnostics"
+trigger: Use when the user asks for `rdrobust`, `rdbwselect`, `rdplot`, `rddensity`, the `rdlocrand` package and its `rdrandinf` or `rdwinselect` commands, `rdmulti`, sharp or fuzzy regression discontinuity, robust bias-corrected inference, bandwidth selection, manipulation testing, or multi-cutoff RD.
 aliases:
 - rdrobust
 - rdbwselect
@@ -62,10 +62,10 @@ gotchas:
 - Report the cutoff, polynomial orders, kernel, bandwidth selector, effective observations on each side, and robust bias-corrected estimate.
 - Covariates should improve precision rather than define treatment assignment; test predetermined covariate balance without selecting the final specification by significance.
 workflows:
-- Preflight the requested suite commands and ado describe rdrobust; ask before installing or updating packages in the user's environment.
+- Preflight the requested suite commands and `ado describe rdrobust`; ask before installing or updating packages in the user's environment.
 - Validate score units and cutoff, plot the outcome, test density continuity and covariate balance, select bandwidths, then estimate the prespecified sharp or fuzzy effect.
 - Compare bandwidths and polynomial orders as sensitivity checks while avoiding high-order global polynomials.
-validation_case: Generate a seeded score with a known discontinuity at zero, run rdrobust, verify a finite bias-corrected estimate and positive effective sample on both sides, and require an error-free log.
+validation_case: Generate a seeded score with a known discontinuity at zero, run `rdrobust`, verify a finite bias-corrected estimate and positive effective sample on both sides, and require an error-free log.
 validation_mode: stata
 related_refs:
 - regression-discontinuity
