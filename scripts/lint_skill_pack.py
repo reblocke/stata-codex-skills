@@ -4,6 +4,8 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import date
+from html import unescape
+from html.entities import html5 as HTML5_ENTITIES
 from html.parser import HTMLParser
 from pathlib import Path
 import argparse
@@ -19,6 +21,10 @@ from markdown_it.token import Token
 from runtime_guard import require_supported_runtime
 
 require_supported_runtime()
+
+from jinja2 import Environment, TemplateSyntaxError
+from markdown_it.helpers.parse_link_label import parseLinkLabel
+from markdown_it.rules_inline.state_inline import StateInline
 
 from libskillpack import (
     BUILD_ROOT,
@@ -82,7 +88,7 @@ NONEMPTY_LIST_FIELDS = {
     "workflows",
 }
 VALIDATION_MODES = {"stata", "compilation", "manual-review"}
-STYLE_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
+STYLE_WORD_RE = re.compile(r"[^\W\d_][\w+.-]*", re.UNICODE)
 DEFAULT_STYLE_ALLOWED_CAPITALIZED_WORDS = {
     "C",
     "C++",
@@ -118,13 +124,451 @@ STYLE_REQUIRED_PROTECTED_CONTEXTS = {
     "exact-technical-identifiers",
 }
 STYLE_HTML_LITERAL_TAGS = {"code", "kbd", "pre", "script", "style"}
+STYLE_HTML_BREAK_TAGS = {
+    "address",
+    "article",
+    "aside",
+    "blockquote",
+    "br",
+    "caption",
+    "colgroup",
+    "dd",
+    "details",
+    "div",
+    "dt",
+    "fieldset",
+    "figcaption",
+    "figure",
+    "footer",
+    "form",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "header",
+    "hgroup",
+    "hr",
+    "li",
+    "legend",
+    "main",
+    "menu",
+    "nav",
+    "ol",
+    "p",
+    "section",
+    "summary",
+    "table",
+    "tbody",
+    "td",
+    "tfoot",
+    "th",
+    "thead",
+    "tr",
+    "ul",
+}
 STYLE_ENTITY_RE = re.compile(
-    r"&(?:#(?:[0-9]+|[xX][0-9A-Fa-f]+)|[A-Za-z][A-Za-z0-9]+);"
+    r"&#(?:[xX][0-9A-Fa-f]{1,6}|[0-9]{1,7});"
+    r"|&(?P<named>[A-Za-z][A-Za-z0-9]{1,31});"
 )
+STYLE_SOURCE_START = "style_source_start"
+STYLE_SOURCE_END = "style_source_end"
+STYLE_PROTECTED_BOUNDARY = " ⟂ "
+STYLE_JINJA_PAIRS = (
+    ("{#", "#}", "style_jinja_control"),
+    ("{%", "%}", "style_jinja_control"),
+    ("{{", "}}", "style_jinja_value"),
+)
+STYLE_JINJA_OPENER_RE = re.compile(r"{[#%{]")
+
+
 STYLE_MARKDOWN_PARSER = MarkdownIt("commonmark", {"html": True}).enable("table")
-STYLE_RAW_AMPERSAND_RE = re.compile(
-    r"&(?!#(?:[0-9]+|[xX][0-9A-Fa-f]+);|[A-Za-z][A-Za-z0-9]+;)"
-)
+STYLE_JINJA_ENVIRONMENT = Environment()
+
+
+def _install_style_jinja_rules(parser: MarkdownIt) -> None:
+    """Protect balanced Jinja spans before CommonMark interprets their contents."""
+
+    literal_pattern = re.compile(
+        r"<\s*(?P<closing>/)?\s*"
+        r"(?P<tag>code|kbd|pre|script|style)\b"
+        r"(?P<body>(?:[^>\"']+|\"[^\"]*\"|'[^']*')*)>\s*",
+        re.IGNORECASE,
+    )
+
+    def inside_html_literal(state: object) -> bool:
+        token_count, stack = getattr(
+            state,
+            "_style_html_literal_cache",
+            (0, None),
+        )
+        if stack is None or token_count > len(state.tokens):
+            token_count = 0
+            stack = _StyleLiteralStack()
+        for token in state.tokens[token_count:]:
+            if token.type != "html_inline":
+                continue
+            match = literal_pattern.fullmatch(token.content)
+            if match is None:
+                continue
+            tag = match.group("tag").casefold()
+            if match.group("closing"):
+                stack.close(tag)
+            elif not match.group("body").rstrip().endswith("/"):
+                stack.push(tag)
+        state._style_html_literal_cache = (len(state.tokens), stack)
+        return bool(stack)
+
+    def protected_inline_spans(value: str) -> tuple[tuple[int, int], ...]:
+        tokens: list[Token] = []
+        STYLE_MARKDOWN_PROBE_PARSER.inline.parse(
+            value,
+            STYLE_MARKDOWN_PROBE_PARSER,
+            {},
+            tokens,
+        )
+        spans: list[tuple[int, int]] = []
+        literal_stack = _StyleLiteralStack()
+        for token in tokens:
+            span_start = token.meta.get(STYLE_SOURCE_START)
+            span_end = token.meta.get(STYLE_SOURCE_END)
+            if (
+                isinstance(span_start, int)
+                and isinstance(span_end, int)
+                and span_end >= span_start
+            ):
+                spans.extend(
+                    _relative_inline_protected_spans(
+                        value,
+                        [token],
+                    )
+                )
+            if token.type != "html_inline":
+                continue
+            match = literal_pattern.fullmatch(token.content)
+            if match is None:
+                continue
+            absolute_start = span_start if isinstance(span_start, int) else 0
+            absolute_end = (
+                span_end
+                if isinstance(span_end, int)
+                else len(token.content)
+            )
+            tag = match.group("tag").casefold()
+            if match.group("closing"):
+                opening = literal_stack.close(tag)
+                if opening is not None:
+                    spans.append((opening, absolute_end))
+            elif not match.group("body").rstrip().endswith("/"):
+                literal_stack.push(tag, absolute_start)
+        spans.extend(
+            (opening, len(value))
+            for _, opening in literal_stack.openings()
+        )
+
+        merged: list[list[int]] = []
+        for begin, end in sorted(spans):
+            if merged and begin <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], end)
+            else:
+                merged.append([begin, end])
+        return tuple((begin, end) for begin, end in merged)
+
+    def find_closer(
+        value: str,
+        start: int,
+        closer: str,
+        protected: tuple[tuple[int, int], ...],
+    ) -> int:
+        position = start
+        low = 0
+        high = len(protected)
+        while low < high:
+            middle = (low + high) // 2
+            if protected[middle][1] <= start:
+                low = middle + 1
+            else:
+                high = middle
+        span_index = low
+        quote = ""
+        while position < len(value):
+            character = value[position]
+            if closer != "#}" and quote:
+                if character == "\\":
+                    position += 2
+                    continue
+                if character == quote:
+                    quote = ""
+                    position += 1
+                    while (
+                        span_index < len(protected)
+                        and protected[span_index][0] < position
+                    ):
+                        span_index += 1
+                    continue
+                position += 1
+                continue
+            while (
+                span_index < len(protected)
+                and protected[span_index][1] <= position
+            ):
+                span_index += 1
+            if (
+                span_index < len(protected)
+                and protected[span_index][0] <= position
+            ):
+                position = protected[span_index][1]
+                continue
+            if closer != "#}" and character in {'"', "'"}:
+                quote = character
+                position += 1
+                continue
+            if value.startswith(closer, position):
+                return position
+            position += 1
+        return -1
+
+    def inline_rule(state: object, silent: bool) -> bool:
+        start = state.pos
+        if inside_html_literal(state):
+            return False
+        missing_closers = getattr(
+            state,
+            "_style_jinja_missing_closers",
+            set(),
+        )
+        for opener, closer, token_type in STYLE_JINJA_PAIRS:
+            if not state.src.startswith(opener, start):
+                continue
+            if closer in missing_closers:
+                return False
+            closing = find_closer(
+                state.src,
+                start + len(opener),
+                closer,
+                (),
+            )
+            protected_markers = (
+                closing >= 0
+                and any(
+                    marker in state.src[start:closing]
+                    for marker in ("[", "<", chr(96))
+                )
+            )
+            if closing < 0 or protected_markers:
+                protected = getattr(
+                    state,
+                    "_style_jinja_protected_spans",
+                    None,
+                )
+                if protected is None:
+                    protected = protected_inline_spans(state.src)
+                    state._style_jinja_protected_spans = protected
+                closing = find_closer(
+                    state.src,
+                    start + len(opener),
+                    closer,
+                    protected,
+                )
+            if closing < 0:
+                missing_closers.add(closer)
+                state._style_jinja_missing_closers = missing_closers
+                return False
+            end = closing + len(closer)
+            if not silent:
+                token = state.push(token_type, "", 0)
+                token.content = state.src[start:end]
+                token.meta[STYLE_SOURCE_START] = start
+                token.meta[STYLE_SOURCE_END] = end
+            state.pos = end
+            return True
+        return False
+
+    def unprotected_opener(
+        state: object,
+        start_line: int,
+    ) -> tuple[int, str, str] | None:
+        line_start = state.bMarks[start_line] + state.tShift[start_line]
+        line_end = state.eMarks[start_line]
+        value = state.src[line_start:line_end]
+        if "{" not in value:
+            return None
+
+        protected = protected_inline_spans(value)
+        for opener, closer, _ in STYLE_JINJA_PAIRS:
+            if not value.startswith(opener):
+                continue
+            closing = find_closer(
+                value,
+                len(opener),
+                closer,
+                protected,
+            )
+            if closing >= 0:
+                return None
+            return line_start, opener, closer
+
+        span_index = 0
+        for match in re.finditer(r"{[#%{]", value):
+            position = match.start()
+            backslashes = 0
+            cursor = position - 1
+            while cursor >= 0 and value[cursor] == "\\":
+                backslashes += 1
+                cursor -= 1
+            if backslashes % 2:
+                continue
+            while (
+                span_index < len(protected)
+                and protected[span_index][1] <= position
+            ):
+                span_index += 1
+            if (
+                span_index < len(protected)
+                and protected[span_index][0] <= position
+            ):
+                continue
+            for opener, closer, _ in STYLE_JINJA_PAIRS:
+                if value.startswith(opener, position):
+                    if find_closer(
+                        value,
+                        position + len(opener),
+                        closer,
+                        protected,
+                    ) >= 0:
+                        break
+                    return line_start + position, opener, closer
+        return None
+
+    def block_rule(
+        state: object,
+        start_line: int,
+        end_line: int,
+        silent: bool,
+    ) -> bool:
+        if state.is_code_block(start_line):
+            return False
+        start = state.bMarks[start_line] + state.tShift[start_line]
+        opener_data = unprotected_opener(state, start_line)
+        if opener_data is None:
+            return False
+        opening, opener, closer = opener_data
+        missing_closers = getattr(
+            state,
+            "_style_jinja_block_missing_closers",
+            set(),
+        )
+        cache_key = (closer, end_line)
+        if cache_key in missing_closers:
+            return False
+        limit = state.eMarks[end_line - 1]
+        protected_source = getattr(
+            state,
+            "_style_jinja_document_protected_source",
+            None,
+        )
+        if protected_source is None:
+            protected_source = _jinja_lexer_source(state.src)
+            state._style_jinja_document_protected_source = protected_source
+        closing = find_closer(
+            protected_source,
+            opening + len(opener),
+            closer,
+            (),
+        )
+        if closing < 0 or closing >= limit:
+            missing_closers.add(cache_key)
+            state._style_jinja_block_missing_closers = missing_closers
+            return False
+        for next_line in range(start_line, end_line):
+            if closing > state.eMarks[next_line]:
+                continue
+            closing_end = closing + len(closer)
+            line_end = state.eMarks[next_line]
+            if silent:
+                return True
+            state.line = next_line + 1
+            hidden_block = (
+                opening == start
+                and not state.src[closing_end:line_end].strip()
+            )
+            token = state.push(
+                "style_jinja_block" if hidden_block else "inline",
+                "",
+                0,
+            )
+            token.map = [start_line, next_line + 1]
+            token.content = state.getLines(
+                start_line,
+                next_line + 1,
+                state.blkIndent,
+                True,
+            )
+            if token.type == "inline":
+                token.children = []
+            return True
+        return False
+
+    parser.inline.ruler.before("text", "style_jinja", inline_rule)
+    parser.block.ruler.before("lheading", "style_jinja", block_rule)
+
+
+def _install_style_source_spans(parser: MarkdownIt) -> None:
+    """Annotate protected inline tokens with markdown-it source spans."""
+
+    ruler = parser.inline.ruler
+    active_rules = dict(
+        zip(ruler.get_active_rules(), ruler.getRules(""), strict=True)
+    )
+    target_types = {
+        "backticks": {"code_inline"},
+        "html_inline": {"html_inline"},
+        "image": {"image"},
+        "link": {"link_open", "link_close"},
+        "autolink": {"link_open", "link_close"},
+    }
+    missing = sorted(set(target_types) - set(active_rules))
+    if missing:
+        raise RuntimeError(
+            "documentation parser lacks required inline rules: "
+            + ", ".join(missing)
+        )
+
+    for rule_name, token_types in target_types.items():
+        original = active_rules[rule_name]
+
+        def wrapped(
+            state: object,
+            silent: bool,
+            *,
+            _original: object = original,
+            _token_types: set[str] = token_types,
+        ) -> bool:
+            start = state.pos
+            token_count = len(state.tokens)
+            matched = _original(state, silent)
+            if matched and not silent:
+                for token in state.tokens[token_count:]:
+                    if (
+                        token.type in _token_types
+                        and STYLE_SOURCE_START not in token.meta
+                    ):
+                        token.meta[STYLE_SOURCE_START] = start
+                        token.meta[STYLE_SOURCE_END] = state.pos
+            return matched
+
+        ruler.at(rule_name, wrapped)
+
+
+STYLE_MARKDOWN_PROBE_PARSER = MarkdownIt(
+    "commonmark",
+    {"html": True},
+).enable("table")
+_install_style_source_spans(STYLE_MARKDOWN_PROBE_PARSER)
+_install_style_jinja_rules(STYLE_MARKDOWN_PARSER)
+_install_style_source_spans(STYLE_MARKDOWN_PARSER)
+STYLE_RAW_AMPERSAND_RE = re.compile(r"&")
 STYLE_PASSIVE_RE = re.compile(
     r"\b(?:am|are|be|been|being|is|was|were)\s+"
     r"(?:[A-Za-z]+ly\s+)?[A-Za-z]+(?:ed|en)\b",
@@ -1010,9 +1454,13 @@ class StyleMarkdownLine:
     number: int
     raw: str
     visible: str
-    ampersand_visible: str = ""
+    accessible: str = ""
+    heading_text: str = ""
+    prose_fragments: tuple[tuple[int, str], ...] = ()
+    ampersand_fragments: tuple[tuple[int, str], ...] = ()
     links: tuple[StyleMarkdownLink, ...] = ()
     missing_html_alt_offsets: tuple[int, ...] = ()
+    unsupported_html_heading_offsets: tuple[int, ...] = ()
     heading_level: int | None = None
     heading_has_content: bool = False
     protected_heading_prefix: bool = False
@@ -1027,11 +1475,69 @@ class StyleMarkdownLink:
     line_offset: int
 
 
+@dataclass(frozen=True)
+class StyleAdvisoryReport:
+    """A bounded advisory display with its untruncated candidate count."""
+
+    items: tuple[str, ...]
+    total_count: int
+
+
 @dataclass
 class _StyleHTMLAnchor:
     parts: list[str]
     opening_line_offset: int
     text_line_offset: int | None = None
+
+
+@dataclass
+class _StyleMarkdownAnchor:
+    parts: list[str]
+    suppressed: bool
+    opening_line_offset: int
+    text_line_offset: int | None = None
+
+
+class _StyleLiteralStack:
+    """Track nested literal HTML tags with amortized constant-time closes."""
+
+    def __init__(self) -> None:
+        self._items: list[tuple[str, int, int]] = []
+        self._last: dict[str, int] = {}
+
+    def __bool__(self) -> bool:
+        return bool(self._items)
+
+    def contains(self, tag: str) -> bool:
+        return tag in self._last
+
+    def push(self, tag: str, source_offset: int = 0) -> None:
+        previous = self._last.get(tag, -1)
+        self._items.append((tag, source_offset, previous))
+        self._last[tag] = len(self._items) - 1
+
+    def close(self, tag: str) -> int | None:
+        matching = self._last.get(tag)
+        if matching is None:
+            return None
+        source_offset = self._items[matching][1]
+        for index in range(len(self._items) - 1, matching - 1, -1):
+            popped_tag, _, previous = self._items[index]
+            if self._last.get(popped_tag) != index:
+                continue
+            if previous >= 0:
+                self._last[popped_tag] = previous
+            else:
+                self._last.pop(popped_tag, None)
+        del self._items[matching:]
+        return source_offset
+
+    def clear(self) -> None:
+        self._items.clear()
+        self._last.clear()
+
+    def openings(self) -> tuple[tuple[str, int], ...]:
+        return tuple((tag, source_offset) for tag, source_offset, _ in self._items)
 
 
 def load_documentation_style_profile() -> dict:
@@ -1231,6 +1737,22 @@ def sentence_case_error(
 ) -> str | None:
     """Return the first word with unexpected heading-style casing."""
 
+    violation = sentence_case_violation(
+        value,
+        proper_names=proper_names,
+        lowercase_initials=lowercase_initials,
+    )
+    return violation[0] if violation is not None else None
+
+
+def sentence_case_violation(
+    value: str,
+    *,
+    proper_names: set[str] | None = None,
+    lowercase_initials: set[str] | None = None,
+) -> tuple[str, int] | None:
+    """Return the first unexpected word and its character offset."""
+
     allowed_names = (
         DEFAULT_STYLE_ALLOWED_CAPITALIZED_WORDS
         if proper_names is None
@@ -1244,45 +1766,180 @@ def sentence_case_error(
         if not normalized_name:
             continue
         for proper_match in re.finditer(
-            rf"(?<![A-Za-z0-9+.-]){re.escape(normalized_name)}"
-            rf"(?![A-Za-z0-9+.-])",
+            rf"(?<![\w+.-]){re.escape(normalized_name)}"
+            rf"(?![\w+.-])",
             normalized_value,
         ):
             proper_spans.append(proper_match.span())
 
+    merged_proper_spans: list[list[int]] = []
+    for start, end in sorted(proper_spans):
+        if merged_proper_spans and start <= merged_proper_spans[-1][1]:
+            merged_proper_spans[-1][1] = max(
+                merged_proper_spans[-1][1],
+                end,
+            )
+        else:
+            merged_proper_spans.append([start, end])
+
     previous_end = 0
+    proper_span_index = 0
     for index, match in enumerate(STYLE_WORD_RE.finditer(normalized_value)):
         word = match.group(0)
-        reviewed_name = any(
-            start <= match.start() and match.end() <= end
-            for start, end in proper_spans
+        while (
+            proper_span_index < len(merged_proper_spans)
+            and merged_proper_spans[proper_span_index][1] <= match.start()
+        ):
+            proper_span_index += 1
+        reviewed_name = (
+            proper_span_index < len(merged_proper_spans)
+            and merged_proper_spans[proper_span_index][0] <= match.start()
+            and match.end() <= merged_proper_spans[proper_span_index][1]
         )
         if not reviewed_name and any(
             segment and segment[0].isupper()
             for segment in word.split("-")[1:]
         ):
-            return word
+            return word, match.start()
         initial_position = index == 0 or ":" in normalized_value[
             previous_end : match.start()
         ]
         if not reviewed_name and initial_position:
             if word[0].islower() and word.casefold() not in allowed_initials:
-                return word
+                return word, match.start()
             letters = [character for character in word if character.isalpha()]
             if len(letters) > 1 and all(character.isupper() for character in letters):
-                return word
+                return word, match.start()
         elif not reviewed_name and word[0].isupper() and not any(
             character.isdigit() for character in word
         ):
-            return word
+            return word, match.start()
         previous_end = match.end()
     return None
 
 
-def _mask_jinja(value: str) -> str:
-    """Mask Jinja expressions and control blocks inside visible prose."""
+def _jinja_source_variants(
+    value: str,
+) -> tuple[str, str, str]:
+    """Return visible/accessibility variants from literal Jinja source."""
 
-    return re.sub(r"{{.*?}}|{%.*?%}|{#.*?#}", " ", value, flags=re.DOTALL)
+    visible: list[str] = []
+    accessible: list[str] = []
+    prose: list[str] = []
+    position = 0
+    while position < len(value):
+        opener_match = STYLE_JINJA_OPENER_RE.search(value, position)
+        if opener_match is None:
+            visible.append(value[position:])
+            accessible.append(value[position:])
+            prose.append(value[position:])
+            break
+        opening = opener_match.start()
+        visible.append(value[position:opening])
+        accessible.append(value[position:opening])
+        prose.append(value[position:opening])
+        opener_data = next(
+            (
+                (opener, closer, token_type)
+                for opener, closer, token_type in STYLE_JINJA_PAIRS
+                if value.startswith(opener, opening)
+            ),
+            None,
+        )
+        if opener_data is None:
+            visible.append(value[opening])
+            accessible.append(value[opening])
+            prose.append(value[opening])
+            position = opening + 1
+            continue
+        opener, closer, token_type = opener_data
+        cursor = opening + len(opener)
+        quote = ""
+        while cursor < len(value):
+            character = value[cursor]
+            if closer != "#}" and quote:
+                if character == "\\":
+                    cursor += 2
+                    continue
+                if character == quote:
+                    quote = ""
+                cursor += 1
+                continue
+            if closer != "#}" and character in {'"', "'"}:
+                quote = character
+                cursor += 1
+                continue
+            if value.startswith(closer, cursor):
+                break
+            cursor += 1
+        if cursor >= len(value):
+            visible.append(value[opening:])
+            accessible.append(value[opening:])
+            prose.append(value[opening:])
+            break
+        end = cursor + len(closer)
+        source = value[opening:end]
+        line_mask = "".join(
+            character if character in "\r\n" else " "
+            for character in source
+        )
+        visible.append(line_mask)
+        if token_type == "style_jinja_value":
+            accessible.append(
+                " dynamic-value "
+                + "".join(
+                    character
+                    for character in source
+                    if character in "\r\n"
+                )
+            )
+            prose.append(
+                STYLE_PROTECTED_BOUNDARY
+                + "".join(
+                    character
+                    for character in source
+                    if character in "\r\n"
+                )
+            )
+        else:
+            accessible.append(line_mask)
+            prose.append(line_mask)
+        position = end
+    return "".join(visible), "".join(accessible), "".join(prose)
+
+
+def _mask_jinja(value: str) -> str:
+    """Mask literal Jinja expressions and controls in visible source."""
+
+    return _jinja_source_variants(value)[0]
+
+
+def _jinja_accessible_text(value: str) -> str:
+    """Retain value placeholders but discard Jinja control and comments."""
+
+    return _jinja_source_variants(value)[1]
+
+
+def _jinja_prose_text(value: str) -> str:
+    """Replace Jinja values with a boundary and hide controls."""
+
+    return _jinja_source_variants(value)[2]
+
+
+def _single_source_line(value: str) -> str:
+    """Keep entity-decoded line controls on their original source line."""
+
+    return re.sub(r"[\r\n]+", " ", value)
+
+
+def _has_visible_text(value: str) -> bool:
+    """Return whether rendered text contains a visible non-space character."""
+
+    return any(
+        not character.isspace()
+        and unicodedata.category(character)[0] not in {"C", "M"}
+        for character in value
+    )
 
 
 def _mask_frontmatter(text: str, *, mask_entities: bool) -> str:
@@ -1303,21 +1960,122 @@ def _mask_frontmatter(text: str, *, mask_entities: bool) -> str:
     masked = "".join(lines)
     if not mask_entities:
         return masked
-    return STYLE_ENTITY_RE.sub(lambda match: "0" * len(match.group(0)), masked)
+
+    def replace_valid_entity(match: re.Match[str]) -> str:
+        name = match.group("named")
+        if name is not None and f"{name};" not in HTML5_ENTITIES:
+            return match.group(0)
+        return "x" * len(match.group(0))
+
+    return STYLE_ENTITY_RE.sub(replace_valid_entity, masked)
+
+
+def _html_attribute_source(
+    start_tag: str,
+    target: str,
+) -> tuple[str | None, int]:
+    """Return a raw HTML attribute value and its physical line offset."""
+
+    cursor = 1
+    limit = len(start_tag)
+    while cursor < limit and start_tag[cursor].isspace():
+        cursor += 1
+    while (
+        cursor < limit
+        and not start_tag[cursor].isspace()
+        and start_tag[cursor] not in "/>"
+    ):
+        cursor += 1
+    while cursor < limit:
+        while cursor < limit and start_tag[cursor].isspace():
+            cursor += 1
+        if cursor >= limit or start_tag[cursor] in "/>":
+            break
+        name_start = cursor
+        while (
+            cursor < limit
+            and not start_tag[cursor].isspace()
+            and start_tag[cursor] not in "=/>"
+        ):
+            cursor += 1
+        name = start_tag[name_start:cursor].casefold()
+        while cursor < limit and start_tag[cursor].isspace():
+            cursor += 1
+        value_start = name_start
+        value_end = cursor
+        has_value = False
+        if cursor < limit and start_tag[cursor] == "=":
+            has_value = True
+            cursor += 1
+            while cursor < limit and start_tag[cursor].isspace():
+                cursor += 1
+            value_start = cursor
+            if cursor < limit and start_tag[cursor] in {'"', "'"}:
+                quote = start_tag[cursor]
+                cursor += 1
+                value_start = cursor
+                while cursor < limit and start_tag[cursor] != quote:
+                    cursor += 1
+                value_end = cursor
+                cursor += cursor < limit
+            else:
+                while (
+                    cursor < limit
+                    and not start_tag[cursor].isspace()
+                    and start_tag[cursor] != ">"
+                ):
+                    cursor += 1
+                value_end = cursor
+        if name == target.casefold():
+            return (
+                start_tag[value_start:value_end] if has_value else "",
+                start_tag[:value_start].count("\n"),
+            )
+    return None, 0
+
+
+def _decode_valid_html_references(value: str) -> str:
+    """Decode exact CommonMark HTML references without legacy-prefix recovery."""
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group("named")
+        if name is not None and f"{name};" not in HTML5_ENTITIES:
+            return match.group(0)
+        return unescape(match.group(0))
+
+    return STYLE_ENTITY_RE.sub(replace, value)
 
 
 class _StyleHTMLScanner(HTMLParser):
     """Expose HTML text while protecting tags, attributes, and literal code."""
 
     def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
+        super().__init__(convert_charrefs=False)
         self.visible: list[str] = []
         self.accessible: list[str] = []
+        self.accessible_fragments: list[tuple[int, str]] = []
+        self.prose_fragments: list[tuple[int, str]] = []
         self.links: list[StyleMarkdownLink] = []
         self.missing_alt_offsets: list[int] = []
-        self._literal_tags: list[str] = []
+        self.html_heading_offsets: list[int] = []
+        self._literal_tags = _StyleLiteralStack()
         self._anchors: list[_StyleHTMLAnchor] = []
         self._suppress_data = False
+        self._jinja_closer = ""
+        self._jinja_type = ""
+        self._jinja_quote = ""
+        self._jinja_buffer_parts: list[str] = []
+        self._jinja_opening_line = 0
+        self._jinja_literal_tags = _StyleLiteralStack()
+
+    def parse_html_declaration(self, index: int) -> int:
+        """Treat malformed SGML declarations as text instead of crashing."""
+
+        try:
+            return super().parse_html_declaration(index)
+        except AssertionError:
+            self.handle_data(self.rawdata[index : index + 1])
+            return index + 1
 
     @property
     def in_literal(self) -> bool:
@@ -1325,42 +2083,214 @@ class _StyleHTMLScanner(HTMLParser):
 
     @property
     def in_hidden_literal(self) -> bool:
-        return any(tag in {"script", "style"} for tag in self._literal_tags)
+        return self._literal_tags.contains("script") or self._literal_tags.contains(
+            "style"
+        )
 
-    def add_accessible(self, value: str) -> None:
+    @property
+    def suppresses_nested_markdown(self) -> bool:
+        return self.in_hidden_literal or self._literal_tags.contains("pre")
+
+    def add_accessible(self, value: str, *, line_offset: int = 0) -> None:
         if self.in_hidden_literal:
             return
         self.accessible.append(value)
+        first_visible = re.search(r"\S", value)
+        leading_lines = (
+            value[: first_visible.start()].count("\n")
+            if first_visible is not None
+            else 0
+        )
+        accessible_line = (
+            self.getpos()[0] - 1 + line_offset + leading_lines
+        )
+        if value:
+            self.accessible_fragments.append((accessible_line, value))
         for anchor in self._anchors:
             anchor.parts.append(value)
             if anchor.text_line_offset is None and value.strip():
-                first_visible = re.search(r"\S", value)
-                leading_lines = (
-                    value[: first_visible.start()].count("\n")
-                    if first_visible is not None
-                    else 0
-                )
-                anchor.text_line_offset = self.getpos()[0] - 1 + leading_lines
+                anchor.text_line_offset = accessible_line
 
-    def add_text(self, value: str, *, accessible_value: str | None = None) -> None:
-        self.add_accessible(value if accessible_value is None else accessible_value)
+    def add_text(
+        self,
+        value: str,
+        *,
+        accessible_value: str | None = None,
+        line_offset: int = 0,
+    ) -> None:
+        self.add_accessible(
+            value if accessible_value is None else accessible_value,
+            line_offset=line_offset,
+        )
         if not self.in_literal:
             self.visible.append(value)
+            base_offset = self.getpos()[0] - 1 + line_offset
+            self.prose_fragments.extend(
+                (base_offset + offset, part)
+                for offset, part in enumerate(value.split("\n"))
+                if part
+            )
+        elif not self.in_hidden_literal and value:
+            self.prose_fragments.append(
+                (
+                    self.getpos()[0] - 1 + line_offset,
+                    STYLE_PROTECTED_BOUNDARY,
+                )
+            )
+
+    def add_protected_boundary(self, *, line_offset: int = 0) -> None:
+        """Keep reader-visible protected text from collapsing prose phrases."""
+
+        if not self.in_hidden_literal:
+            self.prose_fragments.append(
+                (
+                    self.getpos()[0] - 1 + line_offset,
+                    STYLE_PROTECTED_BOUNDARY,
+                )
+            )
+
+    def _finish_anchor(self) -> None:
+        """Record the active HTML anchor using its first visible label line."""
+
+        if not self._anchors:
+            return
+        anchor = self._anchors.pop()
+        self.links.append(
+            StyleMarkdownLink(
+                "".join(anchor.parts),
+                anchor.text_line_offset
+                if anchor.text_line_offset is not None
+                else anchor.opening_line_offset,
+            )
+        )
+
+    def _append_jinja_protected_source(self, value: str) -> None:
+        """Retain protected HTML source without interpreting Jinja closers in it."""
+
+        self._jinja_buffer_parts.append(value)
+
+    def _consume_jinja_source(
+        self,
+        value: str,
+        *,
+        emit_plain: bool,
+    ) -> None:
+        """Consume source text while hiding only literal Jinja controls."""
+
+        continued = bool(self._jinja_closer)
+        if continued:
+            self._jinja_buffer_parts.append(value)
+        line_offsets = _source_line_offsets(value)
+        pending_opening: int | None = None
+        position = 0
+        while position < len(value):
+            if self._jinja_closer:
+                while position < len(value):
+                    character = value[position]
+                    if self._jinja_closer != "#}" and self._jinja_quote:
+                        if character == "\\":
+                            position += 2
+                            continue
+                        if character == self._jinja_quote:
+                            self._jinja_quote = ""
+                        position += 1
+                        continue
+                    if (
+                        self._jinja_closer != "#}"
+                        and character in {'"', "'"}
+                    ):
+                        self._jinja_quote = character
+                        position += 1
+                        continue
+                    if value.startswith(self._jinja_closer, position):
+                        position += len(self._jinja_closer)
+                        self._jinja_closer = ""
+                        self._jinja_type = ""
+                        self._jinja_quote = ""
+                        self._jinja_buffer_parts.clear()
+                        self._jinja_literal_tags.clear()
+                        pending_opening = None
+                        break
+                    position += 1
+                if self._jinja_closer:
+                    if pending_opening is not None:
+                        self._jinja_buffer_parts.append(value[pending_opening:])
+                    return
+                if not emit_plain:
+                    return
+                continue
+
+            opener_match = STYLE_JINJA_OPENER_RE.search(value, position)
+            if opener_match is None:
+                if emit_plain:
+                    self.add_text(
+                        value[position:],
+                        line_offset=line_offsets[position],
+                    )
+                return
+            opening = opener_match.start()
+            if emit_plain and opening > position:
+                self.add_text(
+                    value[position:opening],
+                    line_offset=line_offsets[position],
+                )
+            opener_data = next(
+                (
+                    (opener, closer, token_type)
+                    for opener, closer, token_type in STYLE_JINJA_PAIRS
+                    if value.startswith(opener, opening)
+                ),
+                None,
+            )
+            if opener_data is None:
+                position = opening + 1
+                continue
+            opener, self._jinja_closer, self._jinja_type = opener_data
+            self._jinja_buffer_parts.clear()
+            pending_opening = opening
+            self._jinja_opening_line = (
+                self.getpos()[0]
+                - 1
+                + line_offsets[opening]
+            )
+            if self._jinja_type == "style_jinja_value":
+                self.add_accessible(
+                    "dynamic-value",
+                    line_offset=line_offsets[opening],
+                )
+                self.add_protected_boundary(
+                    line_offset=line_offsets[opening],
+                )
+            position = opening + len(opener)
 
     def handle_starttag(
         self,
         tag: str,
         attrs: list[tuple[str, str | None]],
     ) -> None:
+        if self._jinja_closer:
+            normalized = tag.casefold()
+            if normalized in STYLE_HTML_LITERAL_TAGS:
+                self._jinja_literal_tags.push(normalized)
+            self._append_jinja_protected_source(
+                self.get_starttag_text() or ""
+            )
+            return
         normalized = tag.casefold()
         if normalized in STYLE_HTML_LITERAL_TAGS:
-            self._literal_tags.append(normalized)
+            self._literal_tags.push(normalized)
             return
-        if self.in_literal:
+        if self.in_hidden_literal:
             return
+        if normalized in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+            self.html_heading_offsets.append(self.getpos()[0] - 1)
+        if not self.in_literal and normalized in STYLE_HTML_BREAK_TAGS:
+            self.add_text(" ")
         if normalized == "a" and any(
             name.casefold() == "href" for name, _ in attrs
         ):
+            if self._anchors:
+                self._finish_anchor()
             self._anchors.append(
                 _StyleHTMLAnchor([], self.getpos()[0] - 1)
             )
@@ -1373,38 +2303,130 @@ class _StyleHTMLScanner(HTMLParser):
             if not alt_values:
                 self.missing_alt_offsets.append(self.getpos()[0] - 1)
             else:
-                self.add_accessible(alt_values[0] or "")
+                source_alt, relative_offset = _html_attribute_source(
+                    self.get_starttag_text() or "",
+                    "alt",
+                )
+                source_offset = (
+                    self.getpos()[0]
+                    - 1
+                    + relative_offset
+                )
+                raw_alt = (
+                    source_alt
+                    if source_alt is not None
+                    else (alt_values[0] or "")
+                )
+                accessible_source = _jinja_accessible_text(raw_alt)
+                accessible_lines = [
+                    _single_source_line(
+                        _decode_valid_html_references(source_line)
+                    )
+                    for source_line in accessible_source.splitlines()
+                ] or [""]
+                accessible = " ".join(accessible_lines)
+                first_accessible_line = next(
+                    (
+                        offset
+                        for offset, part in enumerate(accessible_lines)
+                        if _has_visible_text(part)
+                    ),
+                    0,
+                )
+                source_lines = _mask_jinja(raw_alt).splitlines() or [""]
+                visible_lines = [
+                    _single_source_line(
+                        _decode_valid_html_references(source_line)
+                    )
+                    for source_line in source_lines
+                ]
+                prose_lines = [
+                    _single_source_line(
+                        _decode_valid_html_references(source_line)
+                    )
+                    for source_line in (
+                        _jinja_prose_text(raw_alt).splitlines() or [""]
+                    )
+                ]
+                visible = " ".join(visible_lines)
+                self.add_accessible(
+                    accessible,
+                    line_offset=relative_offset + first_accessible_line,
+                )
+                if not self.in_literal:
+                    self.visible.append(visible)
+                self.prose_fragments.extend(
+                    (source_offset + offset, part)
+                    for offset, part in enumerate(prose_lines)
+                    if part
+                )
 
     def handle_startendtag(
         self,
         tag: str,
         attrs: list[tuple[str, str | None]],
     ) -> None:
+        if self._jinja_closer:
+            self._append_jinja_protected_source(
+                self.get_starttag_text() or ""
+            )
+            return
         self.handle_starttag(tag, attrs)
         self.handle_endtag(tag)
 
     def handle_endtag(self, tag: str) -> None:
+        if self._jinja_closer:
+            self._append_jinja_protected_source(f"</{tag}>")
+            normalized = tag.casefold()
+            self._jinja_literal_tags.close(normalized)
+            return
         normalized = tag.casefold()
         if normalized in STYLE_HTML_LITERAL_TAGS:
-            if self._literal_tags and self._literal_tags[-1] == normalized:
-                self._literal_tags.pop()
+            self._literal_tags.close(normalized)
             return
+        if normalized == "a" and self._anchors and not self.in_hidden_literal:
+            self._finish_anchor()
         if self.in_literal:
             return
-        if normalized == "a" and self._anchors:
-            anchor = self._anchors.pop()
-            self.links.append(
-                StyleMarkdownLink(
-                    "".join(anchor.parts),
-                    anchor.text_line_offset
-                    if anchor.text_line_offset is not None
-                    else anchor.opening_line_offset,
-                )
-            )
+        if normalized in STYLE_HTML_BREAK_TAGS and normalized != "br":
+            self.add_text(" ")
 
     def handle_data(self, data: str) -> None:
-        if not self._suppress_data:
+        if self._suppress_data:
+            return
+        if self._jinja_closer and self._jinja_literal_tags:
+            self._append_jinja_protected_source(data)
+            return
+        if self.in_literal:
             self.add_text(data)
+            return
+        self._consume_jinja_source(data, emit_plain=True)
+
+    def handle_comment(self, data: str) -> None:
+        if self._jinja_closer:
+            self._append_jinja_protected_source(f"<!--{data}-->")
+
+    def handle_entityref(self, name: str) -> None:
+        raw = f"&{name};"
+        if self._jinja_closer:
+            self._append_jinja_protected_source(raw)
+            return
+        self.add_text(
+            _single_source_line(unescape(raw))
+            if f"{name};" in HTML5_ENTITIES
+            else raw
+        )
+
+    def handle_charref(self, name: str) -> None:
+        raw = f"&#{name};"
+        if self._jinja_closer:
+            self._append_jinja_protected_source(raw)
+            return
+        self.add_text(
+            _single_source_line(unescape(raw))
+            if STYLE_ENTITY_RE.fullmatch(raw)
+            else raw
+        )
 
     def advance_lines(self, count: int) -> None:
         if count < 1:
@@ -1416,127 +2438,297 @@ class _StyleHTMLScanner(HTMLParser):
             self._suppress_data = False
 
     def finish(self) -> None:
+        if self._jinja_closer:
+            buffered = "".join(self._jinja_buffer_parts)
+            opening_line = self._jinja_opening_line
+            self._jinja_closer = ""
+            self._jinja_type = ""
+            self._jinja_quote = ""
+            self._jinja_buffer_parts.clear()
+            self._jinja_literal_tags.clear()
+            self.add_text(
+                buffered,
+                line_offset=opening_line - (self.getpos()[0] - 1),
+            )
         while self._anchors:
-            anchor = self._anchors.pop()
-            self.links.append(
-                StyleMarkdownLink(
-                    "".join(anchor.parts),
-                    anchor.text_line_offset
-                    if anchor.text_line_offset is not None
-                    else anchor.opening_line_offset,
+            self._finish_anchor()
+
+
+def _source_line_offsets(value: str) -> list[int]:
+    """Return the zero-based source line for every character boundary."""
+
+    offsets = [0]
+    for character in value:
+        offsets.append(offsets[-1] + (1 if character == "\n" else 0))
+    return offsets
+
+
+def _render_image_alt_text(
+    children: list[Token] | None,
+    *,
+    include_dynamic: bool,
+) -> str:
+    """Render CommonMark image alt text with explicit Jinja semantics."""
+
+    parts: list[str] = []
+    for child in children or []:
+        if child.type == "text":
+            parts.append(child.content)
+        elif child.type == "image":
+            parts.append(
+                _render_image_alt_text(
+                    child.children,
+                    include_dynamic=include_dynamic,
                 )
             )
+        elif child.type == "softbreak":
+            parts.append("\n")
+        elif child.type == "style_jinja_value" and include_dynamic:
+            parts.append("dynamic-value")
+    return "".join(parts)
 
 
-def _code_span_newlines(
-    source: str,
-    markup: str,
-    start: int,
-) -> tuple[int, int]:
-    """Return source newlines and cursor for the next exact code span."""
+def _image_alt_prose_fragments(image: Token) -> tuple[tuple[int, str], ...]:
+    """Return CommonMark-visible image alt prose with relative source lines."""
 
-    matches = []
-    for match in re.finditer(
-        rf"(?<!`){re.escape(markup)}(?!`)",
-        source[start:],
-    ):
-        position = start + match.start()
-        backslashes = 0
-        cursor = position - 1
-        while cursor >= 0 and source[cursor] == "\\":
-            backslashes += 1
-            cursor -= 1
-        if backslashes % 2 == 0:
-            matches.append(match)
-    if len(matches) < 2:
-        return 0, start
-    opening = start + matches[0].start()
-    closing_end = start + matches[1].end()
-    return source[opening:closing_end].count("\n"), closing_end
+    line_offsets = _source_line_offsets(image.content)
+    line_offset = 0
+    fragments: list[tuple[int, str]] = []
+    for child in image.children or []:
+        start = child.meta.get(STYLE_SOURCE_START)
+        if isinstance(start, int) and start >= 0:
+            line_offset = max(
+                line_offset,
+                line_offsets[min(start, len(image.content))],
+            )
+        if child.type == "text":
+            value = _single_source_line(child.content)
+            if value:
+                fragments.append((line_offset, value))
+        elif child.type == "softbreak":
+            line_offset += 1
+        elif child.type == "hardbreak":
+            fragments.append((line_offset, STYLE_PROTECTED_BOUNDARY))
+            line_offset += 1
+        elif child.type == "style_jinja_value":
+            fragments.append((line_offset, STYLE_PROTECTED_BOUNDARY))
+        elif child.type == "image":
+            fragments.extend(
+                (line_offset + nested_offset, value)
+                for nested_offset, value in _image_alt_prose_fragments(child)
+            )
+        end = child.meta.get(STYLE_SOURCE_END)
+        if isinstance(end, int) and end >= 0:
+            line_offset = max(
+                line_offset,
+                line_offsets[min(end, len(image.content))],
+            )
+    return tuple(fragments)
+
 
 def _inline_style_data(
     token: Token,
 ) -> tuple[
     str,
+    tuple[tuple[int, str], ...],
     tuple[StyleMarkdownLink, ...],
     tuple[int, ...],
+    tuple[int, ...],
+    str,
     str,
 ]:
     """Extract visible prose and link metadata from one inline token."""
 
     scanner = _StyleHTMLScanner()
-    markdown_links: list[tuple[list[str], bool, int]] = []
+    heading_parts: list[str] = []
+    markdown_links: list[_StyleMarkdownAnchor] = []
     resolved_links: list[StyleMarkdownLink] = []
-    line_offset = 0
-    code_span_cursor = 0
+    source_line_offsets = _source_line_offsets(token.content)
+    scanner_line_offset = 0
+
+    def align_to_source(child: Token) -> int:
+        nonlocal scanner_line_offset
+        start = child.meta.get(STYLE_SOURCE_START)
+        if not isinstance(start, int) or start < 0:
+            return scanner_line_offset
+        target = source_line_offsets[min(start, len(token.content))]
+        if target > scanner_line_offset:
+            scanner.advance_lines(target - scanner_line_offset)
+            scanner_line_offset = target
+        return target
+
+    def advance_to_source_end(child: Token) -> None:
+        nonlocal scanner_line_offset
+        end = child.meta.get(STYLE_SOURCE_END)
+        if not isinstance(end, int) or end < 0:
+            return
+        target = source_line_offsets[min(end, len(token.content))]
+        if target > scanner_line_offset:
+            scanner.advance_lines(target - scanner_line_offset)
+            scanner_line_offset = target
 
     def add_text(value: str) -> None:
-        masked = _mask_jinja(value)
-        scanner.add_text(masked, accessible_value=value)
-        if scanner.in_literal:
+        source_line_value = _single_source_line(value)
+        scanner.add_text(
+            source_line_value,
+            accessible_value=source_line_value,
+        )
+        if not scanner.in_literal:
+            heading_parts.append(source_line_value)
+        add_link_text(source_line_value, scanner_line_offset)
+
+    def add_link_text(value: str, line_offset: int) -> None:
+        if scanner.in_hidden_literal:
             return
-        for parts, suppressed, _ in markdown_links:
-            if not suppressed:
-                parts.append(masked)
+        for anchor in markdown_links:
+            if anchor.suppressed:
+                continue
+            anchor.parts.append(value)
+            if anchor.text_line_offset is None and _has_visible_text(value):
+                first_visible = next(
+                    (
+                        index
+                        for index, character in enumerate(value)
+                        if not character.isspace()
+                    ),
+                    0,
+                )
+                anchor.text_line_offset = (
+                    line_offset + value[:first_visible].count("\n")
+                )
 
     for child in token.children or []:
-        if child.type == "text":
+        child_line_offset = align_to_source(child)
+        if child.type == "style_jinja_control":
+            pass
+        elif child.type == "style_jinja_value":
+            scanner.add_accessible("dynamic-value")
+            scanner.add_protected_boundary()
+            add_link_text("dynamic-value", child_line_offset)
+        elif child.type == "text":
             add_text(child.content)
-            line_count = child.content.count("\n")
-            scanner.advance_lines(line_count)
-            line_offset += line_count
         elif child.type in {"softbreak", "hardbreak"}:
             add_text("\n")
             scanner.advance_lines(1)
-            line_offset += 1
+            scanner_line_offset += 1
         elif child.type == "html_inline":
+            fragment_start = len(scanner.accessible_fragments)
+            visible_start = len(scanner.visible)
             scanner.feed(child.content)
-            line_offset += child.content.count("\n")
+            added_visible = "".join(scanner.visible[visible_start:])
+            if added_visible:
+                heading_parts.append(added_visible)
+            for line_offset, value in scanner.accessible_fragments[fragment_start:]:
+                add_link_text(value, line_offset)
+            scanner_line_offset += child.content.count("\n")
         elif child.type == "link_open":
-            markdown_links.append(([], scanner.in_literal, line_offset))
+            markdown_links.append(
+                _StyleMarkdownAnchor(
+                    [],
+                    scanner.suppresses_nested_markdown,
+                    child_line_offset,
+                )
+            )
         elif child.type == "link_close" and markdown_links:
-            parts, suppressed, start_offset = markdown_links.pop()
-            if not suppressed:
+            anchor = markdown_links.pop()
+            if not anchor.suppressed:
                 resolved_links.append(
-                    StyleMarkdownLink("".join(parts), start_offset)
+                    StyleMarkdownLink(
+                        "".join(anchor.parts),
+                        anchor.text_line_offset
+                        if anchor.text_line_offset is not None
+                        else anchor.opening_line_offset,
+                    )
                 )
-        elif child.type in {"code_inline", "image"}:
+        elif child.type == "code_inline":
             scanner.add_accessible(child.content)
-            if not scanner.in_hidden_literal:
-                for parts, suppressed, _ in markdown_links:
-                    if not suppressed:
-                        parts.append(child.content)
-            if child.type == "code_inline":
-                line_count, code_span_cursor = _code_span_newlines(
-                    token.content,
-                    child.markup,
-                    code_span_cursor,
+            scanner.add_protected_boundary()
+            start = child.meta.get(STYLE_SOURCE_START)
+            end = child.meta.get(STYLE_SOURCE_END)
+            code_line_offset = child_line_offset
+            if isinstance(start, int) and isinstance(end, int):
+                raw_code = token.content[start:end]
+                markup_length = len(child.markup)
+                inner = raw_code[
+                    markup_length : len(raw_code) - markup_length
+                    if markup_length
+                    else len(raw_code)
+                ]
+                first_visible = re.search(r"\S", inner)
+                if first_visible is not None:
+                    code_line_offset += inner[: first_visible.start()].count("\n")
+            add_link_text(child.content, code_line_offset)
+        elif child.type == "image":
+            image_text = _single_source_line(
+                _render_image_alt_text(
+                    child.children,
+                    include_dynamic=True,
                 )
-            else:
-                line_count = child.content.count("\n")
-            scanner.advance_lines(line_count)
-            line_offset += line_count
+            )
+            visible_alt = _single_source_line(
+                _render_image_alt_text(
+                    child.children,
+                    include_dynamic=False,
+                )
+            )
+            scanner.add_accessible(image_text)
+            image_fragments = _image_alt_prose_fragments(child)
+            if not scanner.suppresses_nested_markdown:
+                base_offset = scanner.getpos()[0] - 1
+                scanner.prose_fragments.extend(
+                    (base_offset + offset, part)
+                    for offset, part in image_fragments
+                )
+            if not scanner.in_literal:
+                scanner.visible.append(visible_alt)
+                heading_parts.append(visible_alt)
+            image_line_offset = (
+                child_line_offset + image_fragments[0][0]
+                if image_fragments
+                else child_line_offset
+            )
+            add_link_text(image_text, image_line_offset)
+        if child.type in {
+            "code_inline",
+            "html_inline",
+            "image",
+            "link_close",
+            "style_jinja_control",
+            "style_jinja_value",
+        }:
+            advance_to_source_end(child)
     scanner.close()
     scanner.finish()
     return (
         "".join(scanner.visible),
+        tuple(scanner.prose_fragments),
         tuple(resolved_links + scanner.links),
         tuple(scanner.missing_alt_offsets),
+        tuple(scanner.html_heading_offsets),
         "".join(scanner.accessible),
+        "".join(heading_parts),
     )
 
 
 def _html_block_style_data(
     value: str,
-) -> tuple[str, tuple[StyleMarkdownLink, ...], tuple[int, ...]]:
+) -> tuple[
+    str,
+    tuple[tuple[int, str], ...],
+    tuple[StyleMarkdownLink, ...],
+    tuple[int, ...],
+    tuple[int, ...],
+]:
     scanner = _StyleHTMLScanner()
     scanner.feed(value)
     scanner.close()
     scanner.finish()
     return (
         "".join(scanner.visible),
+        tuple(scanner.prose_fragments),
         tuple(scanner.links),
         tuple(scanner.missing_alt_offsets),
+        tuple(scanner.html_heading_offsets),
     )
 
 
@@ -1582,25 +2774,40 @@ def _parsed_markdown_lines(
             else (list_kinds[-1] if list_kinds else None)
         )
         if token.type == "inline":
-            visible, links, missing_alt_offsets, accessible = _inline_style_data(
-                token
-            )
+            (
+                visible,
+                prose_fragments,
+                links,
+                missing_alt_offsets,
+                html_heading_offsets,
+                accessible,
+                heading_text,
+            ) = _inline_style_data(token)
         else:
-            visible, links, missing_alt_offsets = _html_block_style_data(
-                token.content
-            )
+            (
+                visible,
+                prose_fragments,
+                links,
+                missing_alt_offsets,
+                html_heading_offsets,
+            ) = _html_block_style_data(token.content)
             accessible = visible
+            heading_text = visible
         raw_heading = token.content.lstrip() if heading_level is not None else ""
         result.append(
             StyleMarkdownLine(
                 number=start + 1,
                 raw=raw,
                 visible=visible,
-                ampersand_visible=visible,
+                accessible=accessible,
+                heading_text=heading_text,
+                prose_fragments=prose_fragments,
+                ampersand_fragments=prose_fragments,
                 links=links,
                 missing_html_alt_offsets=missing_alt_offsets,
+                unsupported_html_heading_offsets=html_heading_offsets,
                 heading_level=heading_level,
-                heading_has_content=bool(accessible.strip()),
+                heading_has_content=_has_visible_text(accessible),
                 protected_heading_prefix=raw_heading.casefold().startswith(
                     ("`", "{{", "{%", "{#", "<code", "<kbd", "<pre")
                 ),
@@ -1613,6 +2820,7 @@ def _parsed_markdown_lines(
 def protected_markdown_lines(text: str) -> list[StyleMarkdownLine]:
     """Parse prose semantically while retaining raw-ampersand evidence."""
 
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     semantic = _parsed_markdown_lines(text, mask_entities=False)
     if "&" not in text:
         return semantic
@@ -1624,7 +2832,7 @@ def protected_markdown_lines(text: str) -> list[StyleMarkdownLine]:
     ):
         return semantic
     return [
-        replace(line, ampersand_visible=masked.visible)
+        replace(line, ampersand_fragments=masked.prose_fragments)
         for line, masked in zip(semantic, entity_masked, strict=True)
     ]
 
@@ -1632,8 +2840,93 @@ def protected_markdown_lines(text: str) -> list[StyleMarkdownLine]:
 def _plain_link_text(value: str) -> str:
     """Normalize link text for deterministic vague-text checks."""
 
+    def strip_edge_decorations(candidate: str) -> str:
+        left = 0
+        right = len(candidate)
+        while left < right and (
+            candidate[left].isspace()
+            or unicodedata.category(candidate[left])[0] in {"P", "S"}
+        ):
+            left += 1
+        while right > left and (
+            candidate[right - 1].isspace()
+            or unicodedata.category(candidate[right - 1])[0] in {"P", "S"}
+        ):
+            right -= 1
+        return candidate[left:right].strip()
+
+    value = strip_edge_decorations(value)
+    value = unicodedata.normalize("NFKC", value)
+    value = "".join(
+        character
+        for character in value
+        if unicodedata.category(character)[0] not in {"C", "M"}
+    )
     value = re.sub(r"[*_~]", "", value)
-    return " ".join(value.split()).casefold()
+    value = " ".join(value.split())
+    return strip_edge_decorations(value).casefold()
+
+
+def _prose_by_line(
+    fragments: tuple[tuple[int, str], ...],
+) -> tuple[tuple[int, str], ...]:
+    """Combine visible fragments that belong to the same source line."""
+
+    grouped: dict[int, list[str]] = {}
+    for offset, value in fragments:
+        grouped.setdefault(offset, []).append(value)
+    return tuple(
+        (offset, "".join(parts))
+        for offset, parts in sorted(grouped.items())
+    )
+
+
+def _rendered_prose_with_offsets(
+    fragments: tuple[tuple[int, str], ...],
+) -> tuple[str, list[int]]:
+    """Join rendered fragments and retain a source line for each character."""
+
+    rendered: list[str] = []
+    source_offsets: list[int] = []
+    previous_offset: int | None = None
+    for offset, value in fragments:
+        if (
+            rendered
+            and previous_offset is not None
+            and offset > previous_offset
+            and not rendered[-1].isspace()
+            and value
+            and not value[0].isspace()
+        ):
+            rendered.append(" ")
+            source_offsets.append(previous_offset)
+        rendered.extend(value)
+        source_offsets.extend([offset] * len(value))
+        previous_offset = offset
+    return "".join(rendered), source_offsets
+
+
+def _phrase_line_offsets(
+    fragments: tuple[tuple[int, str], ...],
+    phrase: str,
+) -> tuple[int, ...]:
+    """Find phrase starts in rendered prose while retaining source lines."""
+
+    phrase_pattern = r"\s+".join(
+        re.escape(part)
+        for part in phrase.split()
+    )
+    pattern = re.compile(rf"\b{phrase_pattern}\b", re.IGNORECASE)
+    combined, source_offsets = _rendered_prose_with_offsets(fragments)
+    return tuple(
+        sorted(
+            {
+                source_offsets[match.start()]
+                for match in pattern.finditer(combined)
+                if match.start() < len(source_offsets)
+            }
+        )
+    )
 
 
 def _path_label(path: Path) -> str:
@@ -1643,6 +2936,455 @@ def _path_label(path: Path) -> str:
         return str(path)
 
 
+def _mask_source_spans(value: str, spans: list[tuple[int, int]]) -> str:
+    """Mask source spans without changing line or character positions."""
+
+    masked = list(value)
+    merged: list[list[int]] = []
+    for start, end in sorted(spans):
+        bounded_start = max(0, start)
+        bounded_end = min(len(masked), end)
+        if bounded_end <= bounded_start:
+            continue
+        if merged and bounded_start <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], bounded_end)
+        else:
+            merged.append([bounded_start, bounded_end])
+    for start, end in merged:
+        for position in range(max(0, start), min(len(masked), end)):
+            if masked[position] not in "\r\n":
+                masked[position] = " "
+    return "".join(masked)
+
+
+def _html_protected_spans(
+    value: str,
+    *,
+    inline_tokens: list[Token] | None = None,
+    include_tags: bool = True,
+    allow_unclosed: bool = False,
+) -> tuple[tuple[int, int], ...]:
+    """Return CommonMark HTML syntax and literal-element source spans."""
+
+    if allow_unclosed:
+        leading = len(value) - len(value.lstrip(" \t\r\n"))
+        for opener, closer in (
+            ("<!--", "-->"),
+            ("<?", "?>"),
+            ("<![CDATA[", "]]>")
+        ):
+            if value.startswith(opener, leading) and value.find(
+                closer,
+                leading + len(opener),
+            ) < 0:
+                return ((leading, len(value)),)
+        if re.match(r"<![A-Z]", value[leading:]):
+            cursor = leading + 2
+            quote = ""
+            while cursor < len(value):
+                character = value[cursor]
+                if quote:
+                    if character == quote:
+                        quote = ""
+                elif character in {'"', "'"}:
+                    quote = character
+                elif character == ">":
+                    break
+                cursor += 1
+            if cursor >= len(value):
+                return ((leading, len(value)),)
+    if inline_tokens is None:
+        inline_tokens = []
+        STYLE_MARKDOWN_PROBE_PARSER.inline.parse(
+            value,
+            STYLE_MARKDOWN_PROBE_PARSER,
+            {},
+            inline_tokens,
+        )
+    tags: list[tuple[int, int, str, bool, bool]] = []
+    for token in inline_tokens:
+        if token.type != "html_inline":
+            continue
+        start = token.meta.get(STYLE_SOURCE_START)
+        end = token.meta.get(STYLE_SOURCE_END)
+        if not isinstance(start, int) or not isinstance(end, int):
+            continue
+        raw = value[start:end]
+        name_match = re.match(
+            r"<\s*(/)?\s*([A-Za-z][A-Za-z0-9:-]*)",
+            raw,
+        )
+        tags.append(
+            (
+                start,
+                end,
+                name_match.group(2).casefold()
+                if name_match is not None
+                else "",
+                bool(name_match and name_match.group(1)),
+                name_match is None or raw.rstrip().endswith("/>"),
+            )
+        )
+
+    spans = (
+        [(start, end) for start, end, _, _, _ in tags]
+        if include_tags
+        else []
+    )
+    literal_stack = _StyleLiteralStack()
+    for start, end, tag, closing, self_closing in tags:
+        if tag not in STYLE_HTML_LITERAL_TAGS:
+            continue
+        if closing:
+            literal_start = literal_stack.close(tag)
+            if literal_start is not None:
+                spans.append((literal_start, end))
+        elif not self_closing:
+            literal_stack.push(tag, start)
+    spans.extend(
+        (start, len(value))
+        for _, start in literal_stack.openings()
+    )
+    if allow_unclosed:
+        protected_tags = sorted((start, end) for start, end, *_ in tags)
+        protected_index = 0
+        closing_positions = {
+            "<!--": value.rfind("-->"),
+            "<?": value.rfind("?>"),
+            "<![CDATA[": value.rfind("]]>")
+        }
+        for opening_match in re.finditer(r"<!--|<\?|<!\[CDATA\[", value):
+            opening = opening_match.start()
+            while (
+                protected_index < len(protected_tags)
+                and protected_tags[protected_index][1] <= opening
+            ):
+                protected_index += 1
+            if (
+                protected_index < len(protected_tags)
+                and protected_tags[protected_index][0] <= opening
+            ):
+                continue
+            opener = opening_match.group(0)
+            if closing_positions[opener] < opening_match.end():
+                spans.append((opening, len(value)))
+                break
+    return tuple(spans)
+
+
+def _relative_link_destination_spans(
+    value: str,
+    start: int,
+    end: int,
+) -> tuple[tuple[int, int], ...]:
+    """Return only destination/reference syntax from one Markdown link span."""
+
+    raw = value[start:end]
+    if raw.startswith("<"):
+        return ((start, end),)
+    bracket_start = 1 if raw.startswith("![") else (0 if raw.startswith("[") else -1)
+    if bracket_start < 0:
+        return ()
+    state = StateInline(raw, STYLE_MARKDOWN_PROBE_PARSER, {}, [])
+    label_end = parseLinkLabel(state, bracket_start)
+    position = label_end + 1
+    if label_end < 0 or position >= len(raw) or raw[position] not in "([":
+        return ()
+    return ((start + position, end),)
+
+
+def _relative_inline_protected_spans(
+    value: str,
+    tokens: list[Token],
+    *,
+    base_offset: int = 0,
+    protect_html_tags: bool = True,
+) -> list[tuple[int, int]]:
+    """Collect protected inline syntax, including nested image destinations."""
+
+    spans: list[tuple[int, int]] = []
+    for token in tokens:
+        start = token.meta.get(STYLE_SOURCE_START)
+        end = token.meta.get(STYLE_SOURCE_END)
+        if not isinstance(start, int) or not isinstance(end, int):
+            continue
+        if token.type == "code_inline" or (
+            protect_html_tags and token.type == "html_inline"
+        ):
+            spans.append((base_offset + start, base_offset + end))
+        elif token.type in {"image", "link_open", "link_close"}:
+            spans.extend(
+                (base_offset + span_start, base_offset + span_end)
+                for span_start, span_end in _relative_link_destination_spans(
+                    value,
+                    start,
+                    end,
+                )
+            )
+
+        if token.type != "image" or not token.children:
+            continue
+        raw = value[start:end]
+        if not raw.startswith("!["):
+            continue
+        state = StateInline(raw, STYLE_MARKDOWN_PROBE_PARSER, {}, [])
+        label_end = parseLinkLabel(state, 1)
+        if label_end < 0:
+            continue
+        label_start = start + 2
+        spans.extend(
+            _relative_inline_protected_spans(
+                token.content,
+                token.children,
+                base_offset=base_offset + label_start,
+                protect_html_tags=protect_html_tags,
+            )
+        )
+    return spans
+
+
+def _inline_content_source_map(
+    value: str,
+    token: Token,
+    line_starts: list[int],
+    search_offsets: dict[tuple[int, int], int],
+) -> list[int]:
+    """Map normalized inline content characters to physical source offsets."""
+
+    if token.map is None:
+        return []
+    start_line, end_line = token.map
+    block_start = line_starts[min(start_line, len(line_starts) - 1)]
+    block_end = line_starts[min(end_line, len(line_starts) - 1)]
+    block_key = (block_start, block_end)
+    physical_line = start_line
+    cursor = search_offsets.get(block_key, block_start)
+    mapped: list[int] = []
+    for part in token.content.splitlines(keepends=True):
+        line_text = part.rstrip("\r\n")
+        newline_count = len(part) - len(line_text)
+        found = -1
+        line_mapping: list[int] = []
+        content_end = block_end
+        while physical_line < end_line:
+            physical_start = line_starts[physical_line]
+            physical_end = line_starts[min(physical_line + 1, len(line_starts) - 1)]
+            content_end = physical_end
+            while content_end > physical_start and value[content_end - 1] in "\r\n":
+                content_end -= 1
+            search_start = max(cursor, physical_start)
+            found = (
+                value.find(line_text, search_start, content_end)
+                if line_text
+                else min(search_start, content_end)
+            )
+            if found >= 0:
+                line_mapping = list(range(found, found + len(line_text)))
+                break
+            normalized: list[str] = []
+            normalized_positions: list[int] = []
+            source_position = search_start
+            while source_position < content_end:
+                if (
+                    value[source_position] == "\\"
+                    and source_position + 1 < content_end
+                    and value[source_position + 1] == "|"
+                ):
+                    normalized.append("|")
+                    normalized_positions.append(source_position + 1)
+                    source_position += 2
+                    continue
+                normalized.append(value[source_position])
+                normalized_positions.append(source_position)
+                source_position += 1
+            normalized_found = "".join(normalized).find(line_text)
+            if normalized_found >= 0:
+                line_mapping = normalized_positions[
+                    normalized_found : normalized_found + len(line_text)
+                ]
+                found = line_mapping[0] if line_mapping else search_start
+                break
+            physical_line += 1
+            if physical_line < end_line:
+                cursor = line_starts[physical_line]
+        if found < 0:
+            return []
+        mapped.extend(line_mapping)
+        if newline_count:
+            mapped.extend([content_end] * newline_count)
+            physical_line += 1
+            cursor = (
+                line_starts[physical_line]
+                if physical_line < len(line_starts)
+                else block_end
+            )
+        else:
+            cursor = line_mapping[-1] + 1 if line_mapping else found
+    search_offsets[block_key] = cursor
+    return mapped
+
+
+def _mapped_source_spans(
+    mapping: list[int],
+    relative_spans: list[tuple[int, int]],
+) -> list[tuple[int, int]]:
+    """Project relative inline spans through a physical character map."""
+
+    merged_relative: list[list[int]] = []
+    for start, end in sorted(relative_spans):
+        bounded_start = max(0, start)
+        bounded_end = min(len(mapping), end)
+        if bounded_end <= bounded_start:
+            continue
+        if merged_relative and bounded_start <= merged_relative[-1][1]:
+            merged_relative[-1][1] = max(
+                merged_relative[-1][1],
+                bounded_end,
+            )
+        else:
+            merged_relative.append([bounded_start, bounded_end])
+    selected = sorted(
+        {
+            mapping[position]
+            for start, end in merged_relative
+            for position in range(start, end)
+        }
+    )
+    if not selected:
+        return []
+    spans: list[tuple[int, int]] = []
+    span_start = selected[0]
+    previous = selected[0]
+    for position in selected[1:]:
+        if position > previous + 1:
+            spans.append((span_start, previous + 1))
+            span_start = position
+        previous = position
+    spans.append((span_start, previous + 1))
+    return spans
+
+
+def _jinja_lexer_source(
+    text: str,
+    *,
+    protect_html_tags: bool = True,
+) -> str:
+    """Mask declared Markdown/HTML protected contexts before Jinja lexing."""
+
+    value = _mask_frontmatter(text, mask_entities=False)
+    line_starts = [0]
+    line_starts.extend(
+        match.end() for match in re.finditer(r"\n", value)
+    )
+    line_starts.append(len(value))
+    spans: list[tuple[int, int]] = []
+    inline_search_offsets: dict[tuple[int, int], int] = {}
+    environment: dict = {}
+    tokens = STYLE_MARKDOWN_PROBE_PARSER.parse(value, environment)
+    references = list(environment.get("references", {}).values())
+    references.extend(environment.get("duplicate_refs", []))
+    for reference in references:
+        reference_map = reference.get("map") if isinstance(reference, dict) else None
+        if (
+            not isinstance(reference_map, list)
+            or len(reference_map) != 2
+            or not all(isinstance(item, int) for item in reference_map)
+        ):
+            continue
+        start_line, end_line = reference_map
+        definition_start = line_starts[min(start_line, len(line_starts) - 1)]
+        definition_end = line_starts[min(end_line, len(line_starts) - 1)]
+        separator = value.find("]:", definition_start, definition_end)
+        if separator >= 0:
+            spans.append((separator + 2, definition_end))
+    for token in tokens:
+        if token.map is None:
+            continue
+        start_line, end_line = token.map
+        block_start = line_starts[min(start_line, len(line_starts) - 1)]
+        block_end = line_starts[min(end_line, len(line_starts) - 1)]
+        if token.type in {"fence", "code_block"}:
+            spans.append((block_start, block_end))
+            continue
+        if token.type == "html_block":
+            spans.extend(
+                (block_start + start, block_start + end)
+                for start, end in _html_protected_spans(
+                    token.content,
+                    inline_tokens=None,
+                    include_tags=protect_html_tags,
+                    allow_unclosed=True,
+                )
+            )
+            continue
+        if token.type != "inline":
+            continue
+        mapping = _inline_content_source_map(
+            value,
+            token,
+            line_starts,
+            inline_search_offsets,
+        )
+        if not mapping:
+            continue
+        relative_spans = _relative_inline_protected_spans(
+            token.content,
+            token.children or [],
+            protect_html_tags=protect_html_tags,
+        )
+        relative_spans.extend(
+            _html_protected_spans(
+                token.content,
+                inline_tokens=token.children or [],
+                include_tags=protect_html_tags,
+            )
+        )
+        spans.extend(_mapped_source_spans(mapping, relative_spans))
+    for match in STYLE_JINJA_OPENER_RE.finditer(value):
+        cursor = match.start() - 1
+        backslashes = 0
+        while cursor >= 0 and value[cursor] == "\\":
+            backslashes += 1
+            cursor -= 1
+        if backslashes % 2:
+            spans.append((match.start(), match.start() + 1))
+    return _mask_source_spans(value, spans)
+
+
+def _jinja_source_issues(
+    text: str,
+) -> tuple[tuple[int, ...], tuple[int, ...]]:
+    """Locate real raw directives and unbalanced Jinja source syntax."""
+
+    raw_lines: set[int] = set()
+    unbalanced_lines: set[int] = set()
+    raw_source = _jinja_lexer_source(text, protect_html_tags=False)
+    try:
+        for line_number, token_type, _ in STYLE_JINJA_ENVIRONMENT.lex(raw_source):
+            if token_type == "raw_begin":
+                raw_lines.add(line_number)
+    except TemplateSyntaxError:
+        pass
+
+    masked = _jinja_lexer_source(text)
+    stack: list[tuple[str, int]] = []
+    pairs = {
+        "block_begin": "block_end",
+        "comment_begin": "comment_end",
+        "variable_begin": "variable_end",
+    }
+    try:
+        for line_number, token_type, _ in STYLE_JINJA_ENVIRONMENT.lex(masked):
+            if token_type in pairs:
+                stack.append((pairs[token_type], line_number))
+            elif stack and token_type == stack[-1][0]:
+                stack.pop()
+    except TemplateSyntaxError as error:
+        unbalanced_lines.add(error.lineno or 1)
+    unbalanced_lines.update(line for _, line in stack)
+    return tuple(sorted(raw_lines)), tuple(sorted(unbalanced_lines))
+
+
 def lint_markdown_document(
     path: Path,
     text: str,
@@ -1650,6 +3392,7 @@ def lint_markdown_document(
 ) -> list[str]:
     """Apply objective structure and Google-style checks to one document."""
 
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
     errors: list[str] = []
     label = _path_label(path)
     lines = protected_markdown_lines(text)
@@ -1667,6 +3410,17 @@ def lint_markdown_document(
         for value in hard_checks.get("discouraged_phrases", [])
         if isinstance(value, str)
     ]
+    raw_lines, unbalanced_lines = _jinja_source_issues(text)
+    for number in raw_lines:
+        errors.append(
+            f"[CommonMark/project] {label}:{number}: Jinja raw blocks are "
+            "unsupported in linted documentation"
+        )
+    for number in unbalanced_lines:
+        errors.append(
+            f"[CommonMark/project] {label}:{number}: unbalanced Jinja source "
+            "is unsupported in linted documentation"
+        )
 
     for line in lines:
         if line.heading_level is not None:
@@ -1676,27 +3430,54 @@ def lint_markdown_document(
                     f"[CommonMark/project] {label}:{line.number}: empty heading"
                 )
             headings.append((line.number, level))
-            visible_body = line.visible.strip()
+            visible_body = line.heading_text.strip()
             if visible_body:
                 heading_initials = set(lowercase_initials)
                 if line.protected_heading_prefix:
                     first_visible = STYLE_WORD_RE.search(visible_body)
                     if first_visible:
                         heading_initials.add(first_visible.group(0).casefold())
-                bad_word = sentence_case_error(
+                violation = sentence_case_violation(
                     visible_body,
                     proper_names=proper_names,
                     lowercase_initials=heading_initials,
                 )
-                if bad_word:
+                if violation:
+                    bad_word, bad_position = violation
+                    heading_words = list(STYLE_WORD_RE.finditer(visible_body))
+                    word_index = next(
+                        (
+                            index
+                            for index, match in enumerate(heading_words)
+                            if match.start() == bad_position
+                        ),
+                        0,
+                    )
+                    rendered_heading, rendered_offsets = (
+                        _rendered_prose_with_offsets(line.prose_fragments)
+                    )
+                    rendered_words = list(
+                        STYLE_WORD_RE.finditer(rendered_heading)
+                    )
+                    bad_word_offset = (
+                        rendered_offsets[rendered_words[word_index].start()]
+                        if word_index < len(rendered_words)
+                        and rendered_words[word_index].start() < len(rendered_offsets)
+                        else 0
+                    )
                     errors.append(
-                        f"[Google style] {label}:{line.number}: heading must use "
-                        f"sentence case; unexpected {bad_word!r}"
+                        f"[Google style] {label}:{line.number + bad_word_offset}: "
+                        "heading must use sentence case; unexpected "
+                        f"{bad_word!r}"
                     )
 
         for link in line.links:
             normalized = _plain_link_text(link.text)
-            if normalized in vague_links or re.fullmatch(r"https?://\S+", normalized):
+            if (
+                not normalized
+                or normalized in vague_links
+                or re.fullmatch(r"https?://\S+", normalized)
+            ):
                 errors.append(
                     f"[Google style] {label}:{line.number + link.line_offset}: "
                     f"use descriptive link text instead of {link.text!r}"
@@ -1708,23 +3489,24 @@ def lint_markdown_document(
                 "an alt attribute"
             )
 
-        for offset, visible_line in enumerate(line.ampersand_visible.splitlines()):
+        for offset in line.unsupported_html_heading_offsets:
+            errors.append(
+                f"[CommonMark/project] {label}:{line.number + offset}: raw "
+                "HTML headings are unsupported; use Markdown heading syntax"
+            )
+
+        for offset, visible_line in _prose_by_line(line.ampersand_fragments):
             if STYLE_RAW_AMPERSAND_RE.search(visible_line):
                 errors.append(
                     f"[Google style] {label}:{line.number + offset}: use 'and' "
                     "instead of an ampersand in prose"
                 )
         for phrase in discouraged:
-            for offset, visible_line in enumerate(line.visible.splitlines()):
-                if re.search(
-                    rf"\b{re.escape(phrase)}\b",
-                    visible_line,
-                    re.IGNORECASE,
-                ):
-                    errors.append(
-                        f"[Google style] {label}:{line.number + offset}: replace "
-                        f"deterministic directional phrase {phrase!r}"
-                    )
+            for offset in _phrase_line_offsets(line.prose_fragments, phrase):
+                errors.append(
+                    f"[Google style] {label}:{line.number + offset}: replace "
+                    f"deterministic directional phrase {phrase!r}"
+                )
 
     h1_count = sum(level == 1 for _, level in headings)
     if h1_count != 1:
@@ -3165,11 +4947,23 @@ def markdown_style_advisories(
     return advisories
 
 
+def _bounded_advisory_report(
+    advisories: list[str],
+    max_items: int,
+) -> StyleAdvisoryReport:
+    """Bound displayed advisories without losing the true candidate count."""
+
+    return StyleAdvisoryReport(
+        items=tuple(advisories[:max_items]),
+        total_count=len(advisories),
+    )
+
+
 def documentation_style_advisories(
     profile: dict,
     *,
     check_generated: bool,
-) -> list[str]:
+) -> StyleAdvisoryReport:
     """Return bounded, explicitly non-blocking editorial candidates."""
 
     paths, path_errors = documentation_style_paths(
@@ -3177,10 +4971,10 @@ def documentation_style_advisories(
         check_generated=check_generated,
     )
     if path_errors:
-        return [
-            f"[profile advisory unavailable] {error}"
-            for error in path_errors
-        ]
+        items = tuple(
+            f"[profile advisory unavailable] {error}" for error in path_errors
+        )
+        return StyleAdvisoryReport(items=items, total_count=len(items))
     config = load_skill_config()
     entries = iter_content_entries(CONTENT_ROOT, config)
     commands_by_path = _style_generated_command_map(config, entries)
@@ -3199,14 +4993,7 @@ def documentation_style_advisories(
             )
         )
 
-    if len(advisories) > max_items:
-        omitted = len(advisories) - max_items
-        advisories = advisories[:max_items]
-        advisories.append(
-            f"[Google style advisory] {omitted} additional candidates omitted by "
-            "the reviewed report limit"
-        )
-    return advisories
+    return _bounded_advisory_report(advisories, max_items)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -3233,15 +5020,16 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if args.style_report:
         profile = load_documentation_style_profile()
-        advisories = documentation_style_advisories(
+        report = documentation_style_advisories(
             profile,
             check_generated=check_generated,
         )
         print(
             "Documentation style advisory report "
-            f"({len(advisories)} non-blocking candidates)"
+            f"({report.total_count} total; {len(report.items)} shown; "
+            "non-blocking candidates)"
         )
-        for advisory in advisories:
+        for advisory in report.items:
             print(f"ADVISORY: {advisory}")
     print("Lint passed")
     return 0
