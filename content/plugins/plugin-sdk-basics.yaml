@@ -1,8 +1,8 @@
 slug: plugin-sdk-basics
 skill: plugins
-section: SDK and Entry Points
+section: SDK and entry points
 order: 10
-title: Stata C Plugin SDK Basics
+title: Stata C plugin SDK basics
 trigger: Use when the task involves the Stata C plugin SDK, stplugin.h/stplugin.c, stata_call, SF_* data APIs, compiling a minimal plugin, loading a .plugin binary, or deciding whether native code is appropriate.
 aliases:
 - Stata plugin SDK

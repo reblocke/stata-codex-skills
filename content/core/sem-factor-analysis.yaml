@@ -1,8 +1,8 @@
 slug: sem-factor-analysis
 skill: core
-section: Advanced Methods
+section: Advanced methods
 order: 620
-title: Factor Analysis and Structural Equation Models
+title: Factor analysis and structural equation models
 trigger: >-
   Use for exploratory factor analysis, latent-variable measurement models, path models, SEM, generalized SEM,
   identification constraints, standardized estimates, fit statistics, and latent-variable predictions.

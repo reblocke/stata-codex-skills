@@ -2,7 +2,7 @@ slug: programming-basics
 skill: core
 section: Programming and Mata
 order: 10
-title: Stata Macros, Loops, and Do-Files
+title: Stata macros, loops, and do-files
 trigger: >-
   Use for local and global macros, foreach and forvalues loops, do-file arguments, comments,
   command delimiters, temporary names, quietly/noisily, capture, and basic reusable automation.

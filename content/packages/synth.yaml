@@ -1,8 +1,8 @@
 slug: synth
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 180
-title: "synth: Synthetic-Control Estimation"
+title: "synth: Synthetic-control estimation"
 trigger: Use when the user asks for synth, synthetic control, donor weights, predictor weights, pre-treatment RMSPE, placebo/permutation inference, leave-one-out donor sensitivity, or treatment gaps.
 aliases:
 - synth

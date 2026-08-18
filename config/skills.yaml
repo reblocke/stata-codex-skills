@@ -12,16 +12,16 @@ skills:
     folder: stata-core
     content_dir: core
     route_dir: references
-    heading: Stata Core Skill
+    heading: Stata core skill
     description: Use when tasks involve built-in Stata commands, do-files, data management, estimation, graphics, or Mata.
     summary: This skill covers built-in Stata workflows. Load only the references that match the task intent.
     section_order:
       - Programming and Mata
-      - Data Operations
-      - Statistics and Econometrics
-      - Causal Inference
-      - Output and Workflow
-      - Advanced Methods
+      - Data operations
+      - Statistics and econometrics
+      - Causal inference
+      - Output and workflow
+      - Advanced methods
     validation_modes:
       - stata
     rules:
@@ -41,7 +41,7 @@ skills:
       - title: Merge diagnostics
         body: Inspect _merge before dropping it or asserting matched records.
     interface:
-      display_name: Stata Core
+      display_name: Stata core
       short_description: Built-in Stata workflows, commands, data management, and estimation
       default_prompt: Use $stata-core for built-in Stata commands and workflows, loading only the references whose curated routing terms and task intent match the request.
 
@@ -50,14 +50,14 @@ skills:
     folder: stata-packages
     content_dir: packages
     route_dir: packages
-    heading: Stata Community Packages Skill
+    heading: Stata community packages skill
     description: Use when tasks involve community-contributed Stata packages such as reghdfe, estout, rdrobust, synth, or xtabond2.
     summary: This skill covers community-contributed packages. Confirm installation and load only the package references that match the task intent.
     section_order:
-      - Tables and Reporting
-      - Estimation Packages
-      - Graphics and Diagnostics
-      - Data and Workflow Utilities
+      - Tables and reporting
+      - Estimation packages
+      - Graphics and diagnostics
+      - Data and workflow utilities
     validation_modes:
       - stata
     rules:
@@ -67,7 +67,7 @@ skills:
       - Do not install or update packages in a user's normal Stata environment without authorization.
     critical_gotchas: []
     interface:
-      display_name: Stata Packages
+      display_name: Stata packages
       short_description: Community-contributed Stata package workflows and validation
       default_prompt: Use $stata-packages for community-contributed Stata packages, routing by curated terms and task intent and checking installation before use.
 
@@ -76,16 +76,16 @@ skills:
     folder: stata-c-plugins
     content_dir: plugins
     route_dir: references
-    heading: Stata C Plugins Skill
+    heading: Stata C plugins skill
     description: Use when tasks involve building, debugging, packaging, or validating Stata C or C++ plugins.
     summary: This skill covers Stata C and C++ plugin work. Load only the workflow references that match the requested build or validation task.
     section_order:
-      - SDK and Entry Points
-      - C++ Wrapping
-      - Packaging and Distribution
-      - Performance Patterns
-      - Testing and Validation
-      - Translation Workflow
+      - SDK and entry points
+      - C++ wrapping
+      - Packaging and distribution
+      - Performance patterns
+      - Testing and validation
+      - Translation workflow
     validation_modes:
       - compilation
       - manual-review
@@ -96,7 +96,7 @@ skills:
       - Treat plugin crashes as high risk because they terminate the Stata session.
     critical_gotchas: []
     interface:
-      display_name: Stata C Plugins
+      display_name: Stata C plugins
       short_description: Build, package, and validate Stata C and C++ plugins
       default_prompt: Use $stata-c-plugins for Stata C or C++ plugin work, routing by curated terms and the requested build, packaging, or validation intent.
 

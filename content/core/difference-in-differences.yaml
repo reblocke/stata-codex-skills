@@ -1,8 +1,8 @@
 slug: difference-in-differences
 skill: core
-section: Causal Inference
+section: Causal inference
 order: 410
-title: Built-in Difference-in-Differences Estimation
+title: Built-in difference-in-differences estimation
 trigger: >-
   Use for canonical or panel difference-in-differences with didregress or xtdidregress, treatment timing,
   group and time definitions, aggregate treatment effects, parallel-trends checks, and Granger-type tests.

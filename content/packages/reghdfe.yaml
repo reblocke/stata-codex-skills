@@ -1,8 +1,8 @@
 slug: reghdfe
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 170
-title: "reghdfe: High-Dimensional Fixed Effects"
+title: "reghdfe: High-dimensional fixed effects"
 trigger: Use when the user asks for reghdfe, absorb(), multiple high-dimensional fixed effects, interacted fixed effects, singleton handling, multi-way clustering, absorbed-effect recovery, or fast within-transformation. Route instrumental-variable models with ivreghdfe to the ivreg2 reference.
 aliases:
 - reghdfe

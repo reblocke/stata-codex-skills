@@ -1,8 +1,8 @@
 slug: sample-selection
 skill: core
-section: Causal Inference
+section: Causal inference
 order: 450
-title: Heckman Sample-Selection Models
+title: Heckman sample-selection models
 trigger: >-
   Use when an outcome is observed only after a nonrandom selection process and the task calls for
   heckman or heckprobit, a selection equation, exclusion restrictions, inverse Mills ratios, or selection correction.

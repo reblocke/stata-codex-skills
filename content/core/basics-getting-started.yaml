@@ -1,8 +1,8 @@
 slug: basics-getting-started
 skill: core
-section: Data Operations
+section: Data operations
 order: 110
-title: "Stata Basics: Getting Started Guide"
+title: "Stata basics: Getting started guide"
 trigger: >-
   Use for opening, inspecting, browsing, saving, and reloading Stata datasets, including
   use, sysuse, describe, summarize, list, browse, save, clear, and first-session orientation.

@@ -1,8 +1,8 @@
 slug: date-time-functions
 skill: core
-section: Data Operations
+section: Data operations
 order: 160
-title: Date and Time Conversion, Arithmetic, and Display
+title: Date and time conversion, arithmetic, and display
 trigger: >-
   Use for converting string dates or timestamps to Stata numeric datetimes, applying %td/%tc formats,
   extracting components, calculating intervals, and working with daily, monthly, quarterly, or clock time.

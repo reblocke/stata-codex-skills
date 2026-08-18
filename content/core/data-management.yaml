@@ -1,8 +1,8 @@
 slug: data-management
 skill: core
-section: Data Operations
+section: Data operations
 order: 130
-title: Data Management in Stata
+title: Data management in Stata
 trigger: >-
   Use for generating or replacing variables, validating keys, merging or appending datasets, reshaping,
   collapsing, detecting duplicates, and constructing grouped variables with egen.

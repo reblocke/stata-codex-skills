@@ -1,8 +1,8 @@
 slug: treatment-effects
 skill: core
-section: Causal Inference
+section: Causal inference
 order: 440
-title: Regression Adjustment, Weighting, and Doubly Robust Treatment Effects
+title: Regression adjustment, weighting, and doubly robust treatment effects
 trigger: >-
   Use for ATE or ATET estimation with teffects ra, ipw, aipw, or ipwra; includes outcome and treatment
   models, overlap, potential-outcome means, robust inference, and postestimation balance.

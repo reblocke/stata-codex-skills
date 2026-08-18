@@ -1,8 +1,8 @@
 slug: gmm-estimation
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 310
-title: Generalized Method of Moments Estimation
+title: Generalized method of moments estimation
 trigger: >-
   Use for one- or multiple-equation moment-condition models, instrument sets, one- and two-step GMM,
   robust weighting matrices, overidentification tests, and postestimation with gmm.

@@ -1,8 +1,8 @@
 slug: linear-regression
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 220
-title: Linear and Instrumental-Variables Regression
+title: Linear and instrumental-variables regression
 trigger: >-
   Use for ordinary least squares, robust or clustered standard errors, factor-variable interactions,
   instrumental-variables regression, adjusted predictions, marginal effects, and fitted values.

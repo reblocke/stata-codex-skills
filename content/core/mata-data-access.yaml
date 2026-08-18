@@ -2,7 +2,7 @@ slug: mata-data-access
 skill: core
 section: Programming and Mata
 order: 60
-title: Mata Access to Stata Data and Metadata
+title: Mata access to Stata data and metadata
 trigger: >-
   Use for reading Stata observations into Mata views or copies, adding variables, writing results back,
   respecting if/in samples, and exchanging scalars, macros, and matrices through st_*() functions.

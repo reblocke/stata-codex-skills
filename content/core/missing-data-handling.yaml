@@ -1,8 +1,8 @@
 slug: missing-data-handling
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 290
-title: Missing-Data Audit and Multiple Imputation
+title: Missing-data audit and multiple imputation
 trigger: >-
   Use for missingness summaries, complete-case denominators, Stata mi setup, variable registration,
   chained or regression imputation, passive variables, mi estimate, and sensitivity planning.

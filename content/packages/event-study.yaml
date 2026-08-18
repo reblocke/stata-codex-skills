@@ -1,8 +1,8 @@
 slug: event-study
 skill: packages
-section: Graphics and Diagnostics
+section: Graphics and diagnostics
 order: 220
-title: Event-Study Estimation and Plotting Packages
+title: Event-study estimation and plotting packages
 trigger: Use when the user asks for eventstudyinteract, eventdd, event_plot, a Sun-Abraham interaction-weighted estimator, dynamic treatment effects, lead/lag plots, endpoint binning, pretrend tests, or modern event studies under staggered adoption.
 aliases:
 - eventstudyinteract

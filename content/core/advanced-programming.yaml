@@ -2,7 +2,7 @@ slug: advanced-programming
 skill: core
 section: Programming and Mata
 order: 20
-title: Reusable Stata Programs and Returned Results
+title: Reusable Stata programs and returned results
 trigger: >-
   Use for defining ado-style programs, parsing syntax, respecting if/in and weights, returning r() or e()
   results, managing program versions, preserving data, and writing estimation-command interfaces.

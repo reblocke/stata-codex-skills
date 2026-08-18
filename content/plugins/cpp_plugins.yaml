@@ -1,8 +1,8 @@
 slug: cpp_plugins
 skill: plugins
-section: C++ Wrapping
+section: C++ wrapping
 order: 20
-title: Safe C++ Wrappers for Stata Plugins
+title: Safe C++ wrappers for Stata plugins
 trigger: Use when a Stata plugin needs C++, extern "C", STL containers, exception containment, a vendored C++ backend, separate C/C++ compilation, cross-platform linking, or investigation of name-mangling and loader errors.
 aliases:
 - C++ Stata plugin

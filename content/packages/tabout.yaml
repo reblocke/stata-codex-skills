@@ -1,8 +1,8 @@
 slug: tabout
 skill: packages
-section: Tables and Reporting
+section: Tables and reporting
 order: 40
-title: "tabout: Cross-Tabulations and Summary Tables"
+title: "tabout: Cross-tabulations and summary tables"
 trigger: Use when the user names tabout or needs one-way, two-way, survey-weighted, panelled, or summary-statistic tables exported as text, CSV, LaTeX, or HTML.
 aliases:
 - tabout

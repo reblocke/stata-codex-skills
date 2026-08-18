@@ -1,8 +1,8 @@
 slug: packaging_and_help
 skill: plugins
-section: Packaging and Distribution
+section: Packaging and distribution
 order: 30
-title: Packaging, Help, and Multi-Platform Distribution for Stata Plugins
+title: Packaging, help, and multi-platform distribution for Stata plugins
 trigger: Use when a plugin project needs stata.toc, .pkg manifests, .ado wrappers, .sthlp help, platform-specific binaries, net install layout, version metadata, local-install testing, or release packaging.
 aliases:
 - stata.toc

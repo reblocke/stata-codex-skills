@@ -1,8 +1,8 @@
 slug: data-import-export
 skill: core
-section: Data Operations
+section: Data operations
 order: 120
-title: Data Import and Export
+title: Data import and export
 trigger: >-
   Use for moving data between Stata and CSV, delimited text, Excel, SAS, SPSS, or other supported formats,
   including import delimited, import excel, export delimited, and export excel.

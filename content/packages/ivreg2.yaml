@@ -1,8 +1,8 @@
 slug: ivreg2
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 130
-title: "ivreg2, xtivreg2, and ivreghdfe: Instrumental-Variables Workflows"
+title: "ivreg2, xtivreg2, and ivreghdfe: Instrumental-variables workflows"
 trigger: Use when the user asks for ivreg2, xtivreg2, ivreghdfe, ranktest, weak-instrument diagnostics, first-stage statistics, LIML, GMM, overidentification tests, endogenous-regressor tests, HAC inference, or IV with high-dimensional fixed effects.
 aliases:
 - ivreg2

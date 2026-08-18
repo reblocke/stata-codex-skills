@@ -23,6 +23,54 @@ import render_skills  # noqa: E402
 import validate_skill_pack  # noqa: E402
 
 
+class DocumentationStyleTests(unittest.TestCase):
+    def test_sentence_case_allows_stata_terms_and_colon_subtitles(self) -> None:
+        for value in (
+            "Stata C++ plugin workflow",
+            "Bootstrap, Monte Carlo simulation, and Cox models",
+            "Stata basics: Getting started guide",
+        ):
+            with self.subTest(value=value):
+                self.assertIsNone(lint_skill_pack.sentence_case_error(value))
+
+    def test_sentence_case_rejects_capitalized_hyphen_elements(self) -> None:
+        for value in ("Built-In workflow", "community-Package checks"):
+            with self.subTest(value=value):
+                self.assertIsNotNone(lint_skill_pack.sentence_case_error(value))
+
+    def test_config_rejects_title_case_presentation_fields(self) -> None:
+        config = deepcopy(libskillpack.load_skill_config())
+        config["skills"]["core"]["heading"] = "Stata Core Skill"
+        config["skills"]["core"]["section_order"][0] = (
+            "Programming And Mata"
+        )
+        config["skills"]["core"]["interface"]["display_name"] = (
+            "Stata Core"
+        )
+
+        errors = lint_skill_pack.lint_config(config)
+
+        self.assertTrue(any("heading must use sentence case" in e for e in errors))
+        self.assertTrue(any("section must use sentence case" in e for e in errors))
+        self.assertTrue(any("display_name must use sentence case" in e for e in errors))
+
+    def test_entry_rejects_title_case_titles(self) -> None:
+        config = libskillpack.load_skill_config()
+        skill = config["skills"]["core"]
+        path, entry = next(
+            (path, deepcopy(candidate))
+            for skill_key, path, candidate in libskillpack.iter_content_entries(
+                REPO_ROOT / "content", config
+            )
+            if skill_key == "core"
+        )
+        entry["title"] = "Reusable Stata Programs"
+
+        errors = lint_skill_pack.lint_entry("core", path, entry, skill)
+
+        self.assertTrue(any("title must use sentence case" in e for e in errors))
+
+
 def fullwidth_ascii(value: str) -> str:
     return "".join(
         chr(ord(character) + 0xFEE0)
@@ -590,7 +638,7 @@ class DeterministicRenderTests(unittest.TestCase):
         metadata = yaml.safe_load(
             first_snapshot["stata-core/agents/openai.yaml"].decode("utf-8")
         )
-        self.assertEqual("Stata Core", metadata["interface"]["display_name"])
+        self.assertEqual("Stata core", metadata["interface"]["display_name"])
         core_skill = first_snapshot["stata-core/SKILL.md"].decode("utf-8")
         self.assertIn(
             "first Stata session, sysuse auto, inspect a .dta dataset",
@@ -601,7 +649,7 @@ class DeterministicRenderTests(unittest.TestCase):
         self.assertIn("Supported aliases and commands", packages_skill)
         self.assertIn("rdsensitivity", packages_skill)
         self.assertIn(
-            "never override task intent or the clarification boundaries below",
+            "never override task intent or the clarification boundaries that follow",
             " ".join(packages_skill.split()),
         )
         rdrobust = first_snapshot[

@@ -1,8 +1,8 @@
 slug: coefplot
 skill: packages
-section: Graphics and Diagnostics
+section: Graphics and diagnostics
 order: 210
-title: "coefplot: Coefficient and Marginal-Effect Plots"
+title: "coefplot: Coefficient and marginal-effect plots"
 trigger: Use when the user asks for coefplot, a forest-style coefficient plot, comparison of stored models, confidence-interval plotting, standardized coefficients, plotted margins, or direct labeling of regression estimates.
 aliases:
 - coefplot

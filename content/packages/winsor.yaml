@@ -1,8 +1,8 @@
 slug: winsor
 skill: packages
-section: Data and Workflow Utilities
+section: Data and workflow utilities
 order: 330
-title: "winsor and winsor2: Explicit Outlier Capping or Trimming"
+title: "winsor and winsor2: Explicit outlier capping or trimming"
 trigger: Use when the user asks for winsor, winsor2, winsorization, percentile capping, trimming, by-group outlier treatment, cuts(), suffix(), or sensitivity analyses for extreme observations.
 aliases:
 - winsor

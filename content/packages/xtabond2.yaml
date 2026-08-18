@@ -1,8 +1,8 @@
 slug: xtabond2
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 190
-title: "xtabond2: Difference and System GMM for Dynamic Panels"
+title: "xtabond2: Difference and system GMM for dynamic panels"
 trigger: Use when the user asks for xtabond2, Arellano-Bond difference GMM, Blundell-Bond system GMM, dynamic panels, gmmstyle()/ivstyle() instruments, collapsed instruments, Windmeijer-corrected two-step errors, AR tests, or Hansen and difference-in-Hansen diagnostics.
 aliases:
 - xtabond2

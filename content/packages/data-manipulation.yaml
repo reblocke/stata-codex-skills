@@ -1,8 +1,8 @@
 slug: data-manipulation
 skill: packages
-section: Data and Workflow Utilities
+section: Data and workflow utilities
 order: 310
-title: Fast Data-Manipulation Packages for Stata
+title: Fast data-manipulation packages for Stata
 trigger: Use when the user asks for gtools, gcollapse, gegen, greshape, gisid, gquantiles, rangestat, egenmore, distinct, missings, carryforward, or faster grouped aggregation, reshape, rolling-window, and missing-data utilities.
 aliases:
 - gtools

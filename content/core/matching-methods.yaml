@@ -1,8 +1,8 @@
 slug: matching-methods
 skill: core
-section: Causal Inference
+section: Causal inference
 order: 430
-title: Propensity-Score and Nearest-Neighbor Matching
+title: Propensity-score and nearest-neighbor matching
 trigger: >-
   Use for treatment-effects matching with teffects psmatch or teffects nnmatch, propensity scores,
   overlap, common support, balance assessment, average treatment effects, and matched-sample diagnostics.

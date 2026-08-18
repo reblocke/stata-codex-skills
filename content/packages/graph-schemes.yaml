@@ -1,8 +1,8 @@
 slug: graph-schemes
 skill: packages
-section: Graphics and Diagnostics
+section: Graphics and diagnostics
 order: 230
-title: Graph Schemes, grstyle, and Accessible Palettes
+title: Graph schemes, grstyle, and accessible palettes
 trigger: Use when the user asks for grstyle, schemepack, blindschemes, palettes, colorpalette, colrspace, plotplain, colorblind-safe Stata graphs, reusable graph styling, or a project-level scheme.
 aliases:
 - grstyle

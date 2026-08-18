@@ -1,8 +1,8 @@
 slug: external-tools-integration
 skill: core
-section: Output and Workflow
+section: Output and workflow
 order: 540
-title: Python, Shell, and Java Integration Boundaries
+title: Python, shell, and Java integration boundaries
 trigger: >-
   Use for calling Python from Stata, PyStata integration, shell commands, Java plugins,
   environment discovery, quoting paths, subprocess return codes, and controlled data exchange with external tools.

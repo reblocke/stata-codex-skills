@@ -1,8 +1,8 @@
 slug: estout
 skill: packages
-section: Tables and Reporting
+section: Tables and reporting
 order: 20
-title: "estout, esttab, eststo, and estadd: Stored-Estimate Tables"
+title: "estout, esttab, eststo, and estadd: Stored-estimate tables"
 trigger: Use when the user asks for estout, esttab, eststo, estadd, model storage, side-by-side regression tables, or export of stored estimates to LaTeX, CSV, HTML, or RTF.
 aliases:
 - estout

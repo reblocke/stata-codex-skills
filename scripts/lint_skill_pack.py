@@ -77,6 +77,27 @@ NONEMPTY_LIST_FIELDS = {
     "workflows",
 }
 VALIDATION_MODES = {"stata", "compilation", "manual-review"}
+STYLE_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
+STYLE_ALLOWED_CAPITALIZED_WORDS = {
+    "C",
+    "C++",
+    "Carlo",
+    "Cox",
+    "GMM",
+    "H2O",
+    "Heckman",
+    "Java",
+    "Kaplan-Meier",
+    "Mata",
+    "Monte",
+    "Office",
+    "Python",
+    "R",
+    "SDK",
+    "Stata",
+    "Unicode",
+    "Word",
+}
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
 GENERIC_TEXT = {
@@ -932,6 +953,34 @@ def is_nonempty_string(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
+def sentence_case_error(value: str) -> str | None:
+    """Return the first unexpected capitalized word in a heading-like value."""
+
+    first_word = True
+    capitalize_after_colon = False
+    for match in STYLE_WORD_RE.finditer(value):
+        word = match.group(0)
+        if word not in STYLE_ALLOWED_CAPITALIZED_WORDS and any(
+            segment and segment[0].isupper()
+            for segment in word.split("-")[1:]
+        ):
+            return word
+        if first_word or capitalize_after_colon:
+            first_word = False
+            capitalize_after_colon = False
+        elif word[0].isupper() and not (
+            word.isupper()
+            or word in STYLE_ALLOWED_CAPITALIZED_WORDS
+            or any(character.isdigit() for character in word)
+        ):
+            return word
+        between = value[match.end() :]
+        next_match = STYLE_WORD_RE.search(between)
+        if next_match is not None:
+            capitalize_after_colon = ":" in between[: next_match.start()]
+    return None
+
+
 def uncaptured_command(command: str) -> str:
     return re.sub(
         r"(?i)^\s*(?:(?:capture|quietly|noisily)\s+)+",
@@ -988,6 +1037,14 @@ def lint_config(config: dict) -> list[str]:
                 errors.append(
                     f"config/skills.yaml: skill {skill_key} {field} must be nonempty"
                 )
+        heading = skill.get("heading")
+        if isinstance(heading, str) and (
+            bad_word := sentence_case_error(heading)
+        ):
+            errors.append(
+                f"config/skills.yaml: skill {skill_key} heading must use "
+                f"sentence case; unexpected {bad_word!r}"
+            )
         for field, seen in (
             ("name", names),
             ("folder", folders),
@@ -1021,6 +1078,13 @@ def lint_config(config: dict) -> list[str]:
             errors.append(
                 f"config/skills.yaml: skill {skill_key} section_order must contain unique names"
             )
+        elif sections:
+            for section in sections:
+                if bad_word := sentence_case_error(section):
+                    errors.append(
+                        f"config/skills.yaml: skill {skill_key} section "
+                        f"must use sentence case; unexpected {bad_word!r}"
+                    )
         modes = skill.get("validation_modes")
         if (
             not isinstance(modes, list)
@@ -1059,6 +1123,11 @@ def lint_config(config: dict) -> list[str]:
             errors.append(
                 f"config/skills.yaml: skill {skill_key} interface metadata "
                 "is incomplete"
+            )
+        elif bad_word := sentence_case_error(interface["display_name"]):
+            errors.append(
+                f"config/skills.yaml: skill {skill_key} display_name must use "
+                f"sentence case; unexpected {bad_word!r}"
             )
     boundaries = config.get("routing_boundaries")
     if not isinstance(boundaries, list):
@@ -1189,6 +1258,12 @@ def lint_entry(
     for field in ("title", "trigger", "validation_case"):
         if not is_nonempty_string(entry.get(field)):
             errors.append(f"{source_label}: {field} must be nonempty")
+    title = entry.get("title")
+    if isinstance(title, str) and (bad_word := sentence_case_error(title)):
+        errors.append(
+            f"{source_label}: title must use sentence case; "
+            f"unexpected {bad_word!r}"
+        )
     trigger = entry.get("trigger")
     if isinstance(trigger, str):
         if limit_error := copy_text_limit_error(trigger):

@@ -1,8 +1,8 @@
 slug: machine-learning
 skill: core
-section: Advanced Methods
+section: Advanced methods
 order: 650
-title: Built-in Predictive Machine Learning and Double-Selection Inference
+title: Built-in predictive machine learning and double-selection inference
 trigger: >-
   Use for penalized linear, logit, probit, or Poisson models; cross-validation or plugin selection;
   lasso predictions; elastic net; H2O random forests or gradient boosting; and inferential double

@@ -1,8 +1,8 @@
 slug: string-functions
 skill: core
-section: Data Operations
+section: Data operations
 order: 150
-title: String and Unicode Functions in Stata
+title: String and Unicode functions in Stata
 trigger: >-
   Use for cleaning, splitting, searching, matching, normalizing, and measuring text with string and Unicode
   functions, including split, substr(), strpos(), regexm(), ustrregexm(), and ustrlen().

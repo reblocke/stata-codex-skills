@@ -1,8 +1,8 @@
 slug: psmatch2
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 150
-title: "psmatch2 and pstest: Propensity-Score Matching"
+title: "psmatch2 and pstest: Propensity-score matching"
 trigger: Use when the user asks for psmatch2, pstest, nearest-neighbor, caliper, radius, kernel, local-linear, or Mahalanobis matching, common-support diagnostics, matched-sample weights, ATT/ATE/ATU, or balance assessment after matching.
 aliases:
 - psmatch2

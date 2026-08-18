@@ -1,8 +1,8 @@
 slug: maximum-likelihood
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 300
-title: User-Defined Maximum-Likelihood Estimation
+title: User-defined maximum-likelihood estimation
 trigger: >-
   Use for specifying, evaluating, maximizing, and diagnosing custom likelihoods with ml or mlexp,
   parameter constraints, starting values, evaluator programs, and likelihood-based inference.

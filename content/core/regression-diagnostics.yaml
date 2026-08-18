@@ -1,8 +1,8 @@
 slug: regression-diagnostics
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 230
-title: Built-in Linear Regression Diagnostics
+title: Built-in linear regression diagnostics
 trigger: >-
   Use after regress for multicollinearity, heteroskedasticity, functional-form, specification, residual,
   leverage, and influence checks with estat vif, estat hettest, estat ovtest, linktest, rvfplot, and predict.

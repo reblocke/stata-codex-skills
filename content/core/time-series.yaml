@@ -1,8 +1,8 @@
 slug: time-series
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 250
-title: Time-Series Setup, Dynamic Models, and Forecasting
+title: Time-series setup, dynamic models, and forecasting
 trigger: >-
   Use for declaring time-series data, lags and differences, ARIMA models, vector autoregressions,
   lag-order selection, forecasts, and impulse-response functions with tsset, arima, var, and irf.

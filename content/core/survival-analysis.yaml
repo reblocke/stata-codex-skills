@@ -1,8 +1,8 @@
 slug: survival-analysis
 skill: core
-section: Advanced Methods
+section: Advanced methods
 order: 610
-title: Survival-Time Setup, Kaplan-Meier Analysis, and Cox Models
+title: Survival-time setup, Kaplan-Meier analysis, and Cox models
 trigger: >-
   Use for time-to-event data, censoring, delayed entry, multiple-record survival data, Kaplan-Meier curves,
   log-rank tests, Cox regression, proportional-hazards diagnostics, and stset validation.

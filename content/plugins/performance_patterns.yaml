@@ -1,8 +1,8 @@
 slug: performance_patterns
 skill: plugins
-section: Performance Patterns
+section: Performance patterns
 order: 40
-title: Evidence-Driven Performance Patterns for Stata Plugins
+title: Evidence-driven performance patterns for Stata plugins
 trigger: Use when profiling or optimizing a Stata plugin with presorted indices, buffer reuse, dense arrays, partial sorting/quickselect, precomputed norms, pthreads, deterministic thread-local random number generators, cache locality, or missing-data fast paths.
 aliases:
 - plugin performance

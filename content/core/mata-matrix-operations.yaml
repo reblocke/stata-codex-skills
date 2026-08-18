@@ -2,7 +2,7 @@ slug: mata-matrix-operations
 skill: core
 section: Programming and Mata
 order: 40
-title: Stata and Mata Matrix Operations
+title: Stata and Mata matrix operations
 trigger: >-
   Use for constructing, naming, subsetting, transposing, joining, solving, decomposing, and transferring
   matrices between Stata and Mata.

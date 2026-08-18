@@ -1,8 +1,8 @@
 slug: survey-data-analysis
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 280
-title: Complex Survey Design and Estimation
+title: Complex survey design and estimation
 trigger: >-
   Use for probability weights, strata, primary sampling units, finite-population corrections,
   subpopulation analyses, design-based means or proportions, and svy-prefixed regression.

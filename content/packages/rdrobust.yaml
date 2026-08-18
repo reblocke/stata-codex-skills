@@ -1,8 +1,8 @@
 slug: rdrobust
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 160
-title: "rdrobust Suite: Regression-Discontinuity Estimation and Diagnostics"
+title: "rdrobust suite: Regression-discontinuity estimation and diagnostics"
 trigger: Use when the user asks for rdrobust, rdbwselect, rdplot, rddensity, the rdlocrand package and its rdrandinf or rdwinselect commands, rdmulti, sharp or fuzzy regression discontinuity, robust bias-corrected inference, bandwidth selection, manipulation testing, or multi-cutoff RD.
 aliases:
 - rdrobust

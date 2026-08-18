@@ -1,8 +1,8 @@
 slug: nonparametric-methods
 skill: core
-section: Advanced Methods
+section: Advanced methods
 order: 630
-title: Nonparametric Regression and Smoothing
+title: Nonparametric regression and smoothing
 trigger: >-
   Use for locally weighted smoothers, kernel regression, series regression, bandwidth selection,
   derivative estimation, and visual assessment of nonlinear relationships with lowess and npregress.

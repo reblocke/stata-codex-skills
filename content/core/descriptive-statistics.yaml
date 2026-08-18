@@ -1,8 +1,8 @@
 slug: descriptive-statistics
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 210
-title: Descriptive Statistics and Distribution Checks
+title: Descriptive statistics and distribution checks
 trigger: >-
   Use for means, medians, ranges, percentiles, frequency tables, cross-tabulations, correlations, codebooks,
   and distribution checks with summarize, tabulate, tabstat, codebook, correlate, and pwcorr.

@@ -1,8 +1,8 @@
 slug: outreg2
 skill: packages
-section: Tables and Reporting
+section: Tables and reporting
 order: 30
-title: "outreg2: Immediate Regression-Table Export"
+title: "outreg2: Immediate regression-table export"
 trigger: Use when the user names outreg2 or wants to export each estimation result immediately to Word/RTF, Excel, LaTeX, text, or CSV without first storing a model collection.
 aliases:
 - outreg2

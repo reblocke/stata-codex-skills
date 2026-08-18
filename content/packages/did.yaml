@@ -1,8 +1,8 @@
 slug: did
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 120
-title: Modern Staggered Difference-in-Differences Packages
+title: Modern staggered difference-in-differences packages
 trigger: Use when the user asks for csdid, csdid_plot, drdid, did_multiplegt, did_imputation, bacondecomp, heterogeneous or staggered treatment timing, group-time effects, not-yet-treated controls, or modern alternatives to two-way fixed effects.
 aliases:
 - csdid

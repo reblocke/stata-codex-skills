@@ -1,8 +1,8 @@
 slug: spatial-analysis
 skill: core
-section: Advanced Methods
+section: Advanced methods
 order: 640
-title: Spatial Data Setup, Weight Matrices, and Spatial Regression
+title: Spatial data setup, weight matrices, and spatial regression
 trigger: >-
   Use for declaring spatial data, coordinate systems, spatial identifiers, creating or importing weight matrices,
   spatial lags, cross-sectional spatial autoregression, and spatial-regression diagnostics.

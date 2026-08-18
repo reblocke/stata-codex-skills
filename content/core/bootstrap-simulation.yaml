@@ -1,8 +1,8 @@
 slug: bootstrap-simulation
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 270
-title: Bootstrap, Monte Carlo Simulation, and Permutation Tests
+title: Bootstrap, Monte Carlo simulation, and permutation tests
 trigger: >-
   Use for resampling standard errors or confidence intervals, Monte Carlo studies, repeated data generation,
   and randomization inference with bootstrap, simulate, permute, postfile, and seeded random draws.

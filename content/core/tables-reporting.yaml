@@ -1,8 +1,8 @@
 slug: tables-reporting
 skill: core
-section: Output and Workflow
+section: Output and workflow
 order: 520
-title: Built-in Tables, Collections, and Office Export
+title: Built-in tables, collections, and Office export
 trigger: >-
   Use for descriptive or model tables with table and etable, collection layout and styling,
   previewing results, and exporting controlled outputs with collect, putexcel, putdocx, or putpdf.

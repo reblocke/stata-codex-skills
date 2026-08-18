@@ -1,8 +1,8 @@
 slug: nprobust
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 140
-title: "nprobust Suite: Robust Nonparametric Estimation"
+title: "nprobust suite: Robust nonparametric estimation"
 trigger: Use when the user asks for nprobust, lprobust, lpbwselect, kdrobust, kdbwselect, local-polynomial regression, kernel-density inference, robust bias correction, derivative estimation, or data-driven nonparametric bandwidths.
 aliases:
 - nprobust

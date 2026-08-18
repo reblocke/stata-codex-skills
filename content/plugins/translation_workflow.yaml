@@ -1,8 +1,8 @@
 slug: translation_workflow
 skill: plugins
-section: Translation Workflow
+section: Translation workflow
 order: 60
-title: Translating Python or R Statistical Packages into Stata Plugins
+title: Translating Python or R statistical packages into Stata plugins
 trigger: Use when scoping or auditing a port from Python/R to Stata, inventorying feature parity, choosing ado/Mata versus wrapping a compiled backend, mapping APIs and licenses, pinning source versions, generating reference fixtures, or conducting a final fidelity audit.
 aliases:
 - Python to Stata

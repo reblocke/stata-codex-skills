@@ -1,8 +1,8 @@
 slug: regression-discontinuity
 skill: core
-section: Causal Inference
+section: Causal inference
 order: 420
-title: Manual Regression-Discontinuity Workflow with Built-in Stata
+title: Manual regression-discontinuity workflow with built-in Stata
 trigger: >-
   Use for a transparent built-in sharp or fuzzy regression-discontinuity workflow using regress, lpoly,
   and twoway; includes cutoff coding, local bandwidths, side-specific slopes, sensitivity, placebo cutoffs,

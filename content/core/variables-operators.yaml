@@ -1,8 +1,8 @@
 slug: variables-operators
 skill: core
-section: Data Operations
+section: Data operations
 order: 140
-title: Variables, Types, Missing Values, and Operators
+title: Variables, types, missing values, and operators
 trigger: >-
   Use for generate and replace expressions, numeric and string storage types, missing values, if qualifiers,
   logical and arithmetic operators, factor-variable notation, and observation subscripting.

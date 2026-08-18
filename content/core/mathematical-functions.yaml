@@ -1,8 +1,8 @@
 slug: mathematical-functions
 skill: core
-section: Data Operations
+section: Data operations
 order: 170
-title: Mathematical, Statistical, and Random-Number Functions
+title: Mathematical, statistical, and random-number functions
 trigger: >-
   Use for arithmetic transformations, logarithms, powers, probability distributions, rowwise calculations,
   and reproducible random-number generation in generate, replace, scalar, or Mata expressions.

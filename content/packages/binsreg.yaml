@@ -1,8 +1,8 @@
 slug: binsreg
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 110
-title: "binsreg Suite: Binned-Scatter Estimation and Inference"
+title: "binsreg suite: Binned-scatter estimation and inference"
 trigger: Use when the user asks for binsreg, binslogit, binsprobit, binsqreg, binstest, binspwc, binsregselect, a binscatter replacement, data-driven bin selection, or inference for a binned relationship.
 aliases:
 - binsreg

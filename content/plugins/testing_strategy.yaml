@@ -1,8 +1,8 @@
 slug: testing_strategy
 skill: plugins
-section: Testing and Validation
+section: Testing and validation
 order: 50
-title: Layered Correctness and Safety Testing for Stata Plugins
+title: Layered correctness and safety testing for Stata plugins
 trigger: Use when designing plugin tests, reference-output fixtures, batch smoke tests, source-language parity tests, error-path tests, stress tests, cross-platform validation, exact completion markers, or acceptance tolerances for a translated Stata command.
 aliases:
 - plugin testing

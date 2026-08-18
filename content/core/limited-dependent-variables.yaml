@@ -1,8 +1,8 @@
 slug: limited-dependent-variables
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 260
-title: Binary, Ordinal, Multinomial, Count, and Censored Models
+title: Binary, ordinal, multinomial, count, and censored models
 trigger: >-
   Use for binary, ordinal, multinomial, count, overdispersed-count, and censored outcomes with logit,
   probit, ologit, mlogit, poisson, nbreg, tobit, margins, and predicted probabilities.

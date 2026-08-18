@@ -2,7 +2,7 @@ slug: mata-introduction
 skill: core
 section: Programming and Mata
 order: 30
-title: Mata Workspace, Types, and Interactive Expressions
+title: Mata workspace, types, and interactive expressions
 trigger: >-
   Use for entering Mata, creating scalars and matrices, elementwise versus matrix operators,
   inspecting objects, clearing the workspace, and deciding when Mata is preferable to Stata commands.

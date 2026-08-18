@@ -1,8 +1,8 @@
 slug: workflow-best-practices
 skill: core
-section: Output and Workflow
+section: Output and workflow
 order: 530
-title: Reproducible Stata Project and Do-File Workflow
+title: Reproducible Stata project and do-file workflow
 trigger: >-
   Use for versioned do-files, project-relative paths, logs, deterministic seeds, temporary files,
   assertions, error handling, modular execution, clean-session reproduction, and artifact separation.

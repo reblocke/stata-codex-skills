@@ -2,7 +2,7 @@ slug: mata-programming
 skill: core
 section: Programming and Mata
 order: 50
-title: Typed Mata Functions, Control Flow, and Libraries
+title: Typed Mata functions, control flow, and libraries
 trigger: >-
   Use for declaring typed Mata functions, arguments and return values, loops and conditionals,
   pointers, structures, source files, compiled object files, and reusable Mata libraries.
