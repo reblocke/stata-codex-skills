@@ -2,8 +2,8 @@ slug: nprobust
 skill: packages
 section: Estimation packages
 order: 140
-title: "nprobust suite: Robust nonparametric estimation"
-trigger: Use when the user asks for nprobust, lprobust, lpbwselect, kdrobust, kdbwselect, local-polynomial regression, kernel-density inference, robust bias correction, derivative estimation, or data-driven nonparametric bandwidths.
+title: "`nprobust` suite: Robust nonparametric estimation"
+trigger: Use when the user asks for `nprobust`, `lprobust`, `lpbwselect`, `kdrobust`, `kdbwselect`, local-polynomial regression, kernel-density inference, robust bias correction, derivative estimation, or data-driven nonparametric bandwidths.
 aliases:
 - nprobust
 - lprobust
@@ -39,14 +39,14 @@ assumptions:
 - The outcome/running variable has adequate local support over the requested evaluation grid.
 - Polynomial order, derivative, kernel, bandwidth objective, and VCE correspond to a prespecified inferential target.
 gotchas:
-- Polynomial order p(), bias-correction order q(), derivative order, and bandwidth criterion jointly determine the target and inference; report all of them.
-- Generated result variables use fixed prefixes and can collide with earlier runs. Drop or rename them deliberately before requesting genvars.
+- Polynomial order `p()`, bias-correction order `q()`, derivative order, and bandwidth criterion jointly determine the target and inference; report all of them.
+- Generated result variables use fixed prefixes and can collide with earlier runs. Drop or rename them deliberately before requesting `genvars`.
 - Boundary behavior and sparse evaluation regions can dominate nonparametric results; inspect effective sample sizes and support rather than relying only on a smooth plot.
 workflows:
-- Run which lprobust, which kdrobust, and ado describe nprobust before use; obtain authorization before installing the pinned source.
+- Run `which lprobust`, `which kdrobust`, and `ado describe nprobust` before use; obtain authorization before installing the pinned source.
 - Choose the estimand and derivative, inspect support, select bandwidths, then fit and visualize using the same evaluation grid.
 - Compare reasonable kernels/bandwidth criteria as sensitivity analyses while keeping the inferential target fixed.
-validation_case: Run lprobust for mpg on weight in auto.dta from the immutable source, verify it produces estimates without r() errors, and keep generated artifacts inside the temporary work directory.
+validation_case: Run `lprobust` for `mpg` on `weight` in `auto.dta` from the immutable source, verify it produces estimates without `r()` errors, and keep generated artifacts inside the temporary work directory.
 validation_mode: stata
 related_refs:
 - nonparametric-methods

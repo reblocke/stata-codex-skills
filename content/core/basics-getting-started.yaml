@@ -5,7 +5,7 @@ order: 110
 title: "Stata basics: Getting started guide"
 trigger: >-
   Use for opening, inspecting, browsing, saving, and reloading Stata datasets, including
-  use, sysuse, describe, summarize, list, browse, save, clear, and first-session orientation.
+  `use`, `sysuse`, `describe`, `summarize`, `list`, `browse`, `save`, `clear`, and first-session orientation.
 commands:
 - use
 - sysuse
@@ -38,9 +38,9 @@ assumptions:
 - The requested input is a Stata-readable dataset and the user has permission to access its path.
 - Opening or saving the dataset will not overwrite the only authoritative copy of raw data.
 gotchas:
-- use without clear refuses to overwrite unsaved data in memory; verify whether the current data need saving first.
-- browse opens an interactive viewer and is unsuitable as the only inspection step in unattended batch runs.
-- save, replace overwrites an existing file, so use it only for an intentional derived-data target.
+- "`use` without `clear` refuses to overwrite unsaved data in memory; verify whether the current data need saving first."
+- "`browse` opens an interactive viewer and is unsuitable as the only inspection step in unattended batch runs."
+- "`save, replace` overwrites an existing file, so use it only for an intentional derived-data target."
 workflows:
 - Open a known dataset, inspect its dimensions and variable metadata, and assert basic expectations before analysis.
 - Save transformed data to a new path and reload it to verify that storage types, labels, and row counts survived.

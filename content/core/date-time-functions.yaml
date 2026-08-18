@@ -4,7 +4,7 @@ section: Data operations
 order: 160
 title: Date and time conversion, arithmetic, and display
 trigger: >-
-  Use for converting string dates or timestamps to Stata numeric datetimes, applying %td/%tc formats,
+  Use for converting string dates or timestamps to Stata numeric datetimes, applying `%td`/`%tc` formats,
   extracting components, calculating intervals, and working with daily, monthly, quarterly, or clock time.
 commands:
 - daily()
@@ -39,8 +39,8 @@ assumptions:
 - Date arithmetic uses a single declared Stata time scale and a scientifically appropriate time origin.
 gotchas:
 - A display format changes how a numeric datetime looks but does not convert string data or change its units.
-- Daily dates count days from 01jan1960, while datetime values count milliseconds; mixing them gives implausible intervals.
-- Use double storage for %tc datetime values because float cannot represent millisecond-scale values precisely.
+- Daily dates count days from `01jan1960`, while datetime values count milliseconds; mixing them gives implausible intervals.
+- Use `double` storage for `%tc` datetime values because `float` cannot represent millisecond-scale values precisely.
 workflows:
 - Inspect raw strings, convert with an explicit mask, format the numeric result, and count failed conversions.
 - Convert both endpoints to the same time scale before subtracting and assert plausible interval bounds.

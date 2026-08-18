@@ -4,7 +4,7 @@ section: Causal inference
 order: 430
 title: Propensity-score and nearest-neighbor matching
 trigger: >-
-  Use for treatment-effects matching with teffects psmatch or teffects nnmatch, propensity scores,
+  Use for treatment-effects matching with `teffects psmatch` or `teffects nnmatch`, propensity scores,
   overlap, common support, balance assessment, average treatment effects, and matched-sample diagnostics.
 commands: [teffects psmatch, teffects nnmatch, tebalance summarize, tebalance density, predict]
 aliases: [propensity-score matching, propensity score matching, PSM, nearest-neighbor matching, covariate balance]
@@ -32,7 +32,7 @@ workflows:
 - Define the estimand and pretreatment covariates, inspect overlap, match, and evaluate standardized balance before outcomes.
 - Report unmatched units, matching settings, balance, and sensitivity to neighbor count or caliper-like restrictions.
 validation_case: >-
-  Estimate an ATET with propensity-score matching on bundled data, then run tebalance summarize and confirm
+  Estimate an ATET with propensity-score matching on bundled data, then run `tebalance summarize` and confirm
   the estimation sample is nonempty.
 validation_mode: stata
 related_refs: [treatment-effects, descriptive-statistics]

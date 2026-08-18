@@ -3,7 +3,7 @@ skill: packages
 section: Data and workflow utilities
 order: 320
 title: Built-in Stata tooling for community-package lifecycle management
-trigger: Use when the user asks how to search, inspect, install, pin, update, remove, isolate, or troubleshoot community-contributed Stata packages with findit, search, ssc, net, ado, which, adopath, sysdir, or net set ado.
+trigger: Use when the user asks how to search, inspect, install, pin, update, remove, isolate, or troubleshoot community-contributed Stata packages with `findit`, `search`, `ssc`, `net`, `ado`, `which`, `adopath`, `sysdir`, or `net set ado`.
 aliases:
 - package management
 - findit
@@ -57,14 +57,14 @@ assumptions:
 - Package installation, update, or removal is an external state change that requires the user's authorization in their active Stata environment.
 - Reproducible work records the source channel and resolved version or commit and isolates project dependencies when practical.
 gotchas:
-- search/findit/ssc/net are built-in lifecycle tools, not community estimation packages; this reference lives here because it governs community-package management.
-- ssc install ..., replace and ado update, update mutate the active environment and can silently change results; inspect first and pin or record the resolved version.
-- adopath precedence can load a different copy than expected. which and ado describe must be checked in the same session that runs the analysis.
+- "`search`, `findit`, `ssc`, and `net` are built-in lifecycle tools, not community estimation packages; this reference lives here because it governs community-package management."
+- "`ssc install ..., replace` and `ado update, update` mutate the active environment and can silently change results; inspect first and pin or record the resolved version."
+- "`adopath` precedence can load a different copy than expected. Check `which` and `ado describe` in the same session that runs the analysis."
 workflows:
-- Inspect with which, ado describe, adopath, and sysdir before proposing any change.
-- Ask for authorization, then prefer a project-specific PLUS directory and a pinned or lock-verifiable source; never default to replace.
-- After installation, reopen a clean session, verify which/ado describe, run a package-specific smoke test, and record source/version metadata.
-validation_case: In batch mode without network or mutation, display sysdir/adopath, locate the built-in regress command with which, and require an error-free log.
+- Inspect with `which`, `ado describe`, `adopath`, and `sysdir` before proposing any change.
+- Ask for authorization, then prefer a project-specific `PLUS` directory and a pinned or lock-verifiable source; never default to `replace`.
+- After installation, reopen a clean session, verify `which` and `ado describe`, run a package-specific smoke test, and record source/version metadata.
+validation_case: In batch mode without network or mutation, display `sysdir` and `adopath`, locate the built-in `regress` command with `which`, and require an error-free log.
 validation_mode: stata
 related_refs:
 - workflow-best-practices

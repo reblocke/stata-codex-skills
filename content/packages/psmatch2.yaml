@@ -2,8 +2,8 @@ slug: psmatch2
 skill: packages
 section: Estimation packages
 order: 150
-title: "psmatch2 and pstest: Propensity-score matching"
-trigger: Use when the user asks for psmatch2, pstest, nearest-neighbor, caliper, radius, kernel, local-linear, or Mahalanobis matching, common-support diagnostics, matched-sample weights, ATT/ATE/ATU, or balance assessment after matching.
+title: "`psmatch2` and `pstest`: Propensity-score matching"
+trigger: Use when the user asks for `psmatch2`, `pstest`, nearest-neighbor, caliper, radius, kernel, local-linear, or Mahalanobis matching, common-support diagnostics, matched-sample weights, ATT/ATE/ATU, or balance assessment after matching.
 aliases:
 - psmatch2
 - pstest
@@ -33,13 +33,13 @@ assumptions:
 - Treatment positivity and common support are sufficient for the requested ATT, ATE, or ATU population.
 gotchas:
 - Matching addresses measured covariate imbalance, not unmeasured confounding; define the causal contrast and covariate time ordering before fitting the score.
-- psmatch2 creates _treated, _support, _pscore, _weight, and neighbor variables that can overwrite prior matching results.
+- "`psmatch2` creates `_treated`, `_support`, `_pscore`, `_weight`, and neighbor variables that can overwrite prior matching results."
 - Analytic standard errors do not automatically account for every score-estimation and matching step; bootstrap validity depends on the matching estimator and design.
 workflows:
-- Preflight psmatch2 and pstest with which and ado describe; obtain authorization before installing or updating the package.
+- Preflight `psmatch2` and `pstest` with `which` and `ado describe`; obtain authorization before installing or updating the package.
 - Check treatment coding, missingness, overlap, and score distributions; match; then assess balance and effective sample size before estimating effects.
 - Save the original observation identifier and preserve the unmatched data so matched-pair and weight diagnostics remain auditable.
-validation_case: In cattaneo2, estimate a propensity score, perform one-neighbor matching for birthweight, verify matched-support variables exist, and require an error-free log.
+validation_case: In `cattaneo2`, estimate a propensity score, perform one-neighbor matching for birthweight, verify matched-support variables exist, and require an error-free log.
 validation_mode: stata
 related_refs:
 - matching-methods

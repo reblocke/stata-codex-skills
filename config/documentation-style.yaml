@@ -1,0 +1,110 @@
+schema_version: 1
+
+authority:
+  name: Google developer documentation style guide
+  url: https://developers.google.com/style
+  reviewed_on: "2026-08-18"
+
+precedence:
+  project_first: true
+  statement: >-
+    Project safety, scientific precision, exact Stata syntax, and established
+    public interfaces take precedence when they conflict with general writing
+    guidance.
+
+rules:
+  commonmark_project:
+    - Each Markdown document has exactly one level-1 heading.
+    - Heading levels do not skip, and headings are not empty.
+  google_hard:
+    - Use sentence case for headings and titles.
+    - Use descriptive link text and include an alt slot or attribute for images.
+    - Do not use ampersands as prose shorthand or deterministic directional phrases.
+  google_advisory:
+    - Prefer short, direct sentences and active voice.
+    - Use numbered lists for procedures and code font for technical identifiers.
+
+protected_contexts:
+  - yaml-frontmatter
+  - fenced-code
+  - indented-code
+  - inline-code
+  - raw-html-code
+  - raw-html-tags
+  - jinja-control
+  - link-destinations
+  - exact-technical-identifiers
+
+exceptions:
+  proper_names:
+    - C
+    - C++
+    - Carlo
+    - Cox
+    - GMM
+    - H2O
+    - Heckman
+    - Java
+    - Kaplan-Meier
+    - Mata
+    - Monte
+    - Office
+    - Python
+    - R
+    - SDK
+    - Stata
+    - Unicode
+    - Word
+  lowercase_title_prefixes:
+    - asdoc
+    - binsreg
+    - coefplot
+    - estout
+    - ivreg2
+    - nprobust
+    - outreg2
+    - psmatch2
+    - rdrobust
+    - reghdfe
+    - stata-codex-skills
+    - synth
+    - tabout
+    - winsor
+    - xtabond2
+  technical:
+    - id: exact-stata-syntax
+      rationale: Preserve commands, options, identifiers, and executable examples exactly.
+    - id: scientific-language
+      rationale: Preserve domain terms when a stylistic substitute would reduce precision.
+    - id: directional-statistics
+      rationale: Allow above and below for numeric, statistical, and hierarchical relationships.
+
+hard_checks:
+  vague_link_text:
+    - click here
+    - here
+    - link
+    - read more
+    - read this document
+    - this
+  discouraged_phrases:
+    - listed above
+    - listed below
+    - see above
+    - see below
+    - shown above
+    - shown below
+
+documents:
+  source:
+    - README.md
+    - llms.txt
+    - templates/alias.md.j2
+    - templates/provenance.md.j2
+    - templates/reference.md.j2
+    - templates/skill.md.j2
+  generated_glob: build/generated/**/*.md
+
+advisory:
+  max_sentence_words: 25
+  max_report_items: 200

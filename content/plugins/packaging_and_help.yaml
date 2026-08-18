@@ -3,7 +3,7 @@ skill: plugins
 section: Packaging and distribution
 order: 30
 title: Packaging, help, and multi-platform distribution for Stata plugins
-trigger: Use when a plugin project needs stata.toc, .pkg manifests, .ado wrappers, .sthlp help, platform-specific binaries, net install layout, version metadata, local-install testing, or release packaging.
+trigger: Use when a plugin project needs `stata.toc`, `.pkg` manifests, `.ado` wrappers, `.sthlp` help, platform-specific binaries, `net install` layout, version metadata, local-install testing, or release packaging.
 aliases:
 - stata.toc
 - pkg manifest
@@ -49,15 +49,15 @@ assumptions:
 - Every distributed binary is built from the same tagged source and tested with the intended Stata/OS/architecture combination.
 - Package metadata, command help, binary filenames, wrapper dispatch, and checksums are generated or reviewed as one release unit.
 gotchas:
-- Subprograms in an ado file are not auto-discovered as separate commands; each public command needs a matching first program/filename or explicit dispatch.
-- A .pkg entry with the wrong binary name or case can pass repository review but fail on a case-sensitive installation target.
-- net install from a moving branch is not reproducible; publish immutable release paths and record file hashes.
+- Subprograms in an `.ado` file are not auto-discovered as separate commands; the public command's `.ado` filename and first `program` definition must correspond, unless an explicit dispatcher exposes it.
+- A `.pkg` entry with the wrong binary name or case can pass repository review but fail on a case-sensitive installation target.
+- "`net install` from a moving branch is not reproducible; publish immutable release paths and record file hashes."
 - Shipping one architecture under a generic filename can load on the build machine and fail elsewhere; make platform dispatch explicit.
 workflows:
-- Stage a release tree containing ado, help, toc/pkg metadata, licenses, and all supported binaries from one pinned source revision.
+- Stage a release tree containing `.ado` files, help files, `stata.toc` and `.pkg` metadata, licenses, and all supported binaries from one pinned source revision.
 - Validate manifest completeness, line endings, help links, wrapper dispatch, and hashes before any publication.
-- Install from the staged local directory into an empty PLUS tree, run help/which/ado describe and platform smoke tests, then inspect the package inventory.
-validation_case: Build and inspect a minimal local package tree with toc/pkg, ado, sthlp, and platform binary entries; install it into an empty temporary PLUS directory and verify help, which, and ado describe resolve only staged files.
+- Install from the staged local directory into an empty `PLUS` tree, run `help`, `which`, `ado describe`, and platform smoke tests, then inspect the package inventory.
+validation_case: Build and inspect a minimal local package tree with `stata.toc`, `.pkg`, `.ado`, `.sthlp`, and platform binary entries; install it into an empty temporary `PLUS` directory and verify `help`, `which`, and `ado describe` resolve only staged files.
 validation_mode: manual-review
 related_refs:
 - plugin-sdk-basics

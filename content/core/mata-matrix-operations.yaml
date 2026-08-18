@@ -25,9 +25,9 @@ assumptions:
 - Matrix dimensions are conformable and row/column ordering carries the intended scientific meaning.
 - The chosen solver or decomposition is numerically appropriate for rank and conditioning.
 gotchas:
-- Explicit matrix inversion is usually less stable than solving a linear system with qrsolve() or cholsolve().
+- Explicit matrix inversion is usually less stable than solving a linear system with `qrsolve()` or `cholsolve()`.
 - Stata matrix row and column names can be lost or reordered during transfers unless managed explicitly.
-- Symmetric-only routines such as invsym() assume symmetry and may mask a construction error.
+- Symmetric-only routines such as `invsym()` assume symmetry and may mask a construction error.
 workflows:
 - Assert dimensions and rank before solving, use decomposition-based solvers, and verify residuals against a tolerance.
 - Attach semantic row/column names at interfaces and test round-trips between Stata matrices and Mata.

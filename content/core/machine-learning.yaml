@@ -4,9 +4,9 @@ section: Advanced methods
 order: 650
 title: Built-in predictive machine learning and double-selection inference
 trigger: >-
-  Use for penalized linear, logit, probit, or Poisson models; cross-validation or plugin selection;
+  Use for penalized linear, logit, probit, or Poisson models; cross-validation or `selection(plugin)`;
   lasso predictions; elastic net; H2O random forests or gradient boosting; and inferential double
-  selection with dsregress.
+  selection with `dsregress`.
 commands: [lasso, elasticnet, lassocoef, lassogof, predict, dsregress, h2o init, _h2oframe put, h2oml rfregress, h2oml gbregress]
 aliases: [machine learning, lasso, elastic net, penalized regression, variable selection, double selection, random forest, gradient boosting, h2oml]
 routing_terms:
@@ -33,10 +33,10 @@ gotchas:
 - Lasso-selected variables are unstable under correlated predictors and do not become causal confounders by selection.
 - Ordinary post-selection standard errors after prediction-oriented lasso ignore the selection process.
 - Cross-validation must respect clustering, time order, and preprocessing boundaries to avoid optimistic performance.
-- h2oml commands operate on the current H2O frame rather than directly on the active Stata frame; initialize H2O and transfer only the intended columns.
+- "`h2oml` commands operate on the current H2O frame rather than directly on the active Stata frame; initialize H2O and transfer only the intended columns."
 workflows:
 - Define the prediction target and validation scheme, freeze preprocessing, tune on training data, and evaluate once on held-out data.
-- Use dsregress for its inferential target rather than treating a predictive lasso fit as valid treatment-effect inference.
+- Use `dsregress` for its inferential target rather than treating a predictive lasso fit as valid treatment-effect inference.
 - For random forests or gradient boosting, initialize H2O, create a named H2O frame, set a reproducible seed, bound the tuning grid, and shut down resources after validation.
 validation_case: >-
   Fit a deterministic plugin-selected lasso on bundled data, generate predictions, and verify the estimation sample and

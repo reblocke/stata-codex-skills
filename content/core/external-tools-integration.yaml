@@ -27,8 +27,8 @@ gotchas:
 - Shell quoting differs across operating systems, and untrusted interpolated text can become command injection.
 - A successful process launch does not prove the external command produced complete or valid output.
 - Python or Java state can persist within a session and make reruns depend on earlier imports or objects.
-- python query returns r(111) when Stata has no Python installation configured; treat that as an environment preflight result, not proof that Python integration works.
-- Licensed validation denies child-process creation at launch, so shell and external-executable calls require a separate, explicitly authorized integration test.
+- "`python query` returns `r(111)` when Stata has no Python installation configured; treat that as an environment preflight result, not proof that Python integration works."
+- Licensed validation denies child-process creation at launch, so `shell` and external-executable calls require a separate, explicitly authorized integration test.
 workflows:
 - Query the runtime and versions, test a minimal no-data call, then add explicit paths, arguments, timeouts, and return-code checks.
 - Exchange only required data through temporary files or documented APIs, validate the returned schema, and clean temporary artifacts.

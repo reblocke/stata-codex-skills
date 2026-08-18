@@ -31,15 +31,15 @@ skills:
       - Validate merge results, missing-value handling, and stored results before chaining commands.
     critical_gotchas:
       - title: Missing values
-        body: Numeric missing values sort above all real numbers, so guard comparisons with !missing(...).
+        body: Numeric missing values sort above all real numbers, so guard comparisons with `!missing(...)`.
       - title: Comparison syntax
-        body: Use = for assignment and == for comparisons.
+        body: Use `=` for assignment and `==` for comparisons.
       - title: by-groups
-        body: Use bysort unless the data are already sorted on the grouping variables.
+        body: Use `bysort` unless the data are already sorted on the grouping variables.
       - title: Factor variables
-        body: Use i. for categorical variables and c. for continuous interactions.
+        body: Use `i.` for categorical variables and `c.` for continuous interactions.
       - title: Merge diagnostics
-        body: Inspect _merge before dropping it or asserting matched records.
+        body: Inspect `_merge` before dropping it or asserting matched records.
     interface:
       display_name: Stata core
       short_description: Built-in Stata workflows, commands, data management, and estimation
@@ -62,7 +62,7 @@ skills:
       - stata
     rules:
       - Confirm the package and its dependencies are installed before writing dependent code.
-      - Use an isolated temporary PLUS directory for automated package tests.
+      - Use an isolated temporary `PLUS` directory for automated package tests.
       - Prefer the smallest reproducible example that exercises the required package syntax.
       - Do not install or update packages in a user's normal Stata environment without authorization.
     critical_gotchas: []
@@ -92,7 +92,7 @@ skills:
     rules:
       - Plan the interface and validation path before writing plugin code.
       - Prefer wrapping an existing C or C++ backend over reimplementing an algorithm.
-      - Catch every exception that could escape stata_call and validate return codes in batch mode.
+      - Catch every exception that could escape `stata_call` and validate return codes in batch mode.
       - Treat plugin crashes as high risk because they terminate the Stata session.
     critical_gotchas: []
     interface:
@@ -106,19 +106,19 @@ routing_boundaries:
       - core/difference-in-differences
       - packages/did
     action: clarify
-    guidance: Ask whether the user wants built-in didregress or a community staggered-adoption estimator such as csdid.
+    guidance: Ask whether the user wants built-in `didregress` or a community staggered-adoption estimator such as `csdid`.
   - term: propensity score matching
     routes:
       - core/matching-methods
       - packages/psmatch2
     action: clarify
-    guidance: Ask whether the user wants built-in teffects matching or the community psmatch2 workflow.
+    guidance: Ask whether the user wants built-in `teffects` matching or the community `psmatch2` workflow.
   - term: regression discontinuity
     routes:
       - core/regression-discontinuity
       - packages/rdrobust
     action: clarify
-    guidance: Ask whether the user wants a transparent built-in manual workflow or rdrobust bias-corrected inference.
+    guidance: Ask whether the user wants a transparent built-in manual workflow or `rdrobust` bias-corrected inference.
   - term: regression table
     routes:
       - core/tables-reporting
@@ -126,14 +126,14 @@ routing_boundaries:
       - packages/estout
       - packages/outreg2
     action: clarify
-    guidance: Ask whether results should use built-in collect or etable, a sequential asdoc report, stored-model esttab, or immediate outreg2 export.
+    guidance: Ask whether results should use built-in `collect` or `etable`, a sequential `asdoc` report, stored-model `esttab`, or immediate `outreg2` export.
   - term: local polynomial regression
     routes:
       - core/nonparametric-methods
       - packages/nprobust
     action: clarify
-    guidance: Ask whether the user wants built-in npregress or community nprobust and lprobust robust bias-corrected inference.
-  - term: accelerate a computational kernel beyond ado code
+    guidance: Ask whether the user wants built-in `npregress` or community `nprobust` and `lprobust` robust bias-corrected inference.
+  - term: accelerate a computational kernel beyond .ado code
     routes:
       - core/mata-programming
       - plugins/performance_patterns

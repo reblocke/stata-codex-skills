@@ -5,7 +5,7 @@ order: 150
 title: String and Unicode functions in Stata
 trigger: >-
   Use for cleaning, splitting, searching, matching, normalizing, and measuring text with string and Unicode
-  functions, including split, substr(), strpos(), regexm(), ustrregexm(), and ustrlen().
+  functions, including `split`, `substr()`, `strpos()`, `regexm()`, `ustrregexm()`, and `ustrlen()`.
 commands:
 - split
 - substr()
@@ -37,14 +37,14 @@ assumptions:
 - Text encoding, case sensitivity, normalization, delimiters, and the intended language rules are known.
 - The regular expression or parsing rule is validated against representative valid and invalid examples.
 gotchas:
-- substr() counts bytes for Unicode text; use Unicode-aware ustr* functions when characters may be multibyte.
-- regexs() returns captures from the most recent successful regexm() evaluation, so generate captures immediately.
-- split may create a variable number of outputs and silently expose inconsistent delimiters or repeated spaces.
+- "`substr()` counts bytes for Unicode text; use Unicode-aware `ustr*` functions when characters may be multibyte."
+- "`regexs()` returns captures from the most recent successful `regexm()` evaluation, so generate captures immediately."
+- "`split` may create a variable number of outputs and silently expose inconsistent delimiters or repeated spaces."
 workflows:
 - Preserve the original text, normalize case and Unicode in a new variable, then validate transformations with frequency tables.
 - Define an anchored regular expression, generate a match flag, inspect nonmatches, and only then extract capture groups.
 validation_case: >-
-  Split a small name field, validate an anchored identifier pattern, and confirm Unicode-aware character lengths.
+  Use `split` on a small name field, validate an anchored identifier pattern, and confirm Unicode-aware character lengths.
 validation_mode: stata
 related_refs:
 - data-management

@@ -26,10 +26,10 @@ assumptions:
 - The conditional mean is correctly specified for the target contrast and observations are independent at the variance unit.
 - For IV regression, instruments are relevant and affect the outcome only through the endogenous exposure under the stated model.
 gotchas:
-- Factor-variable notation preserves base categories and enables margins; manually generated interactions are easier to misinterpret.
+- Factor-variable notation preserves base categories and enables `margins`; manually generated interactions are easier to misinterpret.
 - Robust and clustered standard errors change inference, not the estimand; clusters must match the dependence structure.
 - IV estimates require instrument relevance and an exclusion restriction that model output cannot establish.
-- predict is estimation-command specific, so confirm whether xb, residuals, or another statistic is being generated.
+- "`predict` is estimation-command specific, so confirm whether `xb`, residuals, or another statistic is being generated."
 workflows:
 - Define outcome, exposure, covariates, functional form, and variance estimator before fitting; then inspect residual and influence diagnostics.
 - For IV models, document the causal instrument argument, inspect first-stage strength, and compare with the non-IV specification.

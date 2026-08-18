@@ -24,7 +24,7 @@ assumptions:
 - Object dimensions and numeric or string types are known before matrix operations.
 - The task benefits from matrix/vector computation rather than a clearer built-in Stata command.
 gotchas:
-- Matrix multiplication uses *, while elementwise multiplication uses :*; the distinction also applies to powers and division.
+- Matrix multiplication uses `*`, while elementwise multiplication uses `:*`; the distinction also applies to powers and division.
 - Mata objects persist in the session until dropped or cleared and can affect reruns.
 - Stata missing values are very large numeric values in Mata, so comparisons need explicit missing-value handling.
 workflows:

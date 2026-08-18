@@ -2,8 +2,8 @@ slug: outreg2
 skill: packages
 section: Tables and reporting
 order: 30
-title: "outreg2: Immediate regression-table export"
-trigger: Use when the user names outreg2 or wants to export each estimation result immediately to Word/RTF, Excel, LaTeX, text, or CSV without first storing a model collection.
+title: "`outreg2`: Immediate regression-table export"
+trigger: Use when the user names `outreg2` or wants to export each estimation result immediately to Word/RTF, Excel, LaTeX, text, or CSV without first storing a model collection.
 aliases:
 - outreg2
 - immediate regression export
@@ -24,17 +24,17 @@ syntax_patterns:
 - outreg2 using filename.doc, append ctitle(Model 2) addtext(Fixed effects, Yes)
 - outreg2 using filename.tex, replace tex keep(varlist) addstat(Adjusted R2, e(r2_a))
 assumptions:
-- The intended estimation result is active immediately before each outreg2 call.
-- The output path, file format, column order, and replace-versus-append lifecycle are explicit.
+- The intended estimation result is active immediately before each `outreg2` call.
+- The output path, file format, column order, and `replace`-versus-`append` lifecycle are explicit.
 gotchas:
-- outreg2 exports the most recent estimation result; intervening estimation or postestimation commands can change what is written.
-- The .doc output is RTF rather than native DOCX. Confirm that the requested downstream application and format are compatible.
-- Use replace once and append for later models; verify the path because output is written immediately and can overwrite an existing table.
+- "`outreg2` exports the most recent estimation result; intervening estimation or postestimation commands can change what is written."
+- The `.doc` output is RTF rather than native DOCX. Confirm that the requested downstream application and format are compatible.
+- Use `replace` once and `append` for later models; verify the path because output is written immediately and can overwrite an existing table.
 workflows:
-- Run which outreg2 and ado describe outreg2 first, and request authorization before any install or update outside an isolated validator.
+- Run `which outreg2` and `ado describe outreg2` first, and request authorization before any install or update outside an isolated validator.
 - Fit one model, verify its VCE and stored results, export it, then append each later model with explicit column titles.
 - Inspect the resulting file and reconcile coefficient rows, sample sizes, notes, and added statistics with the estimation log.
-validation_case: Fit two regressions in auto.dta, write the first to outreg2_smoke.doc, append the second, confirm the file exists, and require an error-free log.
+validation_case: Fit two regressions in `auto.dta`, write the first to `outreg2_smoke.doc`, write the second with `append`, confirm the file exists, and require an error-free log.
 validation_mode: stata
 related_refs:
 - tables-reporting

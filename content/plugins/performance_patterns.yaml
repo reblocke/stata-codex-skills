@@ -3,7 +3,7 @@ skill: plugins
 section: Performance patterns
 order: 40
 title: Evidence-driven performance patterns for Stata plugins
-trigger: Use when profiling or optimizing a Stata plugin with presorted indices, buffer reuse, dense arrays, partial sorting/quickselect, precomputed norms, pthreads, deterministic thread-local random number generators, cache locality, or missing-data fast paths.
+trigger: Use when profiling or optimizing a Stata plugin with presorted indices, buffer reuse, dense arrays, partial sorting with `quickselect`, precomputed norms, `pthreads`, deterministic thread-local random number generators, cache locality, or missing-data fast paths.
 aliases:
 - plugin performance
 - presorted indices
@@ -45,7 +45,7 @@ assumptions:
 gotchas:
 - Optimization before profiling increases complexity without proving benefit; retain the baseline and measure wall time, allocations, and scaling.
 - Parallel writes, shared RNG state, and reduction order can cause races or nondeterministic floating-point results.
-- O(n*p) buffers can overflow size_t or exhaust memory at realistic Stata sizes; check dimensions before multiplication and allocation.
+- "`O(n*p)` buffers can overflow `size_t` or exhaust memory at realistic Stata sizes; check dimensions before multiplication and allocation."
 - A faster path must preserve missing-value, sort-order, tie, and error semantics exactly.
 workflows:
 - Benchmark the simplest correct implementation on fixed fixtures, profile, and identify one bottleneck.

@@ -19,7 +19,7 @@ TEST_RUN = TEST_JOBS="$(TEST_JOBS)" TEST_TIMEOUT="$(TEST_TIMEOUT)" \
 	$(UV_RUN) python scripts/run_tests.py
 
 .PHONY: lock-check bootstrap doctor refresh fetch harvest build render \
-	lint test deterministic-check scan check publish validate \
+	lint style-report test deterministic-check scan check publish validate \
 	validate-core validate-packages validate-plugin-compile \
 	validate-plugin-runtime all
 
@@ -52,6 +52,9 @@ render: build
 
 lint: build
 	$(UV_RUN) python scripts/lint_skill_pack.py
+
+style-report: build
+	$(UV_RUN) python scripts/lint_skill_pack.py --style-report
 
 test:
 	$(TEST_RUN)

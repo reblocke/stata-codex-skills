@@ -5,7 +5,7 @@ order: 630
 title: Nonparametric regression and smoothing
 trigger: >-
   Use for locally weighted smoothers, kernel regression, series regression, bandwidth selection,
-  derivative estimation, and visual assessment of nonlinear relationships with lowess and npregress.
+  derivative estimation, and visual assessment of nonlinear relationships with `lowess` and `npregress`.
 commands: [lowess, npregress kernel, npregress series, margins, marginsplot]
 aliases: [nonparametric regression, LOWESS, LOESS, kernel regression, local polynomial, smoother]
 routing_terms:
@@ -33,7 +33,7 @@ workflows:
 - Plot raw data, inspect support and density, then compare prespecified bandwidths or basis complexities.
 - Report the support used for predictions and avoid extrapolating beyond regions with adequate observations.
 validation_case: >-
-  Fit LOWESS and kernel regression to bundled data, verify the estimation sample, and calculate predictions on observed support.
+  Fit `lowess` and kernel regression to bundled data, verify the estimation sample, and calculate predictions on observed support.
 validation_mode: stata
 related_refs: [graphics, regression-discontinuity]
 install_commands: []

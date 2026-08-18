@@ -5,7 +5,7 @@ order: 130
 title: Data management in Stata
 trigger: >-
   Use for generating or replacing variables, validating keys, merging or appending datasets, reshaping,
-  collapsing, detecting duplicates, and constructing grouped variables with egen.
+  collapsing, detecting duplicates, and constructing grouped variables with `egen`.
 commands:
 - generate
 - replace
@@ -47,18 +47,18 @@ assumptions:
 - Entity and observation keys have a documented meaning and expected cardinality in every input.
 - Data transformations preserve the intended analysis unit or explicitly create a new documented unit.
 gotchas:
-- Verify key uniqueness with isid or duplicates before choosing 1:1, m:1, or 1:m merge cardinality.
+- Verify key uniqueness with `isid` or `duplicates` before choosing `1:1`, `m:1`, or `1:m` `merge` cardinality.
 - Missing key values can match other missing values and cannot identify real entities; audit them before merging.
-- merge retains master-only and using-only rows by default; inspect _merge before filtering or dropping it.
-- Avoid merge m:m because it performs positional matching within key groups rather than a relational join.
-- collapse replaces the data in memory, so preserve or save a derived copy before destructive aggregation.
+- "`merge` retains master-only and using-only rows by default; inspect `_merge` before filtering or dropping it."
+- Avoid `merge m:m` because it performs positional matching within key groups rather than a relational join.
+- "`collapse` replaces the data in memory, so `preserve` or save a derived copy before destructive aggregation."
 workflows:
-- Determine the real key, assert its cardinality on both datasets, merge, tabulate _merge, and assert the intended disposition.
-- Use joinby only when every within-key combination is substantively meaningful and verify the expected Cartesian row count.
-- Reshape a small copy first, assert the i() identifier, and verify that suffixes or j() values map to the intended occasions.
+- Determine the real key, assert its cardinality on both datasets, `merge`, tabulate `_merge`, and assert the intended disposition.
+- Use `joinby` only when every within-key combination is substantively meaningful and verify the expected Cartesian row count.
+- Use `reshape` on a small copy first, assert the `i()` identifier, and verify that suffixes or `j()` values map to the intended occasions.
 validation_case: >-
-  Build small master and using datasets, verify m:1 key cardinality, assert all merge results, and verify a
-  deliberate joinby Cartesian count.
+  Build small master and using datasets, verify `m:1` key cardinality, assert all `merge` results, and verify a
+  deliberate `joinby` Cartesian count.
 validation_mode: stata
 related_refs:
 - variables-operators

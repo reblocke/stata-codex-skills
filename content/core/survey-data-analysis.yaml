@@ -5,7 +5,7 @@ order: 280
 title: Complex survey design and estimation
 trigger: >-
   Use for probability weights, strata, primary sampling units, finite-population corrections,
-  subpopulation analyses, design-based means or proportions, and svy-prefixed regression.
+  subpopulation analyses, design-based means or proportions, and `svy`-prefixed regression.
 commands: [svyset, svydescribe, svy, subpop(), estat effects]
 aliases: [survey weights, pweights, complex survey, design-based analysis, PSU, strata, subpopulation]
 routing_terms:
@@ -26,13 +26,13 @@ assumptions:
 - The target population and any subpopulation indicator are defined consistently with survey eligibility and nonresponse.
 gotchas:
 - Applying weights without strata and PSU variables does not reproduce the full survey design variance.
-- if restricts the estimation data, whereas subpop() retains full-design information for domain variance estimation.
+- "`if` restricts the estimation data, whereas `subpop()` retains full-design information for domain variance estimation."
 - Single-PSU strata require an explicit, justified handling rule and can otherwise make standard errors missing.
 workflows:
-- Translate the survey documentation into svyset, run svydescribe, and verify weight, stratum, and PSU ranges.
-- Use subpop() for domain estimates, report design degrees of freedom, and compare weighted and unweighted denominators.
+- Translate the survey documentation into `svyset`, run `svydescribe`, and verify weight, stratum, and PSU ranges.
+- Use `subpop()` for domain estimates, report design degrees of freedom, and compare weighted and unweighted denominators.
 validation_case: >-
-  Declare a synthetic stratified clustered design with pweights, estimate a survey mean, and verify the design
+  Declare a synthetic stratified clustered design with `pweight`s, estimate a survey mean, and verify the design
   degrees of freedom are positive.
 validation_mode: stata
 related_refs: [descriptive-statistics, missing-data-handling]

@@ -5,7 +5,7 @@ order: 310
 title: Generalized method of moments estimation
 trigger: >-
   Use for one- or multiple-equation moment-condition models, instrument sets, one- and two-step GMM,
-  robust weighting matrices, overidentification tests, and postestimation with gmm.
+  robust weighting matrices, overidentification tests, and postestimation with `gmm`.
 commands: [gmm, estat overid, predict]
 aliases: [GMM, generalized method of moments, moment conditions, instruments, overidentification]
 routing_terms:

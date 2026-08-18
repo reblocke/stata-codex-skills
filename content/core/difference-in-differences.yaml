@@ -4,7 +4,7 @@ section: Causal inference
 order: 410
 title: Built-in difference-in-differences estimation
 trigger: >-
-  Use for canonical or panel difference-in-differences with didregress or xtdidregress, treatment timing,
+  Use for canonical or panel difference-in-differences with `didregress` or `xtdidregress`, treatment timing,
   group and time definitions, aggregate treatment effects, parallel-trends checks, and Granger-type tests.
 commands: [didregress, xtdidregress, estat ptrends, estat granger, estat trendplots]
 aliases: [difference in differences, difference-in-differences, DID, DiD, parallel trends, treatment timing]
@@ -26,12 +26,12 @@ assumptions:
 gotchas:
 - A nonsignificant pretrend test is not proof of parallel trends, especially with few pretreatment periods.
 - Conditioning on variables affected by treatment can change or bias the target effect.
-- didregress and xtdidregress address built-in DID designs; route requests for csdid, drdid, or other community estimators for staggered heterogeneous effects to the did package reference.
+- "`didregress` and `xtdidregress` address built-in DID designs; route requests for `csdid`, `drdid`, or other community estimators for staggered heterogeneous effects to the `did` package reference."
 workflows:
 - Plot group-time outcomes and audit treatment adoption before fitting the prespecified DID model.
 - Estimate the effect with design-appropriate inference, inspect pretrends, and report sensitivity to time windows and group composition.
 validation_case: >-
-  Construct treated and never-treated panels with a common pretrend and known post-period effect, fit didregress,
+  Construct treated and never-treated panels with a common pretrend and known post-period effect, fit `didregress`,
   and verify the treatment coefficient is positive.
 validation_mode: stata
 related_refs: [panel-data, treatment-effects, did]

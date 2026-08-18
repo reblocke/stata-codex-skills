@@ -2,8 +2,8 @@ slug: synth
 skill: packages
 section: Estimation packages
 order: 180
-title: "synth: Synthetic-control estimation"
-trigger: Use when the user asks for synth, synthetic control, donor weights, predictor weights, pre-treatment RMSPE, placebo/permutation inference, leave-one-out donor sensitivity, or treatment gaps.
+title: "`synth`: Synthetic-control estimation"
+trigger: Use when the user asks for `synth`, synthetic control, donor weights, predictor weights, pre-treatment RMSPE, placebo/permutation inference, leave-one-out donor sensitivity, or treatment gaps.
 aliases:
 - synth
 - synthetic control
@@ -31,10 +31,10 @@ gotchas:
 - Predictor periods, optimization periods, and reported result periods serve different roles; state each explicitly and use only pre-treatment information for fitting.
 - Conventional regression p-values are not the default inferential framework; assess placebo gaps, pre-treatment fit, donor weights, and sensitivity to influential donors.
 workflows:
-- Preflight synth with which and ado describe; ask before installing or updating the package.
+- Preflight `synth` with `which` and `ado describe`; ask before installing or updating the package.
 - Declare panel structure, treatment unit/period, donor exclusions, predictors, and pre-treatment periods before optimization.
 - Inspect predictor balance, donor weights, RMSPE, and the full gap path, then run prespecified placebo and leave-one-out checks.
-validation_case: Generate a seeded balanced panel with one treated unit and five donors, run synth using only pre-treatment predictors, and verify donor-weight and result matrices are returned without errors.
+validation_case: Generate a seeded balanced panel with one treated unit and five donors, run `synth` using only pre-treatment predictors, and verify donor-weight and result matrices are returned without errors.
 validation_mode: stata
 related_refs:
 - treatment-effects

@@ -3,7 +3,7 @@ skill: packages
 section: Graphics and diagnostics
 order: 220
 title: Event-study estimation and plotting packages
-trigger: Use when the user asks for eventstudyinteract, eventdd, event_plot, a Sun-Abraham interaction-weighted estimator, dynamic treatment effects, lead/lag plots, endpoint binning, pretrend tests, or modern event studies under staggered adoption.
+trigger: Use when the user asks for `eventstudyinteract`, `eventdd`, `event_plot`, a Sun-Abraham interaction-weighted estimator, dynamic treatment effects, lead/lag plots, endpoint binning, pretrend tests, or modern event studies under staggered adoption.
 aliases:
 - eventstudyinteract
 - eventdd
@@ -37,10 +37,10 @@ gotchas:
 - Omit exactly one reference period and bin sparse tails deliberately. Collinearity-driven omissions are not a substitute for a prespecified baseline.
 - A nonsignificant joint pretrend test has limited power and does not prove parallel trends; show estimates, uncertainty, and support.
 workflows:
-- Preflight the chosen estimator and its dependencies with which/ado describe; ask before installing or updating them.
+- Preflight the chosen estimator and its dependencies with `which` and `ado describe`; ask before installing or updating them.
 - Validate first-treatment timing and irreversible adoption, create and tabulate event time, choose supported horizons and controls, then estimate.
 - Store the result, test the prespecified preperiod coefficients, and plot with a zero line, labeled reference period, and support-aware endpoints.
-validation_case: On a bounded nlswork panel, construct first union year and event-time indicators, run eventstudyinteract with never-treated controls and clustered errors, and require an error-free log.
+validation_case: On a bounded `nlswork` panel, construct first union year and event-time indicators, run `eventstudyinteract` with never-treated controls and clustered errors, and require an error-free log.
 validation_mode: stata
 related_refs:
 - difference-in-differences

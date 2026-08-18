@@ -4,8 +4,8 @@ section: Statistics and econometrics
 order: 260
 title: Binary, ordinal, multinomial, count, and censored models
 trigger: >-
-  Use for binary, ordinal, multinomial, count, overdispersed-count, and censored outcomes with logit,
-  probit, ologit, mlogit, poisson, nbreg, tobit, margins, and predicted probabilities.
+  Use for binary, ordinal, multinomial, count, overdispersed-count, and censored outcomes with `logit`,
+  `probit`, `ologit`, `mlogit`, `poisson`, `nbreg`, `tobit`, `margins`, and predicted probabilities.
 commands: [logit, logistic, probit, ologit, mlogit, poisson, nbreg, tobit, margins, predict]
 aliases: [logistic regression, ordinal regression, multinomial logit, count model, negative binomial, censored regression]
 routing_terms:
@@ -32,7 +32,7 @@ gotchas:
 - Tobit assumes a latent Gaussian outcome and censoring, which is different from truncation or a structural mass at the limit.
 workflows:
 - Identify the outcome support and sampling process, select the likelihood/link, and prespecify the reported contrast.
-- Inspect sparse cells and model fit, calculate margins on clinically meaningful scales, and state the estimation denominator.
+- Inspect sparse cells and model fit, calculate `margins` on clinically meaningful scales, and state the estimation denominator.
 validation_case: >-
   Fit a binary logit model to bundled data, compute adjusted probabilities by group, and verify predictions remain in [0,1].
 validation_mode: stata

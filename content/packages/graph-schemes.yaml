@@ -2,8 +2,8 @@ slug: graph-schemes
 skill: packages
 section: Graphics and diagnostics
 order: 230
-title: Graph schemes, grstyle, and accessible palettes
-trigger: Use when the user asks for grstyle, schemepack, blindschemes, palettes, colorpalette, colrspace, plotplain, colorblind-safe Stata graphs, reusable graph styling, or a project-level scheme.
+title: "Graph schemes, the `grstyle` command, and accessible palettes"
+trigger: Use when the user asks for `grstyle`, `schemepack`, `blindschemes`, `palettes`, `colorpalette`, `colrspace`, `plotplain`, colorblind-safe Stata graphs, reusable graph styling, or a project-level scheme.
 aliases:
 - grstyle
 - schemepack
@@ -42,14 +42,14 @@ assumptions:
 - The target medium, final graph dimensions, journal color constraints, and accessibility requirements are known before styling choices are locked.
 - Scheme changes are scoped to the project or session unless the user explicitly requests a permanent Stata preference.
 gotchas:
-- set scheme ..., permanently changes future sessions; do not make that persistent change without explicit authorization.
-- grstyle init must precede grstyle set commands, and grstyle clear is needed when stale settings contaminate a new figure.
+- "`set scheme ..., permanently` changes future sessions; do not make that persistent change without explicit authorization."
+- "`grstyle init` must precede `grstyle set` commands, and `grstyle clear` is needed when stale settings contaminate a new figure."
 - Color alone is insufficient for accessibility; reinforce groups with line patterns, marker shapes, direct labels, or luminance contrast.
 workflows:
-- Preflight requested style packages with which and ado describe; ask before installing them or changing permanent settings.
+- Preflight requested style packages with `which` and `ado describe`; ask before installing them or changing permanent settings.
 - Start from a clean session-scoped scheme, define typography and grayscale-safe encodings, then apply consistent styling across related figures.
 - Render at final size and inspect labels, legends, line weights, uncertainty displays, grayscale, and common color-vision deficiencies.
-validation_case: Initialize grstyle in a temporary Stata session, apply a plain boxed style, draw an auto.dta scatter plot, and require an error-free log without changing permanent settings.
+validation_case: Initialize `grstyle` in a temporary Stata session, apply a plain boxed style, draw an `auto.dta` scatter plot, and require an error-free log without changing permanent settings.
 validation_mode: stata
 related_refs:
 - graphics

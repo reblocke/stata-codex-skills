@@ -24,13 +24,13 @@ syntax_patterns:
 - spregress outcome covariates, gs2sls dvarlag(W)
 assumptions:
 - Spatial identifiers, coordinates or boundaries, and the weight matrix represent the scientifically relevant neighborhood structure.
-- The spatial dependence terms and exogeneity restrictions match the selected spregress estimator.
+- The spatial dependence terms and exogeneity restrictions match the selected `spregress` estimator.
 gotchas:
-- Results can change materially with the weight definition and normalization; W is part of the model, not preprocessing trivia.
+- Results can change materially with the weight definition and normalization; `W` is part of the model, not preprocessing trivia.
 - Coordinate-system mistakes make distance matrices meaningless even when commands execute successfully.
 - Spatially lagged outcomes, covariates, and errors encode different data-generating assumptions.
 workflows:
-- Validate unique geography IDs and coordinates, declare with spset, create W, and inspect neighbors and normalization.
+- Validate unique geography IDs and coordinates, declare with `spset`, create `W`, and inspect neighbors and normalization.
 - Fit a nonspatial baseline, estimate the prespecified spatial model, and compare sensitivity to defensible alternative matrices.
 validation_case: >-
   Declare a small planar coordinate grid, create and summarize a row-normalized inverse-distance matrix,

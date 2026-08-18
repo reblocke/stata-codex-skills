@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 import argparse
 import re
@@ -78,7 +79,7 @@ NONEMPTY_LIST_FIELDS = {
 }
 VALIDATION_MODES = {"stata", "compilation", "manual-review"}
 STYLE_WORD_RE = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*")
-STYLE_ALLOWED_CAPITALIZED_WORDS = {
+DEFAULT_STYLE_ALLOWED_CAPITALIZED_WORDS = {
     "C",
     "C++",
     "Carlo",
@@ -97,6 +98,55 @@ STYLE_ALLOWED_CAPITALIZED_WORDS = {
     "Stata",
     "Unicode",
     "Word",
+}
+DOCUMENTATION_STYLE_PATH = REPO_ROOT / "config" / "documentation-style.yaml"
+STYLE_PROFILE_URL = "https://developers.google.com/style"
+STYLE_PROFILE_DATE_RE = re.compile(r"^20[0-9]{2}-[01][0-9]-[0-3][0-9]$")
+STYLE_REQUIRED_PROTECTED_CONTEXTS = {
+    "yaml-frontmatter",
+    "fenced-code",
+    "indented-code",
+    "inline-code",
+    "raw-html-code",
+    "raw-html-tags",
+    "jinja-control",
+    "link-destinations",
+    "exact-technical-identifiers",
+}
+STYLE_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+STYLE_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*)$")
+STYLE_HTML_CODE_OPEN_RE = re.compile(r"<(pre|code|script|style)\b", re.IGNORECASE)
+STYLE_HTML_TAG_RE = re.compile(r"<[^>\n]+>")
+STYLE_HTML_IMAGE_RE = re.compile(r"<img\b([^>]*)>", re.IGNORECASE)
+STYLE_HTML_ALT_RE = re.compile(
+    r"\balt\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))",
+    re.IGNORECASE,
+)
+STYLE_RAW_AMPERSAND_RE = re.compile(
+    r"&(?!#(?:[0-9]+|[xX][0-9A-Fa-f]+);|[A-Za-z][A-Za-z0-9]+;)"
+)
+STYLE_PASSIVE_RE = re.compile(
+    r"\b(?:am|are|be|been|being|is|was|were)\s+"
+    r"(?:[A-Za-z]+ly\s+)?[A-Za-z]+(?:ed|en)\b",
+    re.IGNORECASE,
+)
+STYLE_SENTENCE_RE = re.compile(r"(?<=[.!?])(?:[\"')\]]*)\s+")
+STYLE_PROCEDURE_HEADINGS = {
+    "installation",
+    "quick start",
+    "workflow",
+}
+STYLE_COMMON_COMMAND_WORDS = {
+    "do",
+    "for",
+    "help",
+    "if",
+    "list",
+    "return",
+    "run",
+    "save",
+    "search",
+    "use",
 }
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{40}$")
@@ -953,24 +1003,249 @@ def is_nonempty_string(value: object) -> bool:
     return isinstance(value, str) and bool(value.strip())
 
 
-def sentence_case_error(value: str) -> str | None:
-    """Return the first unexpected capitalized word in a heading-like value."""
+@dataclass(frozen=True)
+class StyleMarkdownLine:
+    """One Markdown line with deterministic prose contexts exposed."""
 
+    number: int
+    raw: str
+    visible: str
+    link_source: str
+
+
+@dataclass(frozen=True)
+class StyleMarkdownLink:
+    """One inline Markdown link or image and its destination span."""
+
+    text: str
+    destination_start: int
+    destination_end: int
+    image: bool
+
+
+def load_documentation_style_profile() -> dict:
+    """Load the reviewed documentation-style profile."""
+
+    return read_yaml(DOCUMENTATION_STYLE_PATH)
+
+
+def lint_documentation_style_profile(profile: object) -> list[str]:
+    """Validate the dated, project-scoped documentation-style profile."""
+
+    label = "config/documentation-style.yaml"
+    if not isinstance(profile, dict):
+        return [f"{label}: profile must be a mapping"]
+    errors: list[str] = []
+    if profile.get("schema_version") != 1:
+        errors.append(f"{label}: schema_version must be 1")
+
+    authority = profile.get("authority")
+    if not isinstance(authority, dict):
+        errors.append(f"{label}: authority must be a mapping")
+    else:
+        if authority.get("url") != STYLE_PROFILE_URL:
+            errors.append(
+                f"{label}: authority.url must be {STYLE_PROFILE_URL}"
+            )
+        reviewed_on = authority.get("reviewed_on")
+        valid_review_date = False
+        if isinstance(reviewed_on, str) and STYLE_PROFILE_DATE_RE.fullmatch(
+            reviewed_on
+        ):
+            try:
+                date.fromisoformat(reviewed_on)
+                valid_review_date = True
+            except ValueError:
+                pass
+        if not valid_review_date:
+            errors.append(f"{label}: authority.reviewed_on must be YYYY-MM-DD")
+        if not is_nonempty_string(authority.get("name")):
+            errors.append(f"{label}: authority.name must be nonempty")
+
+    precedence = profile.get("precedence")
+    if (
+        not isinstance(precedence, dict)
+        or precedence.get("project_first") is not True
+        or not is_nonempty_string(precedence.get("statement"))
+    ):
+        errors.append(
+            f"{label}: precedence must state that project requirements come first"
+        )
+
+    rules = profile.get("rules")
+    if not isinstance(rules, dict):
+        errors.append(f"{label}: rules must be a mapping")
+    else:
+        for group in ("commonmark_project", "google_hard", "google_advisory"):
+            values = rules.get(group)
+            if (
+                not isinstance(values, list)
+                or not values
+                or any(not is_nonempty_string(value) for value in values)
+            ):
+                errors.append(f"{label}: rules.{group} must be a nonempty string list")
+
+    protected = profile.get("protected_contexts")
+    if not isinstance(protected, list) or any(
+        not is_nonempty_string(value) for value in protected
+    ):
+        errors.append(f"{label}: protected_contexts must be a string list")
+    else:
+        missing = sorted(STYLE_REQUIRED_PROTECTED_CONTEXTS - set(protected))
+        if missing:
+            errors.append(
+                f"{label}: missing protected contexts: {', '.join(missing)}"
+            )
+        if len(protected) != len(set(protected)):
+            errors.append(f"{label}: protected_contexts contains duplicates")
+
+    exceptions = profile.get("exceptions")
+    if not isinstance(exceptions, dict):
+        errors.append(f"{label}: exceptions must be a mapping")
+    else:
+        for field in ("proper_names", "lowercase_title_prefixes"):
+            values = exceptions.get(field)
+            if (
+                not isinstance(values, list)
+                or not values
+                or any(not is_nonempty_string(value) for value in values)
+                or len(values) != len(set(values))
+            ):
+                errors.append(
+                    f"{label}: exceptions.{field} must contain unique strings"
+                )
+        prefixes = exceptions.get("lowercase_title_prefixes", [])
+        if isinstance(prefixes, list) and any(
+            isinstance(value, str) and value != value.casefold()
+            for value in prefixes
+        ):
+            errors.append(
+                f"{label}: lowercase title prefixes must be lowercase"
+            )
+        technical = exceptions.get("technical")
+        if not isinstance(technical, list) or not technical or any(
+            not isinstance(item, dict)
+            or not is_nonempty_string(item.get("id"))
+            or not is_nonempty_string(item.get("rationale"))
+            for item in technical if isinstance(technical, list)
+        ):
+            errors.append(
+                f"{label}: exceptions.technical must contain id/rationale mappings"
+            )
+
+    hard_checks = profile.get("hard_checks")
+    if not isinstance(hard_checks, dict):
+        errors.append(f"{label}: hard_checks must be a mapping")
+    else:
+        for field in ("vague_link_text", "discouraged_phrases"):
+            values = hard_checks.get(field)
+            if (
+                not isinstance(values, list)
+                or not values
+                or any(not is_nonempty_string(value) for value in values)
+                or len(values) != len(set(values))
+            ):
+                errors.append(
+                    f"{label}: hard_checks.{field} must contain unique strings"
+                )
+
+    documents = profile.get("documents")
+    if not isinstance(documents, dict):
+        errors.append(f"{label}: documents must be a mapping")
+    else:
+        sources = documents.get("source")
+        if not isinstance(sources, list) or not sources or any(
+            not is_nonempty_string(value)
+            or Path(value).is_absolute()
+            or ".." in Path(value).parts
+            for value in sources if isinstance(sources, list)
+        ):
+            errors.append(f"{label}: documents.source must contain safe relative paths")
+        elif len(sources) != len(set(sources)):
+            errors.append(f"{label}: documents.source contains duplicates")
+        generated_glob = documents.get("generated_glob")
+        if (
+            not is_nonempty_string(generated_glob)
+            or Path(generated_glob).is_absolute()
+            or ".." in Path(generated_glob).parts
+            or not str(generated_glob).startswith("build/generated/")
+        ):
+            errors.append(
+                f"{label}: documents.generated_glob must be a safe build/generated glob"
+            )
+
+    advisory = profile.get("advisory")
+    if not isinstance(advisory, dict):
+        errors.append(f"{label}: advisory must be a mapping")
+    else:
+        for field in ("max_sentence_words", "max_report_items"):
+            value = advisory.get(field)
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                errors.append(f"{label}: advisory.{field} must be a positive integer")
+    return errors
+
+
+def style_profile_names(profile: dict) -> set[str]:
+    """Return reviewed proper names from a valid or partial profile."""
+
+    values = profile.get("exceptions", {}).get("proper_names", [])
+    if not isinstance(values, list):
+        return set(DEFAULT_STYLE_ALLOWED_CAPITALIZED_WORDS)
+    return {
+        value for value in values if isinstance(value, str) and value.strip()
+    }
+
+
+def style_profile_lowercase_prefixes(profile: dict) -> set[str]:
+    """Return reviewed lowercase technical prefixes from a profile."""
+
+    values = profile.get("exceptions", {}).get(
+        "lowercase_title_prefixes",
+        [],
+    )
+    if not isinstance(values, list):
+        return set()
+    return {
+        value.casefold()
+        for value in values
+        if isinstance(value, str) and value.strip()
+    }
+
+
+def sentence_case_error(
+    value: str,
+    *,
+    proper_names: set[str] | None = None,
+    lowercase_initials: set[str] | None = None,
+) -> str | None:
+    """Return the first word with unexpected heading-style casing."""
+
+    allowed_names = (
+        DEFAULT_STYLE_ALLOWED_CAPITALIZED_WORDS
+        if proper_names is None
+        else proper_names
+    )
+    allowed_initials = lowercase_initials or set()
     first_word = True
     capitalize_after_colon = False
     for match in STYLE_WORD_RE.finditer(value):
         word = match.group(0)
-        if word not in STYLE_ALLOWED_CAPITALIZED_WORDS and any(
+        if word not in allowed_names and any(
             segment and segment[0].isupper()
             for segment in word.split("-")[1:]
         ):
             return word
-        if first_word or capitalize_after_colon:
+        if first_word:
             first_word = False
+            if (
+                word[0].islower()
+                and word.casefold() not in allowed_initials
+            ):
+                return word
+        elif capitalize_after_colon:
             capitalize_after_colon = False
         elif word[0].isupper() and not (
-            word.isupper()
-            or word in STYLE_ALLOWED_CAPITALIZED_WORDS
+            word in allowed_names
             or any(character.isdigit() for character in word)
         ):
             return word
@@ -981,6 +1256,449 @@ def sentence_case_error(value: str) -> str | None:
     return None
 
 
+def _mask_span(characters: list[str], start: int, end: int) -> None:
+    """Replace one protected half-open span with spaces."""
+
+    characters[start:end] = " " * max(0, end - start)
+
+
+def _is_escaped(value: str, index: int) -> bool:
+    backslashes = 0
+    index -= 1
+    while index >= 0 and value[index] == "\\":
+        backslashes += 1
+        index -= 1
+    return backslashes % 2 == 1
+
+
+def _mask_inline_code(value: str) -> str:
+    """Mask paired CommonMark backtick spans, including variable delimiters."""
+
+    characters = list(value)
+    runs = [
+        match
+        for match in re.finditer(r"`+", value)
+        if not _is_escaped(value, match.start())
+    ]
+    index = 0
+    while index < len(runs):
+        opening = runs[index]
+        closing_index = index + 1
+        while closing_index < len(runs):
+            closing = runs[closing_index]
+            if len(closing.group(0)) == len(opening.group(0)):
+                _mask_span(characters, opening.start(), closing.end())
+                index = closing_index
+                break
+            closing_index += 1
+        index += 1
+    return "".join(characters)
+
+
+def _mask_jinja(value: str) -> str:
+    """Mask same-line Jinja expressions and control blocks."""
+
+    characters = list(value)
+    for match in re.finditer(r"{{.*?}}|{%.*?%}|{#.*?#}", value):
+        _mask_span(characters, match.start(), match.end())
+    return "".join(characters)
+
+
+def _mask_html_code(
+    value: str,
+    active_tag: str | None,
+) -> tuple[str, str | None]:
+    """Mask raw HTML code containers while retaining surrounding prose."""
+
+    characters = list(value)
+    cursor = 0
+    while cursor < len(value):
+        if active_tag is not None:
+            closing = re.search(
+                rf"</{re.escape(active_tag)}\s*>",
+                value[cursor:],
+                re.IGNORECASE,
+            )
+            if closing is None:
+                _mask_span(characters, cursor, len(value))
+                return "".join(characters), active_tag
+            end = cursor + closing.end()
+            _mask_span(characters, cursor, end)
+            cursor = end
+            active_tag = None
+            continue
+        opening = STYLE_HTML_CODE_OPEN_RE.search(value, cursor)
+        if opening is None:
+            break
+        tag = opening.group(1).casefold()
+        closing = re.search(
+            rf"</{re.escape(tag)}\s*>",
+            value[opening.end() :],
+            re.IGNORECASE,
+        )
+        if closing is None:
+            _mask_span(characters, opening.start(), len(value))
+            return "".join(characters), tag
+        end = opening.end() + closing.end()
+        _mask_span(characters, opening.start(), end)
+        cursor = end
+    return "".join(characters), active_tag
+
+
+def _find_balanced_close(
+    value: str,
+    start: int,
+    opening: str,
+    closing: str,
+) -> int | None:
+    """Find an unescaped balanced closing delimiter."""
+
+    depth = 1
+    for index in range(start, len(value)):
+        if _is_escaped(value, index):
+            continue
+        if value[index] == opening:
+            depth += 1
+        elif value[index] == closing:
+            depth -= 1
+            if depth == 0:
+                return index
+    return None
+
+
+def _markdown_links(value: str) -> list[StyleMarkdownLink]:
+    """Extract same-line inline links and images with balanced destinations."""
+
+    links: list[StyleMarkdownLink] = []
+    cursor = 0
+    while cursor < len(value):
+        opening = value.find("[", cursor)
+        if opening < 0:
+            break
+        if _is_escaped(value, opening):
+            cursor = opening + 1
+            continue
+        closing = _find_balanced_close(value, opening + 1, "[", "]")
+        if closing is None:
+            break
+        destination_open = closing + 1
+        while destination_open < len(value) and value[destination_open] in " \t":
+            destination_open += 1
+        if destination_open >= len(value) or value[destination_open] != "(":
+            cursor = closing + 1
+            continue
+        destination_close = _find_balanced_close(
+            value,
+            destination_open + 1,
+            "(",
+            ")",
+        )
+        if destination_close is None:
+            cursor = closing + 1
+            continue
+        links.append(
+            StyleMarkdownLink(
+                text=value[opening + 1 : closing],
+                destination_start=destination_open,
+                destination_end=destination_close + 1,
+                image=opening > 0 and value[opening - 1] == "!",
+            )
+        )
+        cursor = opening + 1
+    return links
+
+
+def _reference_markdown_links(value: str) -> list[tuple[str, bool]]:
+    """Extract full and collapsed reference-style links and images."""
+
+    result: list[tuple[str, bool]] = []
+    for match in re.finditer(
+        r"(?P<image>!?)\[(?P<text>[^]\n]*)\][ \t]*\[[^]\n]*\]",
+        value,
+    ):
+        if _is_escaped(value, match.start()):
+            continue
+        result.append((match.group("text"), bool(match.group("image"))))
+    return result
+
+
+def _mask_link_destinations(value: str) -> str:
+    """Mask inline and reference-link destinations but retain link text."""
+
+    characters = list(value)
+    for link in _markdown_links(value):
+        _mask_span(
+            characters,
+            link.destination_start,
+            link.destination_end,
+        )
+    reference = re.match(r"^ {0,3}\[[^]\n]+\]:[ \t]*(\S+)", value)
+    if reference:
+        _mask_span(characters, reference.start(1), reference.end(1))
+    return "".join(characters)
+
+
+def protected_markdown_lines(text: str) -> list[StyleMarkdownLine]:
+    """Expose prose while masking deterministic Markdown code contexts."""
+
+    raw_lines = text.splitlines()
+    in_frontmatter = bool(
+        raw_lines and raw_lines[0].lstrip("\ufeff").strip() == "---"
+    )
+    frontmatter_closed = not in_frontmatter
+    fence_character: str | None = None
+    fence_length = 0
+    html_code_tag: str | None = None
+    result: list[StyleMarkdownLine] = []
+    for number, raw in enumerate(raw_lines, start=1):
+        if in_frontmatter:
+            result.append(
+                StyleMarkdownLine(number, raw, " " * len(raw), " " * len(raw))
+            )
+            if number > 1 and raw.strip() in {"---", "..."}:
+                in_frontmatter = False
+                frontmatter_closed = True
+            continue
+        if not frontmatter_closed:
+            frontmatter_closed = True
+
+        if fence_character is not None:
+            result.append(
+                StyleMarkdownLine(number, raw, " " * len(raw), " " * len(raw))
+            )
+            closing = re.match(
+                rf"^ {{0,3}}{re.escape(fence_character)}"
+                rf"{{{fence_length},}}[ \t]*$",
+                raw,
+            )
+            if closing:
+                fence_character = None
+                fence_length = 0
+            continue
+
+        fence = STYLE_FENCE_RE.match(raw)
+        if fence:
+            marker = fence.group(1)
+            fence_character = marker[0]
+            fence_length = len(marker)
+            result.append(
+                StyleMarkdownLine(number, raw, " " * len(raw), " " * len(raw))
+            )
+            continue
+
+        if raw.startswith("\t") or raw.startswith("    "):
+            result.append(
+                StyleMarkdownLine(number, raw, " " * len(raw), " " * len(raw))
+            )
+            continue
+
+        html_masked, html_code_tag = _mask_html_code(raw, html_code_tag)
+        inline_masked = _mask_inline_code(html_masked)
+        jinja_masked = _mask_jinja(inline_masked)
+        link_source = jinja_masked
+        visible = _mask_link_destinations(jinja_masked)
+        visible = STYLE_HTML_TAG_RE.sub(
+            lambda match: " " * len(match.group(0)),
+            visible,
+        )
+        result.append(StyleMarkdownLine(number, raw, visible, link_source))
+    return result
+
+
+def _heading_body(value: str) -> str:
+    """Remove an optional CommonMark ATX closing sequence."""
+
+    return re.sub(r"[ \t]+#+[ \t]*$", "", value).strip()
+
+
+def _plain_link_text(value: str) -> str:
+    """Normalize link text for deterministic vague-text checks."""
+
+    value = STYLE_HTML_TAG_RE.sub("", value)
+    value = re.sub(r"[*_~]", "", value)
+    return " ".join(value.split()).casefold()
+
+
+def _path_label(path: Path) -> str:
+    try:
+        return path.relative_to(REPO_ROOT).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def lint_markdown_document(
+    path: Path,
+    text: str,
+    profile: dict,
+) -> list[str]:
+    """Apply objective structure and Google-style checks to one document."""
+
+    errors: list[str] = []
+    label = _path_label(path)
+    lines = protected_markdown_lines(text)
+    headings: list[tuple[int, int]] = []
+    proper_names = style_profile_names(profile)
+    lowercase_initials = style_profile_lowercase_prefixes(profile)
+    hard_checks = profile.get("hard_checks", {})
+    vague_links = {
+        value.casefold()
+        for value in hard_checks.get("vague_link_text", [])
+        if isinstance(value, str)
+    }
+    discouraged = [
+        value
+        for value in hard_checks.get("discouraged_phrases", [])
+        if isinstance(value, str)
+    ]
+
+    for line in lines:
+        heading = STYLE_HEADING_RE.match(line.visible)
+        if heading:
+            level = len(heading.group(1))
+            raw_heading = STYLE_HEADING_RE.match(line.raw)
+            raw_body = _heading_body(
+                raw_heading.group(2) or "" if raw_heading else ""
+            )
+            if not raw_body:
+                errors.append(
+                    f"[CommonMark/project] {label}:{line.number}: empty heading"
+                )
+            headings.append((line.number, level))
+            visible_body = _heading_body(heading.group(2) or "")
+            visible_body = re.sub(r"!?\[([^]]*)\]", r"\1", visible_body)
+            visible_body = visible_body.strip(" \t*_~")
+            if visible_body:
+                heading_initials = set(lowercase_initials)
+                if raw_body.lstrip().casefold().startswith(
+                    ("`", "{{", "{%", "{#", "<code", "<pre")
+                ):
+                    first_visible = STYLE_WORD_RE.search(visible_body)
+                    if first_visible:
+                        heading_initials.add(first_visible.group(0).casefold())
+                bad_word = sentence_case_error(
+                    visible_body,
+                    proper_names=proper_names,
+                    lowercase_initials=heading_initials,
+                )
+                if bad_word:
+                    errors.append(
+                        f"[Google style] {label}:{line.number}: heading must use "
+                        f"sentence case; unexpected {bad_word!r}"
+                    )
+
+        for link in _markdown_links(line.link_source):
+            normalized = _plain_link_text(link.text)
+            if not link.image and (
+                normalized in vague_links or re.fullmatch(
+                r"https?://\S+",
+                normalized,
+                )
+            ):
+                errors.append(
+                    f"[Google style] {label}:{line.number}: use descriptive link "
+                    f"text instead of {link.text!r}"
+                )
+        for link_text, is_image in _reference_markdown_links(line.link_source):
+            normalized = _plain_link_text(link_text)
+            if not is_image and normalized in vague_links:
+                errors.append(
+                    f"[Google style] {label}:{line.number}: use descriptive link "
+                    f"text instead of {link_text!r}"
+                )
+
+        for image in STYLE_HTML_IMAGE_RE.finditer(line.link_source):
+            alt = STYLE_HTML_ALT_RE.search(image.group(1))
+            if alt is None:
+                errors.append(
+                    f"[Google style] {label}:{line.number}: image requires an alt attribute"
+                )
+
+        if STYLE_RAW_AMPERSAND_RE.search(line.visible):
+            errors.append(
+                f"[Google style] {label}:{line.number}: use 'and' instead of an "
+                "ampersand in prose"
+            )
+        for phrase in discouraged:
+            if re.search(rf"\b{re.escape(phrase)}\b", line.visible, re.IGNORECASE):
+                errors.append(
+                    f"[Google style] {label}:{line.number}: replace deterministic "
+                    f"directional phrase {phrase!r}"
+                )
+
+    h1_count = sum(level == 1 for _, level in headings)
+    if h1_count != 1:
+        errors.append(
+            f"[CommonMark/project] {label}: expected exactly one level-1 "
+            f"heading; found {h1_count}"
+        )
+    previous_level = 0
+    for number, level in headings:
+        if level > previous_level + 1:
+            errors.append(
+                f"[CommonMark/project] {label}:{number}: heading level jumps "
+                f"from {previous_level} to {level}"
+            )
+        previous_level = level
+    return errors
+
+
+def documentation_style_paths(
+    profile: dict,
+    *,
+    check_generated: bool,
+) -> tuple[list[Path], list[str]]:
+    """Resolve reviewed source and optional generated documentation paths."""
+
+    errors: list[str] = []
+    paths: list[Path] = []
+    repository = REPO_ROOT.resolve()
+    documents = profile.get("documents", {})
+    for relative in documents.get("source", []):
+        path = REPO_ROOT / relative
+        resolved = path.resolve()
+        if (
+            not resolved.is_relative_to(repository)
+            or path.is_symlink()
+            or not path.is_file()
+        ):
+            errors.append(
+                f"config/documentation-style.yaml: unsafe or missing document {relative!r}"
+            )
+        else:
+            paths.append(path)
+    if check_generated and BUILD_ROOT.exists():
+        generated_glob = documents.get("generated_glob", "")
+        for path in sorted(REPO_ROOT.glob(generated_glob)):
+            resolved = path.resolve()
+            if (
+                not resolved.is_relative_to(repository)
+                or path.is_symlink()
+                or not path.is_file()
+            ):
+                errors.append(
+                    f"config/documentation-style.yaml: unsafe generated document {path}"
+                )
+            else:
+                paths.append(path)
+    return paths, errors
+
+
+def lint_documentation_style(
+    profile: dict,
+    *,
+    check_generated: bool,
+) -> list[str]:
+    """Lint all configured documentation without treating advice as errors."""
+
+    paths, errors = documentation_style_paths(
+        profile,
+        check_generated=check_generated,
+    )
+    for path in paths:
+        errors.extend(lint_markdown_document(path, read_text(path), profile))
+    return errors
+
+
 def uncaptured_command(command: str) -> str:
     return re.sub(
         r"(?i)^\s*(?:(?:capture|quietly|noisily)\s+)+",
@@ -989,8 +1707,14 @@ def uncaptured_command(command: str) -> str:
     ).strip()
 
 
-def lint_config(config: dict) -> list[str]:
+def lint_config(
+    config: dict,
+    style_profile: dict | None = None,
+) -> list[str]:
     errors: list[str] = []
+    style_profile = style_profile or load_documentation_style_profile()
+    proper_names = style_profile_names(style_profile)
+    lowercase_initials = style_profile_lowercase_prefixes(style_profile)
     if config.get("schema_version") != 1:
         errors.append("config/skills.yaml: schema_version must be 1")
     expected_resolution = {
@@ -1039,7 +1763,11 @@ def lint_config(config: dict) -> list[str]:
                 )
         heading = skill.get("heading")
         if isinstance(heading, str) and (
-            bad_word := sentence_case_error(heading)
+            bad_word := sentence_case_error(
+                heading,
+                proper_names=proper_names,
+                lowercase_initials=lowercase_initials,
+            )
         ):
             errors.append(
                 f"config/skills.yaml: skill {skill_key} heading must use "
@@ -1080,7 +1808,11 @@ def lint_config(config: dict) -> list[str]:
             )
         elif sections:
             for section in sections:
-                if bad_word := sentence_case_error(section):
+                if bad_word := sentence_case_error(
+                    section,
+                    proper_names=proper_names,
+                    lowercase_initials=lowercase_initials,
+                ):
                     errors.append(
                         f"config/skills.yaml: skill {skill_key} section "
                         f"must use sentence case; unexpected {bad_word!r}"
@@ -1124,7 +1856,11 @@ def lint_config(config: dict) -> list[str]:
                 f"config/skills.yaml: skill {skill_key} interface metadata "
                 "is incomplete"
             )
-        elif bad_word := sentence_case_error(interface["display_name"]):
+        elif bad_word := sentence_case_error(
+            interface["display_name"],
+            proper_names=proper_names,
+            lowercase_initials=lowercase_initials,
+        ):
             errors.append(
                 f"config/skills.yaml: skill {skill_key} display_name must use "
                 f"sentence case; unexpected {bad_word!r}"
@@ -1233,11 +1969,13 @@ def lint_entry(
     path: Path,
     entry: object,
     skill: dict,
+    style_profile: dict | None = None,
 ) -> list[str]:
     source_label = str(path.relative_to(REPO_ROOT)) if path.is_relative_to(REPO_ROOT) else str(path)
     if not isinstance(entry, dict):
         return [f"{source_label}: content must be a mapping"]
     errors: list[str] = []
+    style_profile = style_profile or load_documentation_style_profile()
     missing = sorted(REQUIRED_FIELDS - set(entry))
     for field in missing:
         errors.append(f"{source_label}: missing field {field}")
@@ -1259,7 +1997,13 @@ def lint_entry(
         if not is_nonempty_string(entry.get(field)):
             errors.append(f"{source_label}: {field} must be nonempty")
     title = entry.get("title")
-    if isinstance(title, str) and (bad_word := sentence_case_error(title)):
+    if isinstance(title, str) and (
+        bad_word := sentence_case_error(
+            title,
+            proper_names=style_profile_names(style_profile),
+            lowercase_initials=style_profile_lowercase_prefixes(style_profile),
+        )
+    ):
         errors.append(
             f"{source_label}: title must use sentence case; "
             f"unexpected {bad_word!r}"
@@ -2066,8 +2810,20 @@ def lint_generated_drift() -> list[str]:
 
 def lint_repo(check_generated: bool = True) -> list[str]:
     errors: list[str] = []
+    style_profile = load_documentation_style_profile()
+    errors.extend(lint_documentation_style_profile(style_profile))
+    if errors:
+        return errors
     config = load_skill_config()
-    errors.extend(lint_config(config))
+    errors.extend(lint_config(config, style_profile))
+    if errors:
+        return errors
+    errors.extend(
+        lint_documentation_style(
+            style_profile,
+            check_generated=False,
+        )
+    )
     if errors:
         return errors
 
@@ -2099,7 +2855,15 @@ def lint_repo(check_generated: bool = True) -> list[str]:
     repeated_text: Counter[str] = Counter()
     for skill_key, path, entry in entries:
         skill = config["skills"][skill_key]
-        errors.extend(lint_entry(skill_key, path, entry, skill))
+        errors.extend(
+            lint_entry(
+                skill_key,
+                path,
+                entry,
+                skill,
+                style_profile,
+            )
+        )
         if not isinstance(entry, dict):
             continue
         slug = entry.get("slug")
@@ -2165,7 +2929,185 @@ def lint_repo(check_generated: bool = True) -> list[str]:
     errors.extend(lint_manifests(entries))
     if check_generated and not errors:
         errors.extend(lint_generated_drift())
+    if check_generated and not errors:
+        errors.extend(
+            lint_documentation_style(
+                style_profile,
+                check_generated=True,
+            )
+        )
     return errors
+
+
+def _style_command_candidates(entry: dict) -> tuple[str, ...]:
+    """Return conservative code-font candidates for one canonical reference."""
+
+    candidates: set[str] = set()
+    for command in entry.get("commands", []):
+        if not isinstance(command, str):
+            continue
+        normalized = command.strip()
+        if not normalized:
+            continue
+        if (
+            normalized.casefold() in STYLE_COMMON_COMMAND_WORDS
+            and re.fullmatch(r"[A-Za-z]+", normalized)
+        ):
+            continue
+        candidates.add(normalized)
+    return tuple(sorted(candidates, key=lambda value: (-len(value), value)))
+
+
+def _style_generated_command_map(
+    config: dict,
+    entries: list[tuple[str, Path, dict]],
+) -> dict[Path, tuple[str, ...]]:
+    """Map generated canonical references to their declared commands."""
+
+    result: dict[Path, tuple[str, ...]] = {}
+    for skill_key, _, entry in entries:
+        if not isinstance(entry, dict) or not is_safe_slug(entry.get("slug")):
+            continue
+        skill = config["skills"][skill_key]
+        path = (
+            BUILD_ROOT
+            / skill["folder"]
+            / skill["route_dir"]
+            / f"{entry['slug']}.md"
+        )
+        result[path.resolve()] = _style_command_candidates(entry)
+    return result
+
+
+def _style_code_omission(
+    visible: str,
+    candidates: tuple[str, ...],
+) -> str | None:
+    """Return the first declared command that remains in visible prose."""
+
+    for candidate in candidates:
+        if re.search(
+            rf"(?<![A-Za-z0-9_]){re.escape(candidate)}(?![A-Za-z0-9_])",
+            visible,
+            re.IGNORECASE,
+        ):
+            return candidate
+    return None
+
+
+def markdown_style_advisories(
+    path: Path,
+    text: str,
+    profile: dict,
+    *,
+    commands: tuple[str, ...] = (),
+) -> list[str]:
+    """Return non-blocking editorial candidates for one Markdown document."""
+
+    label = _path_label(path)
+    lines = protected_markdown_lines(text)
+    advisory_config = profile.get("advisory", {})
+    max_words = advisory_config.get("max_sentence_words", 25)
+    advisories: list[str] = []
+    pending_procedure: tuple[int, str] | None = None
+    for line in lines:
+        heading = STYLE_HEADING_RE.match(line.visible)
+        if heading:
+            body = _heading_body(heading.group(2) or "")
+            normalized_heading = normalized_text(body)
+            pending_procedure = (
+                (line.number, normalized_heading)
+                if normalized_heading in STYLE_PROCEDURE_HEADINGS
+                else None
+            )
+            continue
+
+        visible = line.visible.strip()
+        if not visible:
+            continue
+        if pending_procedure is not None:
+            if visible.startswith("- "):
+                advisories.append(
+                    f"[Google style advisory] {label}:{line.number}: "
+                    f"consider a numbered list for the "
+                    f"{pending_procedure[1]!r} procedure"
+                )
+            pending_procedure = None
+        if visible.startswith("|"):
+            continue
+
+        prose = re.sub(r"^[-*+]\s+", "", visible)
+        for sentence in STYLE_SENTENCE_RE.split(prose):
+            word_count = len(STYLE_WORD_RE.findall(sentence))
+            if word_count > max_words:
+                advisories.append(
+                    f"[Google style advisory] {label}:{line.number}: "
+                    f"sentence has {word_count} words (target at most {max_words})"
+                )
+            if word_count > 18 and (
+                ";" in sentence or sentence.count(",") >= 4
+            ):
+                advisories.append(
+                    f"[Google style advisory] {label}:{line.number}: "
+                    "review the sentence for avoidable clause complexity"
+                )
+        if STYLE_PASSIVE_RE.search(prose):
+            advisories.append(
+                f"[Google style advisory] {label}:{line.number}: "
+                "review possible passive voice"
+            )
+        if commands and (
+            candidate := _style_code_omission(line.visible, commands)
+        ):
+            advisories.append(
+                f"[Google style advisory] {label}:{line.number}: "
+                f"consider code font for declared command {candidate!r}"
+            )
+    return advisories
+
+
+def documentation_style_advisories(
+    profile: dict,
+    *,
+    check_generated: bool,
+) -> list[str]:
+    """Return bounded, explicitly non-blocking editorial candidates."""
+
+    paths, path_errors = documentation_style_paths(
+        profile,
+        check_generated=check_generated,
+    )
+    if path_errors:
+        return [
+            f"[profile advisory unavailable] {error}"
+            for error in path_errors
+        ]
+    config = load_skill_config()
+    entries = iter_content_entries(CONTENT_ROOT, config)
+    commands_by_path = _style_generated_command_map(config, entries)
+    advisory_config = profile.get("advisory", {})
+    max_items = advisory_config.get("max_report_items", 200)
+    advisories: list[str] = []
+
+    for path in paths:
+        commands = commands_by_path.get(path.resolve(), ())
+        advisories.extend(
+            markdown_style_advisories(
+                path,
+                read_text(path),
+                profile,
+                commands=commands,
+            )
+        )
+
+    if len(advisories) > max_items:
+        omitted = len(advisories) - max_items
+        advisories = advisories[:max_items]
+        advisories.append(
+            f"[Google style advisory] {omitted} additional candidates omitted by "
+            "the reviewed report limit"
+        )
+    return advisories
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -2175,12 +3117,33 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Validate sources and locks without comparing an existing build directory.",
     )
+    parser.add_argument(
+        "--style-report",
+        action="store_true",
+        help=(
+            "Print bounded editorial candidates after hard lint passes; "
+            "advisories never change the exit status."
+        ),
+    )
     args = parser.parse_args(argv)
-    errors = lint_repo(check_generated=not args.no_generated_check)
+    check_generated = not args.no_generated_check
+    errors = lint_repo(check_generated=check_generated)
     if errors:
         for error in errors:
             print(f"ERROR: {error}")
         return 1
+    if args.style_report:
+        profile = load_documentation_style_profile()
+        advisories = documentation_style_advisories(
+            profile,
+            check_generated=check_generated,
+        )
+        print(
+            "Documentation style advisory report "
+            f"({len(advisories)} non-blocking candidates)"
+        )
+        for advisory in advisories:
+            print(f"ADVISORY: {advisory}")
     print("Lint passed")
     return 0
 

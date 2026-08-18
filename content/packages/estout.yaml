@@ -2,8 +2,8 @@ slug: estout
 skill: packages
 section: Tables and reporting
 order: 20
-title: "estout, esttab, eststo, and estadd: Stored-estimate tables"
-trigger: Use when the user asks for estout, esttab, eststo, estadd, model storage, side-by-side regression tables, or export of stored estimates to LaTeX, CSV, HTML, or RTF.
+title: "`estout`, `esttab`, `eststo`, and `estadd`: Stored-estimate tables"
+trigger: Use when the user asks for `estout`, `esttab`, `eststo`, `estadd`, model storage, side-by-side regression tables, or export of stored estimates to LaTeX, CSV, HTML, or RTF.
 aliases:
 - estout
 - esttab
@@ -37,14 +37,14 @@ assumptions:
 - Every table column maps to a deliberately named stored estimate with a known estimation sample and VCE.
 - Requested row labels, statistics, significance rules, and output format are specified before export.
 gotchas:
-- esttab reports stored estimation results, so clear stale estimates and verify estimates dir before exporting.
-- File replace controls the output artifact, while eststo clear controls memory; confusing them can mix old models into a new table.
-- Factor-variable names and base categories can make keep(), drop(), and order() fragile; inspect coefficient names with matrix colnames e(b).
+- "`esttab` reports stored estimation results, so clear stale estimates and verify `estimates dir` before exporting."
+- File `replace` controls the output artifact, while `eststo clear` controls memory; confusing them can mix old models into a new table.
+- Factor-variable names and base categories can make `keep()`, `drop()`, and `order()` fragile; inspect coefficient names with `matrix colnames e(b)`.
 workflows:
-- Run which esttab, which estout, and ado describe estout before use; obtain authorization before installing or updating the package.
+- Run `which esttab`, `which estout`, and `ado describe estout` before use; obtain authorization before installing or updating the package.
 - Clear estimates, fit and name each model, replay the stored set, then export once with explicit statistics and formatting.
 - Validate the table against the estimation sample, coefficient names, standard-error type, and requested model order rather than judging appearance alone.
-validation_case: Store two regressions from auto.dta, verify both estimate names exist, render them with esttab in batch mode, and require an error-free log.
+validation_case: Store two regressions from `auto.dta`, verify both estimate names exist, render them with `esttab` in batch mode, and require an error-free log.
 validation_mode: stata
 related_refs:
 - tables-reporting

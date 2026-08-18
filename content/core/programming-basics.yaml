@@ -4,8 +4,8 @@ section: Programming and Mata
 order: 10
 title: Stata macros, loops, and do-files
 trigger: >-
-  Use for local and global macros, foreach and forvalues loops, do-file arguments, comments,
-  command delimiters, temporary names, quietly/noisily, capture, and basic reusable automation.
+  Use for `local` and `global` macros, `foreach` and `forvalues` loops, do-file arguments, comments,
+  command delimiters, temporary names, `quietly`/`noisily`, `capture`, and basic reusable automation.
 commands: [local, global, foreach, forvalues, do, run, tempfile, tempname, capture, quietly]
 aliases: [Stata programming, macro, loop, foreach, forvalues, do-file, automation]
 routing_terms:
@@ -27,12 +27,12 @@ assumptions:
 - Macro contents and loop lists are defined at the intended scope and contain valid quoted tokens.
 - Repeated commands are safe at each iteration and produce uniquely named or intentionally replaced outputs.
 gotchas:
-- Local macros disappear outside their defining scope; globals persist and can create hidden cross-script state.
+- "`local` macros disappear outside their defining scope; globals persist and can create hidden cross-script state."
 - Macro expansion happens before command parsing, so unmatched quotes or apostrophes can change the command silently.
-- capture suppresses the return code unless checked immediately and can conceal a failed iteration.
+- "`capture` suppresses the return code unless checked immediately and can conceal a failed iteration."
 workflows:
 - Prototype one concrete command, parameterize only the changing pieces, then inspect expanded commands on a small loop.
-- Use local macros and temporary files by default, check _rc after expected failures, and make reruns idempotent.
+- Use `local` macros and temporary files by default, check `_rc` after expected failures, and make reruns idempotent.
 validation_case: >-
   Loop over a fixed numeric list, construct deterministic variables, and verify both macro expansion and final values.
 validation_mode: stata

@@ -5,7 +5,7 @@ order: 610
 title: Survival-time setup, Kaplan-Meier analysis, and Cox models
 trigger: >-
   Use for time-to-event data, censoring, delayed entry, multiple-record survival data, Kaplan-Meier curves,
-  log-rank tests, Cox regression, proportional-hazards diagnostics, and stset validation.
+  log-rank tests, Cox regression, proportional-hazards diagnostics, and `stset` validation.
 commands: [stset, stdescribe, stsum, sts graph, sts test, stcox, estat phtest]
 aliases: [survival analysis, time to event, Kaplan-Meier, Cox regression, hazard ratio, censoring]
 routing_terms:
@@ -26,11 +26,11 @@ assumptions:
 - Event, censoring, entry, and exit times are correctly ordered and censoring is conditionally noninformative.
 - Cox-model hazard ratios are interpreted under proportional hazards unless time-varying effects are modeled.
 gotchas:
-- stset choices define the risk sets; an incorrect failure code or time scale invalidates every downstream result.
+- "`stset` choices define the risk sets; an incorrect failure code or time scale invalidates every downstream result."
 - Treating competing events as ordinary censoring changes the estimand and may be inappropriate.
 - A hazard ratio is neither a risk ratio nor a ratio of median survival times.
 workflows:
-- Audit time origins, event codes, delayed entry, repeated records, and exclusions; then inspect stdescribe and stsum.
+- Audit time origins, event codes, delayed entry, repeated records, and exclusions; then inspect `stdescribe` and `stsum`.
 - Plot survival by key groups, fit the prespecified model, assess proportional hazards, and report absolute survival where useful.
 validation_case: >-
   Declare synthetic censored survival data, verify the number of failures, fit a Cox model, and inspect proportional-hazards diagnostics.

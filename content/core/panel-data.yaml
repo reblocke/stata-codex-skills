@@ -5,7 +5,7 @@ order: 240
 title: Panel-data setup and regression
 trigger: >-
   Use for declaring panel-time structure, checking duplicate panel periods, fixed- or random-effects models,
-  between estimators, population-averaged models, and panel-aware lags with xtset and xtreg.
+  between estimators, population-averaged models, and panel-aware lags with `xtset` and `xtreg`.
 commands: [xtset, xtdescribe, xtsum, xtreg, hausman]
 aliases: [panel data, longitudinal data, fixed effects, random effects, within estimator, FE, RE]
 routing_terms:
@@ -26,14 +26,14 @@ assumptions:
 - Panel and time identifiers uniquely define observations and represent repeated measures of the same units.
 - Unobserved-effect, strict-exogeneity, and dependence assumptions match the selected FE, RE, or population-averaged estimator.
 gotchas:
-- xtset requires at most one observation per panel-time pair; duplicates often signal an unresolved key.
+- "`xtset` requires at most one observation per panel-time pair; duplicates often signal an unresolved key."
 - Fixed effects do not estimate coefficients for variables constant within panel and rely only on within-panel variation.
 - Serial correlation and within-panel dependence usually require panel-level clustering or another justified variance model.
 workflows:
-- Assert panel-time uniqueness, xtset the data, and inspect gaps, balance, and within/between variation before modeling.
+- Assert panel-time uniqueness, `xtset` the data, and inspect gaps, balance, and within/between variation before modeling.
 - Match FE, RE, or population-averaged estimation to the estimand and assumptions rather than choosing from a single specification test.
 validation_case: >-
-  Construct a balanced panel, assert panel-time uniqueness, declare it with xtset, and fit a fixed-effects model
+  Construct a balanced panel, assert panel-time uniqueness, declare it with `xtset`, and fit a fixed-effects model
   with panel-clustered standard errors.
 validation_mode: stata
 related_refs: [linear-regression, difference-in-differences]

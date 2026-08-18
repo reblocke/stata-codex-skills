@@ -2,8 +2,8 @@ slug: reghdfe
 skill: packages
 section: Estimation packages
 order: 170
-title: "reghdfe: High-dimensional fixed effects"
-trigger: Use when the user asks for reghdfe, absorb(), multiple high-dimensional fixed effects, interacted fixed effects, singleton handling, multi-way clustering, absorbed-effect recovery, or fast within-transformation. Route instrumental-variable models with ivreghdfe to the ivreg2 reference.
+title: "`reghdfe`: High-dimensional fixed effects"
+trigger: Use when the user asks for `reghdfe`, `absorb()`, multiple high-dimensional fixed effects, interacted fixed effects, singleton handling, multi-way clustering, absorbed-effect recovery, or fast within-transformation. Route instrumental-variable models with `ivreghdfe` to the `ivreg2` reference.
 aliases:
 - reghdfe
 - ftools
@@ -35,13 +35,13 @@ assumptions:
 - Cluster dimensions capture the relevant within-cluster dependence and include enough independent clusters for the requested inference.
 gotchas:
 - Fixed effects and cluster dimensions answer different dependence problems; absorbing year effects does not substitute for clustering at the treatment-assignment level.
-- Singleton removal and nested fixed effects can change the estimation sample and degrees of freedom. Inspect the reported counts and e(sample).
-- Instrumental-variable HDFE models use ivreghdfe and its additional ivreg2/ranktest dependencies; route those tasks to the ivreg2 reference.
+- Singleton removal and nested fixed effects can change the estimation sample and degrees of freedom. Inspect the reported counts and `e(sample)`.
+- Instrumental-variable HDFE models use `ivreghdfe` and its additional `ivreg2` and `ranktest` dependencies; route those tasks to the `ivreg2` reference.
 workflows:
-- Preflight all requested commands and ado describe their packages; ask before changing a user's installed dependency stack.
+- Preflight all requested commands and use `ado describe` for their packages; ask before changing a user's installed dependency stack.
 - Verify identifiers and within-group variation, fit the smallest model, add absorbed effects and clustering deliberately, then inspect convergence and sample changes.
-- Use the immutable ftools/reghdfe sources for isolated validation; follow the related ivreg2 reference when the requested model is instrumental-variable HDFE.
-validation_case: Fit a two-way absorbed wage model in nlswork, cluster by worker, verify positive e(N) and nonempty coefficient results, and require an error-free log.
+- Use the immutable `ftools` and `reghdfe` sources for isolated validation; follow the related `ivreg2` reference when the requested model is instrumental-variable HDFE.
+validation_case: Fit a two-way absorbed wage model in `nlswork`, cluster by worker, verify positive `e(N)` and nonempty coefficient results, and require an error-free log.
 validation_mode: stata
 related_refs:
 - linear-regression

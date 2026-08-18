@@ -4,8 +4,8 @@ section: Statistics and econometrics
 order: 230
 title: Built-in linear regression diagnostics
 trigger: >-
-  Use after regress for multicollinearity, heteroskedasticity, functional-form, specification, residual,
-  leverage, and influence checks with estat vif, estat hettest, estat ovtest, linktest, rvfplot, and predict.
+  Use after `regress` for multicollinearity, heteroskedasticity, functional-form, specification, residual,
+  leverage, and influence checks with `estat vif`, `estat hettest`, `estat ovtest`, `linktest`, `rvfplot`, and `predict`.
 commands: [estat vif, estat hettest, estat ovtest, linktest, rvfplot, predict]
 aliases: [VIF, variance inflation factor, Breusch-Pagan test, Cook-Weisberg test, RESET test, residual plot]
 routing_terms:
@@ -22,15 +22,15 @@ syntax_patterns:
 - rvfplot, yline(0)
 - predict double studentized, rstudent
 assumptions:
-- Diagnostics are applied to the final prespecified regress sample and variance structure.
+- Diagnostics are applied to the final prespecified `regress` sample and variance structure.
 - Residual, leverage, and specification checks are interpreted relative to the intended linear-model estimand.
 gotchas:
 - A diagnostic test flags a pattern under its assumptions; it does not identify the correct replacement model.
 - VIF concerns the design matrix and coefficient precision, not bias, and arbitrary thresholds should not drive variable deletion.
 - Heteroskedasticity-consistent standard errors do not repair nonlinear mean structure or influential observations.
-- linktest and RESET can reject for many reasons, so investigate residual plots and prespecified functional forms.
+- "`linktest` and RESET can reject for many reasons, so investigate residual plots and prespecified functional forms."
 workflows:
-- Fit the planned regress model, preserve its estimation sample, and run diagnostics without changing observations between commands.
+- Fit the planned `regress` model, preserve its estimation sample, and run diagnostics without changing observations between commands.
 - Combine residual-versus-fitted and influence plots with targeted tests, then document any model revision and rerun the full diagnostic set.
 validation_case: >-
   Fit a linear model, run VIF, heteroskedasticity, RESET, and link tests, create a residual-versus-fitted plot,

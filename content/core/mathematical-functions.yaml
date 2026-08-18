@@ -5,7 +5,7 @@ order: 170
 title: Mathematical, statistical, and random-number functions
 trigger: >-
   Use for arithmetic transformations, logarithms, powers, probability distributions, rowwise calculations,
-  and reproducible random-number generation in generate, replace, scalar, or Mata expressions.
+  and reproducible random-number generation in `generate`, `replace`, `scalar`, or Mata expressions.
 commands:
 - abs()
 - exp()
@@ -38,7 +38,7 @@ assumptions:
 - Function inputs use the expected units and lie within each function's mathematical domain.
 - Reproducible random generation controls the seed, observation order, and number of prior draws.
 gotchas:
-- Domain violations such as ln(nonpositive) or sqrt(negative) return missing and can propagate silently.
+- Domain violations such as `ln(nonpositive)` or `sqrt(negative)` return missing and can propagate silently.
 - Random draws are reproducible only when the seed and observation order are controlled.
 - Binary floating-point values may not compare exactly after calculation; use tolerances for numerical assertions.
 workflows:
