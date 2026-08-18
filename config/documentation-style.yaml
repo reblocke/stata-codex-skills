@@ -42,6 +42,7 @@ exceptions:
     - Carlo
     - Cox
     - GMM
+    - GitHub Actions
     - H2O
     - Heckman
     - Java
@@ -49,6 +50,7 @@ exceptions:
     - Mata
     - Monte
     - Office
+    - macOS
     - Python
     - R
     - SDK

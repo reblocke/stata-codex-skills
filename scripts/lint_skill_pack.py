@@ -4,6 +4,7 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import date
+from html.parser import HTMLParser
 from pathlib import Path
 import argparse
 import re
@@ -11,6 +12,9 @@ import stat
 import sys
 import tempfile
 import unicodedata
+
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 from runtime_guard import require_supported_runtime
 
@@ -113,15 +117,11 @@ STYLE_REQUIRED_PROTECTED_CONTEXTS = {
     "link-destinations",
     "exact-technical-identifiers",
 }
-STYLE_FENCE_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-STYLE_HEADING_RE = re.compile(r"^ {0,3}(#{1,6})(?:[ \t]+(.*)|[ \t]*)$")
-STYLE_HTML_CODE_OPEN_RE = re.compile(r"<(pre|code|script|style)\b", re.IGNORECASE)
-STYLE_HTML_TAG_RE = re.compile(r"<[^>\n]+>")
-STYLE_HTML_IMAGE_RE = re.compile(r"<img\b([^>]*)>", re.IGNORECASE)
-STYLE_HTML_ALT_RE = re.compile(
-    r"\balt\s*=\s*(?:\"([^\"]*)\"|'([^']*)'|([^\s>]+))",
-    re.IGNORECASE,
+STYLE_HTML_LITERAL_TAGS = {"code", "kbd", "pre", "script", "style"}
+STYLE_ENTITY_RE = re.compile(
+    r"&(?:#(?:[0-9]+|[xX][0-9A-Fa-f]+)|[A-Za-z][A-Za-z0-9]+);"
 )
+STYLE_MARKDOWN_PARSER = MarkdownIt("commonmark", {"html": True}).enable("table")
 STYLE_RAW_AMPERSAND_RE = re.compile(
     r"&(?!#(?:[0-9]+|[xX][0-9A-Fa-f]+);|[A-Za-z][A-Za-z0-9]+;)"
 )
@@ -1005,22 +1005,17 @@ def is_nonempty_string(value: object) -> bool:
 
 @dataclass(frozen=True)
 class StyleMarkdownLine:
-    """One Markdown line with deterministic prose contexts exposed."""
+    """One parsed Markdown block with deterministic prose exposed."""
 
     number: int
     raw: str
     visible: str
-    link_source: str
-
-
-@dataclass(frozen=True)
-class StyleMarkdownLink:
-    """One inline Markdown link or image and its destination span."""
-
-    text: str
-    destination_start: int
-    destination_end: int
-    image: bool
+    links: tuple[str, ...] = ()
+    missing_html_alt: int = 0
+    heading_level: int | None = None
+    heading_has_content: bool = False
+    protected_heading_prefix: bool = False
+    block_kind: str | None = None
 
 
 def load_documentation_style_profile() -> dict:
@@ -1226,295 +1221,258 @@ def sentence_case_error(
         else proper_names
     )
     allowed_initials = lowercase_initials or set()
-    first_word = True
-    capitalize_after_colon = False
-    for match in STYLE_WORD_RE.finditer(value):
+    normalized_value = re.sub(r"[\u2010-\u2015\u2212]", "-", value)
+    proper_spans: list[tuple[int, int]] = []
+    for name in allowed_names:
+        normalized_name = re.sub(r"[\u2010-\u2015\u2212]", "-", name)
+        if not normalized_name:
+            continue
+        for proper_match in re.finditer(
+            rf"(?<![A-Za-z0-9+.-]){re.escape(normalized_name)}"
+            rf"(?![A-Za-z0-9+.-])",
+            normalized_value,
+        ):
+            proper_spans.append(proper_match.span())
+
+    previous_end = 0
+    for index, match in enumerate(STYLE_WORD_RE.finditer(normalized_value)):
         word = match.group(0)
-        if word not in allowed_names and any(
+        reviewed_name = any(
+            start <= match.start() and match.end() <= end
+            for start, end in proper_spans
+        )
+        if not reviewed_name and any(
             segment and segment[0].isupper()
             for segment in word.split("-")[1:]
         ):
             return word
-        if first_word:
-            first_word = False
-            if (
-                word[0].islower()
-                and word.casefold() not in allowed_initials
-            ):
+        initial_position = index == 0 or ":" in normalized_value[
+            previous_end : match.start()
+        ]
+        if not reviewed_name and initial_position:
+            if word[0].islower() and word.casefold() not in allowed_initials:
                 return word
-        elif capitalize_after_colon:
-            capitalize_after_colon = False
-        elif word[0].isupper() and not (
-            word in allowed_names
-            or any(character.isdigit() for character in word)
+            letters = [character for character in word if character.isalpha()]
+            if len(letters) > 1 and all(character.isupper() for character in letters):
+                return word
+        elif not reviewed_name and word[0].isupper() and not any(
+            character.isdigit() for character in word
         ):
             return word
-        between = value[match.end() :]
-        next_match = STYLE_WORD_RE.search(between)
-        if next_match is not None:
-            capitalize_after_colon = ":" in between[: next_match.start()]
+        previous_end = match.end()
     return None
-
-
-def _mask_span(characters: list[str], start: int, end: int) -> None:
-    """Replace one protected half-open span with spaces."""
-
-    characters[start:end] = " " * max(0, end - start)
-
-
-def _is_escaped(value: str, index: int) -> bool:
-    backslashes = 0
-    index -= 1
-    while index >= 0 and value[index] == "\\":
-        backslashes += 1
-        index -= 1
-    return backslashes % 2 == 1
-
-
-def _mask_inline_code(value: str) -> str:
-    """Mask paired CommonMark backtick spans, including variable delimiters."""
-
-    characters = list(value)
-    runs = [
-        match
-        for match in re.finditer(r"`+", value)
-        if not _is_escaped(value, match.start())
-    ]
-    index = 0
-    while index < len(runs):
-        opening = runs[index]
-        closing_index = index + 1
-        while closing_index < len(runs):
-            closing = runs[closing_index]
-            if len(closing.group(0)) == len(opening.group(0)):
-                _mask_span(characters, opening.start(), closing.end())
-                index = closing_index
-                break
-            closing_index += 1
-        index += 1
-    return "".join(characters)
 
 
 def _mask_jinja(value: str) -> str:
-    """Mask same-line Jinja expressions and control blocks."""
+    """Mask Jinja expressions and control blocks inside visible prose."""
 
-    characters = list(value)
-    for match in re.finditer(r"{{.*?}}|{%.*?%}|{#.*?#}", value):
-        _mask_span(characters, match.start(), match.end())
-    return "".join(characters)
+    return re.sub(r"{{.*?}}|{%.*?%}|{#.*?#}", " ", value, flags=re.DOTALL)
 
 
-def _mask_html_code(
-    value: str,
-    active_tag: str | None,
-) -> tuple[str, str | None]:
-    """Mask raw HTML code containers while retaining surrounding prose."""
+def _mask_frontmatter_and_entities(text: str) -> str:
+    """Mask non-prose source spans while preserving Markdown line numbers."""
 
-    characters = list(value)
-    cursor = 0
-    while cursor < len(value):
-        if active_tag is not None:
-            closing = re.search(
-                rf"</{re.escape(active_tag)}\s*>",
-                value[cursor:],
-                re.IGNORECASE,
+    lines = text.splitlines(keepends=True)
+    if lines and lines[0].lstrip("\ufeff").rstrip("\r\n") == "---":
+        closing_index = len(lines) - 1
+        for index, line in enumerate(lines[1:], start=1):
+            if line.rstrip("\r\n") in {"---", "..."}:
+                closing_index = index
+                break
+        for index in range(closing_index + 1):
+            lines[index] = "".join(
+                character if character in "\r\n" else " "
+                for character in lines[index]
             )
-            if closing is None:
-                _mask_span(characters, cursor, len(value))
-                return "".join(characters), active_tag
-            end = cursor + closing.end()
-            _mask_span(characters, cursor, end)
-            cursor = end
-            active_tag = None
+    masked = "".join(lines)
+    return STYLE_ENTITY_RE.sub(
+        lambda match: " " * len(match.group(0)),
+        masked,
+    )
+
+
+class _StyleHTMLScanner(HTMLParser):
+    """Expose HTML text while protecting tags, attributes, and literal code."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.visible: list[str] = []
+        self.links: list[str] = []
+        self.missing_alt = 0
+        self._literal_tags: list[str] = []
+        self._anchors: list[list[str]] = []
+
+    @property
+    def in_literal(self) -> bool:
+        return bool(self._literal_tags)
+
+    def add_text(self, value: str) -> None:
+        if self.in_literal:
+            return
+        self.visible.append(value)
+        for anchor in self._anchors:
+            anchor.append(value)
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        normalized = tag.casefold()
+        if normalized in STYLE_HTML_LITERAL_TAGS:
+            self._literal_tags.append(normalized)
+            return
+        if self.in_literal:
+            return
+        if normalized == "a" and any(
+            name.casefold() == "href" for name, _ in attrs
+        ):
+            self._anchors.append([])
+        elif normalized == "img" and not any(
+            name.casefold() == "alt" for name, _ in attrs
+        ):
+            self.missing_alt += 1
+
+    def handle_startendtag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        self.handle_starttag(tag, attrs)
+        self.handle_endtag(tag)
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized = tag.casefold()
+        if normalized in STYLE_HTML_LITERAL_TAGS:
+            if self._literal_tags and self._literal_tags[-1] == normalized:
+                self._literal_tags.pop()
+            return
+        if self.in_literal:
+            return
+        if normalized == "a" and self._anchors:
+            self.links.append("".join(self._anchors.pop()))
+
+    def handle_data(self, data: str) -> None:
+        self.add_text(data)
+
+    def handle_entityref(self, name: str) -> None:
+        self.add_text(" ")
+
+    def handle_charref(self, name: str) -> None:
+        self.add_text(" ")
+
+
+def _inline_style_data(
+    token: Token,
+) -> tuple[str, tuple[str, ...], int]:
+    """Extract visible prose and link metadata from one inline token."""
+
+    scanner = _StyleHTMLScanner()
+    markdown_links: list[tuple[list[str], bool]] = []
+    resolved_links: list[str] = []
+
+    def add_text(value: str) -> None:
+        masked = _mask_jinja(value)
+        scanner.add_text(masked)
+        if scanner.in_literal:
+            return
+        for parts, suppressed in markdown_links:
+            if not suppressed:
+                parts.append(masked)
+
+    for child in token.children or []:
+        if child.type == "text":
+            add_text(child.content)
+        elif child.type in {"softbreak", "hardbreak"}:
+            add_text("\n")
+        elif child.type == "html_inline":
+            scanner.feed(child.content)
+        elif child.type == "link_open":
+            markdown_links.append(([], scanner.in_literal))
+        elif child.type == "link_close" and markdown_links:
+            parts, suppressed = markdown_links.pop()
+            if not suppressed:
+                resolved_links.append("".join(parts))
+        elif child.type in {"code_inline", "image"}:
             continue
-        opening = STYLE_HTML_CODE_OPEN_RE.search(value, cursor)
-        if opening is None:
-            break
-        tag = opening.group(1).casefold()
-        closing = re.search(
-            rf"</{re.escape(tag)}\s*>",
-            value[opening.end() :],
-            re.IGNORECASE,
-        )
-        if closing is None:
-            _mask_span(characters, opening.start(), len(value))
-            return "".join(characters), tag
-        end = opening.end() + closing.end()
-        _mask_span(characters, opening.start(), end)
-        cursor = end
-    return "".join(characters), active_tag
+    scanner.close()
+    return (
+        "".join(scanner.visible),
+        tuple(resolved_links + scanner.links),
+        scanner.missing_alt,
+    )
 
 
-def _find_balanced_close(
-    value: str,
-    start: int,
-    opening: str,
-    closing: str,
-) -> int | None:
-    """Find an unescaped balanced closing delimiter."""
-
-    depth = 1
-    for index in range(start, len(value)):
-        if _is_escaped(value, index):
-            continue
-        if value[index] == opening:
-            depth += 1
-        elif value[index] == closing:
-            depth -= 1
-            if depth == 0:
-                return index
-    return None
-
-
-def _markdown_links(value: str) -> list[StyleMarkdownLink]:
-    """Extract same-line inline links and images with balanced destinations."""
-
-    links: list[StyleMarkdownLink] = []
-    cursor = 0
-    while cursor < len(value):
-        opening = value.find("[", cursor)
-        if opening < 0:
-            break
-        if _is_escaped(value, opening):
-            cursor = opening + 1
-            continue
-        closing = _find_balanced_close(value, opening + 1, "[", "]")
-        if closing is None:
-            break
-        destination_open = closing + 1
-        while destination_open < len(value) and value[destination_open] in " \t":
-            destination_open += 1
-        if destination_open >= len(value) or value[destination_open] != "(":
-            cursor = closing + 1
-            continue
-        destination_close = _find_balanced_close(
-            value,
-            destination_open + 1,
-            "(",
-            ")",
-        )
-        if destination_close is None:
-            cursor = closing + 1
-            continue
-        links.append(
-            StyleMarkdownLink(
-                text=value[opening + 1 : closing],
-                destination_start=destination_open,
-                destination_end=destination_close + 1,
-                image=opening > 0 and value[opening - 1] == "!",
-            )
-        )
-        cursor = opening + 1
-    return links
-
-
-def _reference_markdown_links(value: str) -> list[tuple[str, bool]]:
-    """Extract full and collapsed reference-style links and images."""
-
-    result: list[tuple[str, bool]] = []
-    for match in re.finditer(
-        r"(?P<image>!?)\[(?P<text>[^]\n]*)\][ \t]*\[[^]\n]*\]",
-        value,
-    ):
-        if _is_escaped(value, match.start()):
-            continue
-        result.append((match.group("text"), bool(match.group("image"))))
-    return result
-
-
-def _mask_link_destinations(value: str) -> str:
-    """Mask inline and reference-link destinations but retain link text."""
-
-    characters = list(value)
-    for link in _markdown_links(value):
-        _mask_span(
-            characters,
-            link.destination_start,
-            link.destination_end,
-        )
-    reference = re.match(r"^ {0,3}\[[^]\n]+\]:[ \t]*(\S+)", value)
-    if reference:
-        _mask_span(characters, reference.start(1), reference.end(1))
-    return "".join(characters)
+def _html_block_style_data(value: str) -> tuple[str, tuple[str, ...], int]:
+    scanner = _StyleHTMLScanner()
+    scanner.feed(value)
+    scanner.close()
+    return "".join(scanner.visible), tuple(scanner.links), scanner.missing_alt
 
 
 def protected_markdown_lines(text: str) -> list[StyleMarkdownLine]:
-    """Expose prose while masking deterministic Markdown code contexts."""
+    """Parse CommonMark and return only reader-visible prose blocks."""
 
+    parsed_text = _mask_frontmatter_and_entities(text)
+    tokens = STYLE_MARKDOWN_PARSER.parse(parsed_text)
     raw_lines = text.splitlines()
-    in_frontmatter = bool(
-        raw_lines and raw_lines[0].lstrip("\ufeff").strip() == "---"
-    )
-    frontmatter_closed = not in_frontmatter
-    fence_character: str | None = None
-    fence_length = 0
-    html_code_tag: str | None = None
     result: list[StyleMarkdownLine] = []
-    for number, raw in enumerate(raw_lines, start=1):
-        if in_frontmatter:
-            result.append(
-                StyleMarkdownLine(number, raw, " " * len(raw), " " * len(raw))
-            )
-            if number > 1 and raw.strip() in {"---", "..."}:
-                in_frontmatter = False
-                frontmatter_closed = True
+    list_kinds: list[str] = []
+    for index, token in enumerate(tokens):
+        if token.type == "bullet_list_open":
+            list_kinds.append("bullet")
             continue
-        if not frontmatter_closed:
-            frontmatter_closed = True
-
-        if fence_character is not None:
-            result.append(
-                StyleMarkdownLine(number, raw, " " * len(raw), " " * len(raw))
-            )
-            closing = re.match(
-                rf"^ {{0,3}}{re.escape(fence_character)}"
-                rf"{{{fence_length},}}[ \t]*$",
-                raw,
-            )
-            if closing:
-                fence_character = None
-                fence_length = 0
+        if token.type == "ordered_list_open":
+            list_kinds.append("ordered")
+            continue
+        if token.type in {"bullet_list_close", "ordered_list_close"}:
+            if list_kinds:
+                list_kinds.pop()
+            continue
+        if token.type not in {"inline", "html_block"} or token.map is None:
             continue
 
-        fence = STYLE_FENCE_RE.match(raw)
-        if fence:
-            marker = fence.group(1)
-            fence_character = marker[0]
-            fence_length = len(marker)
-            result.append(
-                StyleMarkdownLine(number, raw, " " * len(raw), " " * len(raw))
-            )
-            continue
-
-        if raw.startswith("\t") or raw.startswith("    "):
-            result.append(
-                StyleMarkdownLine(number, raw, " " * len(raw), " " * len(raw))
-            )
-            continue
-
-        html_masked, html_code_tag = _mask_html_code(raw, html_code_tag)
-        inline_masked = _mask_inline_code(html_masked)
-        jinja_masked = _mask_jinja(inline_masked)
-        link_source = jinja_masked
-        visible = _mask_link_destinations(jinja_masked)
-        visible = STYLE_HTML_TAG_RE.sub(
-            lambda match: " " * len(match.group(0)),
-            visible,
+        start, end = token.map
+        raw = "\n".join(raw_lines[start:end])
+        previous = tokens[index - 1] if index else None
+        heading_level = (
+            int(previous.tag[1:])
+            if token.type == "inline"
+            and previous is not None
+            and previous.type == "heading_open"
+            else None
         )
-        result.append(StyleMarkdownLine(number, raw, visible, link_source))
+        block_kind = (
+            "table"
+            if previous is not None and previous.type in {"th_open", "td_open"}
+            else (list_kinds[-1] if list_kinds else None)
+        )
+        if token.type == "inline":
+            visible, links, missing_alt = _inline_style_data(token)
+        else:
+            visible, links, missing_alt = _html_block_style_data(token.content)
+        raw_heading = token.content.lstrip() if heading_level is not None else ""
+        result.append(
+            StyleMarkdownLine(
+                number=start + 1,
+                raw=raw,
+                visible=visible,
+                links=links,
+                missing_html_alt=missing_alt,
+                heading_level=heading_level,
+                heading_has_content=bool(raw_heading.strip()),
+                protected_heading_prefix=raw_heading.casefold().startswith(
+                    ("`", "{{", "{%", "{#", "<code", "<kbd", "<pre")
+                ),
+                block_kind=block_kind,
+            )
+        )
     return result
-
-
-def _heading_body(value: str) -> str:
-    """Remove an optional CommonMark ATX closing sequence."""
-
-    return re.sub(r"[ \t]+#+[ \t]*$", "", value).strip()
 
 
 def _plain_link_text(value: str) -> str:
     """Normalize link text for deterministic vague-text checks."""
 
-    value = STYLE_HTML_TAG_RE.sub("", value)
     value = re.sub(r"[*_~]", "", value)
     return " ".join(value.split()).casefold()
 
@@ -1552,26 +1510,17 @@ def lint_markdown_document(
     ]
 
     for line in lines:
-        heading = STYLE_HEADING_RE.match(line.visible)
-        if heading:
-            level = len(heading.group(1))
-            raw_heading = STYLE_HEADING_RE.match(line.raw)
-            raw_body = _heading_body(
-                raw_heading.group(2) or "" if raw_heading else ""
-            )
-            if not raw_body:
+        if line.heading_level is not None:
+            level = line.heading_level
+            if not line.heading_has_content:
                 errors.append(
                     f"[CommonMark/project] {label}:{line.number}: empty heading"
                 )
             headings.append((line.number, level))
-            visible_body = _heading_body(heading.group(2) or "")
-            visible_body = re.sub(r"!?\[([^]]*)\]", r"\1", visible_body)
-            visible_body = visible_body.strip(" \t*_~")
+            visible_body = line.visible.strip()
             if visible_body:
                 heading_initials = set(lowercase_initials)
-                if raw_body.lstrip().casefold().startswith(
-                    ("`", "{{", "{%", "{#", "<code", "<pre")
-                ):
+                if line.protected_heading_prefix:
                     first_visible = STYLE_WORD_RE.search(visible_body)
                     if first_visible:
                         heading_initials.add(first_visible.group(0).casefold())
@@ -1586,32 +1535,18 @@ def lint_markdown_document(
                         f"sentence case; unexpected {bad_word!r}"
                     )
 
-        for link in _markdown_links(line.link_source):
-            normalized = _plain_link_text(link.text)
-            if not link.image and (
-                normalized in vague_links or re.fullmatch(
-                r"https?://\S+",
-                normalized,
-                )
-            ):
-                errors.append(
-                    f"[Google style] {label}:{line.number}: use descriptive link "
-                    f"text instead of {link.text!r}"
-                )
-        for link_text, is_image in _reference_markdown_links(line.link_source):
+        for link_text in line.links:
             normalized = _plain_link_text(link_text)
-            if not is_image and normalized in vague_links:
+            if normalized in vague_links or re.fullmatch(r"https?://\S+", normalized):
                 errors.append(
                     f"[Google style] {label}:{line.number}: use descriptive link "
                     f"text instead of {link_text!r}"
                 )
 
-        for image in STYLE_HTML_IMAGE_RE.finditer(line.link_source):
-            alt = STYLE_HTML_ALT_RE.search(image.group(1))
-            if alt is None:
-                errors.append(
-                    f"[Google style] {label}:{line.number}: image requires an alt attribute"
-                )
+        for _ in range(line.missing_html_alt):
+            errors.append(
+                f"[Google style] {label}:{line.number}: image requires an alt attribute"
+            )
 
         if STYLE_RAW_AMPERSAND_RE.search(line.visible):
             errors.append(
@@ -3011,10 +2946,8 @@ def markdown_style_advisories(
     advisories: list[str] = []
     pending_procedure: tuple[int, str] | None = None
     for line in lines:
-        heading = STYLE_HEADING_RE.match(line.visible)
-        if heading:
-            body = _heading_body(heading.group(2) or "")
-            normalized_heading = normalized_text(body)
+        if line.heading_level is not None:
+            normalized_heading = normalized_text(line.visible)
             pending_procedure = (
                 (line.number, normalized_heading)
                 if normalized_heading in STYLE_PROCEDURE_HEADINGS
@@ -3026,17 +2959,17 @@ def markdown_style_advisories(
         if not visible:
             continue
         if pending_procedure is not None:
-            if visible.startswith("- "):
+            if line.block_kind == "bullet":
                 advisories.append(
                     f"[Google style advisory] {label}:{line.number}: "
                     f"consider a numbered list for the "
                     f"{pending_procedure[1]!r} procedure"
                 )
             pending_procedure = None
-        if visible.startswith("|"):
+        if line.block_kind == "table":
             continue
 
-        prose = re.sub(r"^[-*+]\s+", "", visible)
+        prose = visible
         for sentence in STYLE_SENTENCE_RE.split(prose):
             word_count = len(STYLE_WORD_RE.findall(sentence))
             if word_count > max_words:

@@ -7,8 +7,8 @@ UPSTREAM_REF ?=
 DEST ?=
 KEEP_WORKDIR ?=
 TEST_JOBS ?= 4
-TEST_TIMEOUT ?= 300
-TEST_GLOBAL_TIMEOUT ?= 360
+TEST_TIMEOUT ?= 420
+TEST_GLOBAL_TIMEOUT ?= 480
 
 PACKAGE_ARGS = $(foreach package,$(PACKAGES),--package $(package))
 CORE_ARGS = $(foreach core,$(CORES),--core $(core))

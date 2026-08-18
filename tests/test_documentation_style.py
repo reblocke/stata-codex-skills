@@ -67,7 +67,7 @@ class DocumentationStyleProfileTests(unittest.TestCase):
             ),
         )
         self.assertEqual(
-            "UPPERCASE",
+            "ALL",
             lint_skill_pack.sentence_case_error(
                 "ALL UPPERCASE",
                 proper_names=proper_names,
@@ -81,6 +81,28 @@ class DocumentationStyleProfileTests(unittest.TestCase):
                 lowercase_initials=prefixes,
             )
         )
+        for invalid in ("OVERVIEW", "Title: SUBTITLE", "Title: subtitle"):
+            with self.subTest(invalid=invalid):
+                self.assertIsNotNone(
+                    lint_skill_pack.sentence_case_error(
+                        invalid,
+                        proper_names=proper_names,
+                        lowercase_initials=prefixes,
+                    )
+                )
+        for valid in (
+            "Survival with Kaplan–Meier estimates",
+            "Use GitHub Actions",
+            "macOS setup",
+        ):
+            with self.subTest(valid=valid):
+                self.assertIsNone(
+                    lint_skill_pack.sentence_case_error(
+                        valid,
+                        proper_names=proper_names,
+                        lowercase_initials=prefixes,
+                    )
+                )
 
     def test_config_hard_fails_a_lowercase_initial_heading(self) -> None:
         config = deepcopy(libskillpack.load_skill_config())
@@ -155,6 +177,114 @@ See the [Google style guide](https://example.test/a_(b)?x=1&y=2).
 """
 
         self.assertEqual([], self.lint(text))
+
+    def test_inline_code_cannot_open_a_raw_html_protection_region(self) -> None:
+        text = """# Stata guide
+
+Use `<script>` literally.
+
+## Title Case
+
+Use A & B and see below.
+"""
+
+        errors = self.lint(text)
+
+        self.assertTrue(any("unexpected 'Case'" in error for error in errors))
+        self.assertTrue(any("ampersand in prose" in error for error in errors))
+        self.assertTrue(any("'see below'" in error for error in errors))
+
+    def test_scans_list_continuation_prose_but_not_blockquoted_fences(self) -> None:
+        prose = """# Stata guide
+
+- Step
+    Open [click here](https://example.test) & see below.
+"""
+        errors = self.lint(prose)
+
+        self.assertEqual(1, sum("descriptive link text" in error for error in errors))
+        self.assertEqual(1, sum("ampersand in prose" in error for error in errors))
+        self.assertEqual(1, sum("'see below'" in error for error in errors))
+
+        quoted_fence = """# Stata guide
+
+> ````text
+> ## Fake Heading
+> Open [click here](https://example.test) & see below.
+> ````
+"""
+
+        self.assertEqual([], self.lint(quoted_fence))
+
+    def test_supports_setext_headings_and_multiline_code_spans(self) -> None:
+        text = """Stata guide
+===========
+
+Use `literal
+Please note & see below` exactly.
+
+Valid details
+-------------
+"""
+
+        self.assertEqual([], self.lint(text))
+
+    def test_checks_shortcut_references_and_escaped_image_markers(self) -> None:
+        text = """# Stata guide
+
+Open [here] or \![click here](https://example.test/inline).
+
+[here]: https://example.test/reference
+"""
+
+        errors = self.lint(text)
+
+        self.assertEqual(2, sum("descriptive link text" in error for error in errors))
+
+    def test_does_not_parse_markdown_inside_raw_html_attributes(self) -> None:
+        text = """# Stata guide
+
+<span data-note="[click here](internal)">Descriptive text</span>
+"""
+
+        self.assertEqual([], self.lint(text))
+
+    def test_parses_html_anchors_and_img_attributes_quote_aware(self) -> None:
+        valid = """# Stata guide
+
+<img title="x > y" alt="Diagram" src="diagram.svg">
+"""
+        self.assertEqual([], self.lint(valid))
+
+        invalid = """# Stata guide
+
+<a href="guide.html">here</a>
+<img
+ src="diagram.svg">
+"""
+        errors = self.lint(invalid)
+        self.assertEqual(1, sum("descriptive link text" in error for error in errors))
+        self.assertEqual(1, sum("alt attribute" in error for error in errors))
+
+    def test_non_link_spacing_and_invalid_fence_info_follow_commonmark(self) -> None:
+        text = """# Stata guide
+
+[here] (guide.html) is ordinary prose.
+
+```bad`info
+## Real details
+```
+"""
+
+        errors = self.lint(text)
+
+        self.assertFalse(any("descriptive link text" in error for error in errors))
+        self.assertFalse(any("exactly one level-1" in error for error in errors))
+
+    def test_counts_atx_and_setext_h1s_together(self) -> None:
+        errors = self.lint("# Stata guide\n\nOther\n=====\n")
+
+        self.assertTrue(any("found 2" in error for error in errors))
 
     def test_rejects_vague_links_missing_alt_attribute_and_ampersands(self) -> None:
         text = """# Stata guide
