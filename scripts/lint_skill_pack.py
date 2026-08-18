@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
@@ -1010,12 +1010,28 @@ class StyleMarkdownLine:
     number: int
     raw: str
     visible: str
-    links: tuple[str, ...] = ()
-    missing_html_alt: int = 0
+    ampersand_visible: str = ""
+    links: tuple[StyleMarkdownLink, ...] = ()
+    missing_html_alt_offsets: tuple[int, ...] = ()
     heading_level: int | None = None
     heading_has_content: bool = False
     protected_heading_prefix: bool = False
     block_kind: str | None = None
+
+
+@dataclass(frozen=True)
+class StyleMarkdownLink:
+    """One rendered link label and its source-line offset."""
+
+    text: str
+    line_offset: int
+
+
+@dataclass
+class _StyleHTMLAnchor:
+    parts: list[str]
+    opening_line_offset: int
+    text_line_offset: int | None = None
 
 
 def load_documentation_style_profile() -> dict:
@@ -1269,7 +1285,7 @@ def _mask_jinja(value: str) -> str:
     return re.sub(r"{{.*?}}|{%.*?%}|{#.*?#}", " ", value, flags=re.DOTALL)
 
 
-def _mask_frontmatter_and_entities(text: str) -> str:
+def _mask_frontmatter(text: str, *, mask_entities: bool) -> str:
     """Mask non-prose source spans while preserving Markdown line numbers."""
 
     lines = text.splitlines(keepends=True)
@@ -1285,33 +1301,51 @@ def _mask_frontmatter_and_entities(text: str) -> str:
                 for character in lines[index]
             )
     masked = "".join(lines)
-    return STYLE_ENTITY_RE.sub(
-        lambda match: " " * len(match.group(0)),
-        masked,
-    )
+    if not mask_entities:
+        return masked
+    return STYLE_ENTITY_RE.sub(lambda match: "0" * len(match.group(0)), masked)
 
 
 class _StyleHTMLScanner(HTMLParser):
     """Expose HTML text while protecting tags, attributes, and literal code."""
 
     def __init__(self) -> None:
-        super().__init__(convert_charrefs=False)
+        super().__init__(convert_charrefs=True)
         self.visible: list[str] = []
-        self.links: list[str] = []
-        self.missing_alt = 0
+        self.accessible: list[str] = []
+        self.links: list[StyleMarkdownLink] = []
+        self.missing_alt_offsets: list[int] = []
         self._literal_tags: list[str] = []
-        self._anchors: list[list[str]] = []
+        self._anchors: list[_StyleHTMLAnchor] = []
+        self._suppress_data = False
 
     @property
     def in_literal(self) -> bool:
         return bool(self._literal_tags)
 
-    def add_text(self, value: str) -> None:
-        if self.in_literal:
+    @property
+    def in_hidden_literal(self) -> bool:
+        return any(tag in {"script", "style"} for tag in self._literal_tags)
+
+    def add_accessible(self, value: str) -> None:
+        if self.in_hidden_literal:
             return
-        self.visible.append(value)
+        self.accessible.append(value)
         for anchor in self._anchors:
-            anchor.append(value)
+            anchor.parts.append(value)
+            if anchor.text_line_offset is None and value.strip():
+                first_visible = re.search(r"\S", value)
+                leading_lines = (
+                    value[: first_visible.start()].count("\n")
+                    if first_visible is not None
+                    else 0
+                )
+                anchor.text_line_offset = self.getpos()[0] - 1 + leading_lines
+
+    def add_text(self, value: str, *, accessible_value: str | None = None) -> None:
+        self.add_accessible(value if accessible_value is None else accessible_value)
+        if not self.in_literal:
+            self.visible.append(value)
 
     def handle_starttag(
         self,
@@ -1327,11 +1361,19 @@ class _StyleHTMLScanner(HTMLParser):
         if normalized == "a" and any(
             name.casefold() == "href" for name, _ in attrs
         ):
-            self._anchors.append([])
-        elif normalized == "img" and not any(
-            name.casefold() == "alt" for name, _ in attrs
-        ):
-            self.missing_alt += 1
+            self._anchors.append(
+                _StyleHTMLAnchor([], self.getpos()[0] - 1)
+            )
+        elif normalized == "img":
+            alt_values = [
+                value
+                for name, value in attrs
+                if name.casefold() == "alt"
+            ]
+            if not alt_values:
+                self.missing_alt_offsets.append(self.getpos()[0] - 1)
+            else:
+                self.add_accessible(alt_values[0] or "")
 
     def handle_startendtag(
         self,
@@ -1350,70 +1392,162 @@ class _StyleHTMLScanner(HTMLParser):
         if self.in_literal:
             return
         if normalized == "a" and self._anchors:
-            self.links.append("".join(self._anchors.pop()))
+            anchor = self._anchors.pop()
+            self.links.append(
+                StyleMarkdownLink(
+                    "".join(anchor.parts),
+                    anchor.text_line_offset
+                    if anchor.text_line_offset is not None
+                    else anchor.opening_line_offset,
+                )
+            )
 
     def handle_data(self, data: str) -> None:
-        self.add_text(data)
+        if not self._suppress_data:
+            self.add_text(data)
 
-    def handle_entityref(self, name: str) -> None:
-        self.add_text(" ")
+    def advance_lines(self, count: int) -> None:
+        if count < 1:
+            return
+        self._suppress_data = True
+        try:
+            self.feed("\n" * count)
+        finally:
+            self._suppress_data = False
 
-    def handle_charref(self, name: str) -> None:
-        self.add_text(" ")
+    def finish(self) -> None:
+        while self._anchors:
+            anchor = self._anchors.pop()
+            self.links.append(
+                StyleMarkdownLink(
+                    "".join(anchor.parts),
+                    anchor.text_line_offset
+                    if anchor.text_line_offset is not None
+                    else anchor.opening_line_offset,
+                )
+            )
 
+
+def _code_span_newlines(
+    source: str,
+    markup: str,
+    start: int,
+) -> tuple[int, int]:
+    """Return source newlines and cursor for the next exact code span."""
+
+    matches = []
+    for match in re.finditer(
+        rf"(?<!`){re.escape(markup)}(?!`)",
+        source[start:],
+    ):
+        position = start + match.start()
+        backslashes = 0
+        cursor = position - 1
+        while cursor >= 0 and source[cursor] == "\\":
+            backslashes += 1
+            cursor -= 1
+        if backslashes % 2 == 0:
+            matches.append(match)
+    if len(matches) < 2:
+        return 0, start
+    opening = start + matches[0].start()
+    closing_end = start + matches[1].end()
+    return source[opening:closing_end].count("\n"), closing_end
 
 def _inline_style_data(
     token: Token,
-) -> tuple[str, tuple[str, ...], int]:
+) -> tuple[
+    str,
+    tuple[StyleMarkdownLink, ...],
+    tuple[int, ...],
+    str,
+]:
     """Extract visible prose and link metadata from one inline token."""
 
     scanner = _StyleHTMLScanner()
-    markdown_links: list[tuple[list[str], bool]] = []
-    resolved_links: list[str] = []
+    markdown_links: list[tuple[list[str], bool, int]] = []
+    resolved_links: list[StyleMarkdownLink] = []
+    line_offset = 0
+    code_span_cursor = 0
 
     def add_text(value: str) -> None:
         masked = _mask_jinja(value)
-        scanner.add_text(masked)
+        scanner.add_text(masked, accessible_value=value)
         if scanner.in_literal:
             return
-        for parts, suppressed in markdown_links:
+        for parts, suppressed, _ in markdown_links:
             if not suppressed:
                 parts.append(masked)
 
     for child in token.children or []:
         if child.type == "text":
             add_text(child.content)
+            line_count = child.content.count("\n")
+            scanner.advance_lines(line_count)
+            line_offset += line_count
         elif child.type in {"softbreak", "hardbreak"}:
             add_text("\n")
+            scanner.advance_lines(1)
+            line_offset += 1
         elif child.type == "html_inline":
             scanner.feed(child.content)
+            line_offset += child.content.count("\n")
         elif child.type == "link_open":
-            markdown_links.append(([], scanner.in_literal))
+            markdown_links.append(([], scanner.in_literal, line_offset))
         elif child.type == "link_close" and markdown_links:
-            parts, suppressed = markdown_links.pop()
+            parts, suppressed, start_offset = markdown_links.pop()
             if not suppressed:
-                resolved_links.append("".join(parts))
+                resolved_links.append(
+                    StyleMarkdownLink("".join(parts), start_offset)
+                )
         elif child.type in {"code_inline", "image"}:
-            continue
+            scanner.add_accessible(child.content)
+            if not scanner.in_hidden_literal:
+                for parts, suppressed, _ in markdown_links:
+                    if not suppressed:
+                        parts.append(child.content)
+            if child.type == "code_inline":
+                line_count, code_span_cursor = _code_span_newlines(
+                    token.content,
+                    child.markup,
+                    code_span_cursor,
+                )
+            else:
+                line_count = child.content.count("\n")
+            scanner.advance_lines(line_count)
+            line_offset += line_count
     scanner.close()
+    scanner.finish()
     return (
         "".join(scanner.visible),
         tuple(resolved_links + scanner.links),
-        scanner.missing_alt,
+        tuple(scanner.missing_alt_offsets),
+        "".join(scanner.accessible),
     )
 
 
-def _html_block_style_data(value: str) -> tuple[str, tuple[str, ...], int]:
+def _html_block_style_data(
+    value: str,
+) -> tuple[str, tuple[StyleMarkdownLink, ...], tuple[int, ...]]:
     scanner = _StyleHTMLScanner()
     scanner.feed(value)
     scanner.close()
-    return "".join(scanner.visible), tuple(scanner.links), scanner.missing_alt
+    scanner.finish()
+    return (
+        "".join(scanner.visible),
+        tuple(scanner.links),
+        tuple(scanner.missing_alt_offsets),
+    )
 
 
-def protected_markdown_lines(text: str) -> list[StyleMarkdownLine]:
-    """Parse CommonMark and return only reader-visible prose blocks."""
+def _parsed_markdown_lines(
+    text: str,
+    *,
+    mask_entities: bool,
+) -> list[StyleMarkdownLine]:
+    """Parse CommonMark into reader-visible prose blocks."""
 
-    parsed_text = _mask_frontmatter_and_entities(text)
+    parsed_text = _mask_frontmatter(text, mask_entities=mask_entities)
     tokens = STYLE_MARKDOWN_PARSER.parse(parsed_text)
     raw_lines = text.splitlines()
     result: list[StyleMarkdownLine] = []
@@ -1448,19 +1582,25 @@ def protected_markdown_lines(text: str) -> list[StyleMarkdownLine]:
             else (list_kinds[-1] if list_kinds else None)
         )
         if token.type == "inline":
-            visible, links, missing_alt = _inline_style_data(token)
+            visible, links, missing_alt_offsets, accessible = _inline_style_data(
+                token
+            )
         else:
-            visible, links, missing_alt = _html_block_style_data(token.content)
+            visible, links, missing_alt_offsets = _html_block_style_data(
+                token.content
+            )
+            accessible = visible
         raw_heading = token.content.lstrip() if heading_level is not None else ""
         result.append(
             StyleMarkdownLine(
                 number=start + 1,
                 raw=raw,
                 visible=visible,
+                ampersand_visible=visible,
                 links=links,
-                missing_html_alt=missing_alt,
+                missing_html_alt_offsets=missing_alt_offsets,
                 heading_level=heading_level,
-                heading_has_content=bool(raw_heading.strip()),
+                heading_has_content=bool(accessible.strip()),
                 protected_heading_prefix=raw_heading.casefold().startswith(
                     ("`", "{{", "{%", "{#", "<code", "<kbd", "<pre")
                 ),
@@ -1468,6 +1608,25 @@ def protected_markdown_lines(text: str) -> list[StyleMarkdownLine]:
             )
         )
     return result
+
+
+def protected_markdown_lines(text: str) -> list[StyleMarkdownLine]:
+    """Parse prose semantically while retaining raw-ampersand evidence."""
+
+    semantic = _parsed_markdown_lines(text, mask_entities=False)
+    if "&" not in text:
+        return semantic
+    entity_masked = _parsed_markdown_lines(text, mask_entities=True)
+    if len(semantic) != len(entity_masked) or any(
+        (line.number, line.heading_level, line.block_kind)
+        != (masked.number, masked.heading_level, masked.block_kind)
+        for line, masked in zip(semantic, entity_masked, strict=False)
+    ):
+        return semantic
+    return [
+        replace(line, ampersand_visible=masked.visible)
+        for line, masked in zip(semantic, entity_masked, strict=True)
+    ]
 
 
 def _plain_link_text(value: str) -> str:
@@ -1535,30 +1694,37 @@ def lint_markdown_document(
                         f"sentence case; unexpected {bad_word!r}"
                     )
 
-        for link_text in line.links:
-            normalized = _plain_link_text(link_text)
+        for link in line.links:
+            normalized = _plain_link_text(link.text)
             if normalized in vague_links or re.fullmatch(r"https?://\S+", normalized):
                 errors.append(
-                    f"[Google style] {label}:{line.number}: use descriptive link "
-                    f"text instead of {link_text!r}"
+                    f"[Google style] {label}:{line.number + link.line_offset}: "
+                    f"use descriptive link text instead of {link.text!r}"
                 )
 
-        for _ in range(line.missing_html_alt):
+        for offset in line.missing_html_alt_offsets:
             errors.append(
-                f"[Google style] {label}:{line.number}: image requires an alt attribute"
+                f"[Google style] {label}:{line.number + offset}: image requires "
+                "an alt attribute"
             )
 
-        if STYLE_RAW_AMPERSAND_RE.search(line.visible):
-            errors.append(
-                f"[Google style] {label}:{line.number}: use 'and' instead of an "
-                "ampersand in prose"
-            )
-        for phrase in discouraged:
-            if re.search(rf"\b{re.escape(phrase)}\b", line.visible, re.IGNORECASE):
+        for offset, visible_line in enumerate(line.ampersand_visible.splitlines()):
+            if STYLE_RAW_AMPERSAND_RE.search(visible_line):
                 errors.append(
-                    f"[Google style] {label}:{line.number}: replace deterministic "
-                    f"directional phrase {phrase!r}"
+                    f"[Google style] {label}:{line.number + offset}: use 'and' "
+                    "instead of an ampersand in prose"
                 )
+        for phrase in discouraged:
+            for offset, visible_line in enumerate(line.visible.splitlines()):
+                if re.search(
+                    rf"\b{re.escape(phrase)}\b",
+                    visible_line,
+                    re.IGNORECASE,
+                ):
+                    errors.append(
+                        f"[Google style] {label}:{line.number + offset}: replace "
+                        f"deterministic directional phrase {phrase!r}"
+                    )
 
     h1_count = sum(level == 1 for _, level in headings)
     if h1_count != 1:

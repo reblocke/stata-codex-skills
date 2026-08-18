@@ -171,12 +171,40 @@ Use `A & B`, ``see below``, and `[click here](destination)` literally.
         text = """# Stata guide
 
 See the [Google style guide](https://example.test/a_(b)?x=1&y=2).
+See the [Google style guide](https://example.test/?x=1&amp;y=2).
 <a href="https://example.test/?x=1&y=2">Descriptive guide</a>
 ![Routing diagram](https://example.test/image?a=1&b=2)
 <img src="https://example.test/image?a=1&b=2" alt="Routing diagram">
 """
 
         self.assertEqual([], self.lint(text))
+
+    def test_entity_masking_preserves_link_parsing_without_raw_ampersands(self) -> None:
+        text = """# Stata guide
+
+Open [here](https://example.test/?x=1&amp;y=2).
+Use A &amp; B in prose.
+"""
+
+        errors = self.lint(text)
+
+        self.assertEqual(1, sum("descriptive link text" in error for error in errors))
+        self.assertFalse(any("ampersand in prose" in error for error in errors))
+
+    def test_entity_encoded_visible_text_remains_semantic(self) -> None:
+        text = """# Stata guide
+
+Open [h&#101;re](guide.md).
+<a href="guide.md">h&#101;re</a>
+
+## Workflow &#68;etails
+"""
+
+        errors = self.lint(text)
+
+        self.assertEqual(2, sum("descriptive link text" in error for error in errors))
+        self.assertTrue(any("unexpected 'Details'" in error for error in errors))
+        self.assertFalse(any("ampersand in prose" in error for error in errors))
 
     def test_inline_code_cannot_open_a_raw_html_protection_region(self) -> None:
         text = """# Stata guide
@@ -193,6 +221,88 @@ Use A & B and see below.
         self.assertTrue(any("unexpected 'Case'" in error for error in errors))
         self.assertTrue(any("ampersand in prose" in error for error in errors))
         self.assertTrue(any("'see below'" in error for error in errors))
+
+    def test_multiline_prose_diagnostics_use_the_source_line(self) -> None:
+        text = """# Stata guide
+
+First sentence.
+Use A & B.
+Please see below.
+"""
+
+        errors = self.lint(text)
+
+        self.assertTrue(
+            any(
+                "sample.md:4:" in error and "ampersand" in error
+                for error in errors
+            )
+        )
+        self.assertTrue(
+            any(
+                "sample.md:5:" in error and "see below" in error
+                for error in errors
+            )
+        )
+
+    def test_multiline_link_and_image_diagnostics_use_the_source_line(self) -> None:
+        text = """# Stata guide
+
+First sentence.
+Open [here](guide.md).
+<img src="diagram.svg">
+"""
+
+        errors = self.lint(text)
+
+        self.assertTrue(
+            any(
+                "sample.md:4:" in error and "descriptive link" in error
+                for error in errors
+            )
+        )
+        self.assertTrue(
+            any(
+                "sample.md:5:" in error and "alt attribute" in error
+                for error in errors
+            )
+        )
+
+    def test_line_mapping_accounts_for_multiline_code_and_html_links(self) -> None:
+        markdown = """# Stata guide
+
+Use `literal
+code` exactly.
+Open [here](guide.md).
+<img src="diagram.svg">
+"""
+        errors = self.lint(markdown)
+        self.assertTrue(
+            any(
+                "sample.md:5:" in error and "descriptive link" in error
+                for error in errors
+            )
+        )
+        self.assertTrue(
+            any(
+                "sample.md:6:" in error and "alt attribute" in error
+                for error in errors
+            )
+        )
+
+        html = """# Stata guide
+
+<a href="guide.md">
+here
+</a>
+"""
+        errors = self.lint(html)
+        self.assertTrue(
+            any(
+                "sample.md:4:" in error and "descriptive link" in error
+                for error in errors
+            )
+        )
 
     def test_scans_list_continuation_prose_but_not_blockquoted_fences(self) -> None:
         prose = """# Stata guide
@@ -265,6 +375,27 @@ Open [here] or \![click here](https://example.test/inline).
         errors = self.lint(invalid)
         self.assertEqual(1, sum("descriptive link text" in error for error in errors))
         self.assertEqual(1, sum("alt attribute" in error for error in errors))
+
+    def test_link_text_in_code_images_and_unclosed_html_is_checked(self) -> None:
+        text = """# Stata guide
+
+Open [`here`](guide.md).
+Open [![here](image.svg)](guide.md).
+<a href="guide.md"><code>here</code></a>
+<a href="guide.md"><img src="image.svg" alt="here"></a>
+<a href="guide.md">here
+"""
+
+        errors = self.lint(text)
+
+        self.assertEqual(5, sum("descriptive link text" in error for error in errors))
+        self.assertFalse(any("alt attribute" in error for error in errors))
+
+    def test_comment_only_and_empty_html_headings_are_empty(self) -> None:
+        for heading in ("# <!-- comment -->\n", "# <span></span>\n"):
+            with self.subTest(heading=heading):
+                errors = self.lint(heading)
+                self.assertTrue(any("empty heading" in error for error in errors))
 
     def test_non_link_spacing_and_invalid_fence_info_follow_commonmark(self) -> None:
         text = """# Stata guide
