@@ -1,9 +1,9 @@
 slug: winsor
 skill: packages
-section: Data and Workflow Utilities
+section: Data and workflow utilities
 order: 330
-title: "winsor and winsor2: Explicit Outlier Capping or Trimming"
-trigger: Use when the user asks for winsor, winsor2, winsorization, percentile capping, trimming, by-group outlier treatment, cuts(), suffix(), or sensitivity analyses for extreme observations.
+title: "`winsor` and `winsor2`: Explicit outlier capping or trimming"
+trigger: Use when the user asks for `winsor`, `winsor2`, winsorization, percentile capping, trimming, by-group outlier treatment, `cuts()`, `suffix()`, or sensitivity analyses for extreme observations.
 aliases:
 - winsor
 - winsor2
@@ -32,14 +32,14 @@ assumptions:
 - The scientific rationale, variables, percentile thresholds, grouping, and choice between capping and deletion are specified before transformation.
 - Original variables remain available so the analyst can quantify changed observations and compare results with untreated data.
 gotchas:
-- replace destroys original values and makes sensitivity analysis harder; generate suffixed variables unless replacement is explicitly required and reversible.
+- "`replace` destroys original values and makes sensitivity analysis harder; generate suffixed variables unless replacement is explicitly required and reversible."
 - By-group cuts can be unstable in small groups and change the estimand relative to pooled winsorization.
 - Winsorization is not a substitute for correcting data errors or choosing a robust model; inspect extreme values before transforming them.
 workflows:
-- Preflight winsor/winsor2 with which and ado describe, and ask before installation or update.
+- Preflight `winsor` and `winsor2` with `which` and `ado describe`, and ask before installation or update.
 - Diagnose extremes and data errors, predeclare thresholds and grouping, create suffixed variables, then count and summarize changed observations.
 - Refit the primary analysis on raw and transformed variables and report whether conclusions depend on the outlier rule.
-validation_case: Create a suffixed 1st/99th-percentile winsorized price variable in auto.dta, verify the original is unchanged and the new range is no wider, and require an error-free log.
+validation_case: Create a suffixed 1st/99th-percentile winsorized `price` variable in `auto.dta`, verify the original is unchanged and the new range is no wider, and require an error-free log.
 validation_mode: stata
 related_refs:
 - data-management

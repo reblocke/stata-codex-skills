@@ -1,9 +1,9 @@
 slug: did
 skill: packages
-section: Estimation Packages
+section: Estimation packages
 order: 120
-title: Modern Staggered Difference-in-Differences Packages
-trigger: Use when the user asks for csdid, csdid_plot, drdid, did_multiplegt, did_imputation, bacondecomp, heterogeneous or staggered treatment timing, group-time effects, not-yet-treated controls, or modern alternatives to two-way fixed effects.
+title: Modern staggered difference-in-differences packages
+trigger: Use when the user asks for `csdid`, `csdid_plot`, `drdid`, `did_multiplegt`, `did_imputation`, `bacondecomp`, heterogeneous or staggered treatment timing, group-time effects, not-yet-treated controls, or modern alternatives to two-way fixed effects.
 aliases:
 - csdid
 - csdid_plot
@@ -44,14 +44,14 @@ assumptions:
 - Units have a valid panel identifier, consistently spaced time variable, and correctly encoded first-treatment period.
 - The chosen never-treated or not-yet-treated comparison group is substantively credible for the target group-time effects.
 gotchas:
-- gvar() must encode the first treatment period consistently, with never-treated units represented exactly as the installed command expects; validate it before estimation.
+- "`gvar()` must encode the first treatment period consistently, with never-treated units represented exactly as the installed command expects; validate it before estimation."
 - Staggered-adoption estimators differ in control group, aggregation, anticipation, and weighting. The commands are not interchangeable wrappers around the same estimand.
 - Event-time coefficients require an explicit reference period, support at each horizon, and clustering aligned with treatment assignment.
 workflows:
-- Use which and ado describe for the requested estimator and dependencies; ask before installing or updating packages in the user's environment.
+- Use `which` and `ado describe` for the requested estimator and dependencies; ask before installing or updating packages in the user's environment.
 - Audit panel identifiers, time spacing, treatment reversals, first-treatment timing, and available comparison groups before choosing an estimator.
 - Report the estimator, control group, aggregation, event window, clustering level, and support counts alongside estimates and plots.
-validation_case: Generate a seeded balanced panel with never-treated and staggered-treated units, run csdid with not-yet-treated controls, and require finite group-time estimates in an error-free batch log.
+validation_case: Generate a seeded balanced panel with never-treated and staggered-treated units, run `csdid` with not-yet-treated controls, and require finite group-time estimates in an error-free batch log.
 validation_mode: stata
 related_refs:
 - difference-in-differences

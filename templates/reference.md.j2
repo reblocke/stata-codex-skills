@@ -17,7 +17,7 @@ Run these read-only checks before proposing installation:
 {% endif %}
 {% if entry.install_commands %}
 
-## Optional installation (authorization required; isolated directory)
+## Optional: Install in an isolated directory
 
 These commands change the Stata environment.
 Run them only with user authorization.
@@ -34,6 +34,8 @@ or `PERSONAL` paths.
 
 ## Key commands and topics
 
+Use only the commands that match the requested task:
+
 {% for command in entry.commands %}
 - `{{ command }}`
 {% endfor %}
@@ -41,6 +43,8 @@ or `PERSONAL` paths.
 {% if entry.syntax_patterns %}
 
 ## Syntax patterns
+
+Use these task-specific patterns as a starting point:
 
 ```stata
 {% for line in entry.syntax_patterns %}
@@ -64,7 +68,7 @@ or `PERSONAL` paths.
 ## Workflow
 
 {% for item in entry.workflows %}
-- {{ item }}
+{{ loop.index }}. {{ item }}
 {% endfor %}
 
 ## Validation

@@ -1,11 +1,11 @@
 slug: descriptive-statistics
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 210
-title: Descriptive Statistics and Distribution Checks
+title: Descriptive statistics and distribution checks
 trigger: >-
   Use for means, medians, ranges, percentiles, frequency tables, cross-tabulations, correlations, codebooks,
-  and distribution checks with summarize, tabulate, tabstat, codebook, correlate, and pwcorr.
+  and distribution checks with `summarize`, `tabulate`, `tabstat`, `codebook`, `correlate`, and `pwcorr`.
 commands: [summarize, tabulate, tabstat, codebook, correlate, pwcorr]
 aliases: [summary statistics, descriptive statistics, frequency table, crosstab, correlation]
 routing_terms:
@@ -26,14 +26,14 @@ assumptions:
 - The analysis unit, denominator, subgroup definitions, and variable units are correct for each summary.
 - The selected summaries are appropriate for the variable distributions and sampling design.
 gotchas:
-- summarize and correlate use available observations differently when variables have different missingness; report denominators.
-- Frequency tables omit missing values unless missing is requested, which can hide data-quality problems.
+- "`summarize` and `correlate` use available observations differently when variables have different missingness; report denominators."
+- Frequency tables omit missing values unless `missing` is requested, which can hide data-quality problems.
 - A correlation describes pairwise association and does not establish scale agreement, causality, or model adequacy.
 workflows:
-- Start with codebook and missing-inclusive tabulations, then report distribution-aware summaries at the analysis denominator.
+- Start with `codebook` and missing-inclusive tabulations, then report distribution-aware summaries at the analysis denominator.
 - Compare overall and subgroup distributions using the same statistics and explicitly inspect sparse categories and outliers.
 validation_case: >-
-  Summarize a bundled dataset overall and by group, verify the complete-case denominator, and inspect a missing-inclusive table.
+  Run `summarize` on a bundled dataset overall and by group, verify the complete-case denominator, and inspect a missing-inclusive table.
 validation_mode: stata
 related_refs: [linear-regression, survey-data-analysis]
 install_commands: []

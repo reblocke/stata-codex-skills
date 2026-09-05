@@ -1,8 +1,8 @@
 slug: testing_strategy
 skill: plugins
-section: Testing and Validation
+section: Testing and validation
 order: 50
-title: Layered Correctness and Safety Testing for Stata Plugins
+title: Layered correctness and safety testing for Stata plugins
 trigger: Use when designing plugin tests, reference-output fixtures, batch smoke tests, source-language parity tests, error-path tests, stress tests, cross-platform validation, exact completion markers, or acceptance tolerances for a translated Stata command.
 aliases:
 - plugin testing
@@ -43,12 +43,12 @@ assumptions:
 - The reference implementation/version, fixture generator, seed, expected outputs, and numeric tolerances are pinned and reviewable.
 - Compilation success, loader/runtime success, numerical fidelity, interface behavior, and crash safety are treated as distinct test layers.
 gotchas:
-- A zero process return code is not sufficient if Stata never reached the run-specific completion marker.
+- A zero process return code is insufficient if Stata never reached the run-specific completion marker.
 - Correlation can hide scale or offset errors; deterministic outputs need absolute/relative deviation checks and known-ground-truth cases.
-- Tests run only on the developer's adopath can pass against an unintended installed package. Use an isolated PLUS and verify which.
+- Tests run only on the developer's `adopath` can pass against an unintended installed package. Use an isolated `PLUS` and verify with `which`.
 - A crashing negative test can terminate Stata; isolate dangerous cases in separate processes with bounded timeouts and cleanup.
 workflows:
-- Reuse upstream fixtures and edge cases, generate pinned reference outputs, and add Stata-specific interface/error tests.
+- Reuse upstream fixtures and edge cases, generate pinned reference outputs, and add Stata-specific interface and error tests.
 - Gate static checks and compilation first; then run isolated batch correctness, negative, stress, and platform tests with exact markers.
 - Compare against both the source implementation and known ground truth, triage discrepancies, and preserve minimal failing fixtures.
 validation_case: Execute and compare a seeded fixture through source and plugin implementations, require declared deviation bounds and expected stored results, then run malformed-input cases in separate timed batch processes and verify nonzero Stata errors without crashes.

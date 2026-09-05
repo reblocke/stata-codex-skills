@@ -1,11 +1,11 @@
 slug: sample-selection
 skill: core
-section: Causal Inference
+section: Causal inference
 order: 450
-title: Heckman Sample-Selection Models
+title: Heckman sample-selection models
 trigger: >-
   Use when an outcome is observed only after a nonrandom selection process and the task calls for
-  heckman or heckprobit, a selection equation, exclusion restrictions, inverse Mills ratios, or selection correction.
+  `heckman` or `heckprobit`, a selection equation, exclusion restrictions, inverse Mills ratios, or selection correction.
 commands: [heckman, heckprobit, mills(), predict]
 aliases: [sample selection, Heckman correction, Heckit, inverse Mills ratio, selection equation]
 routing_terms:
@@ -31,7 +31,7 @@ workflows:
 - Describe why outcomes are unobserved, define outcome and selection equations, and defend exclusion variables before estimation.
 - Compare likelihood and two-step estimates, inspect selection predictions, and test sensitivity to exclusions and functional form.
 validation_case: >-
-  Simulate an outcome observed after a modeled selection process, fit two-step heckman with an excluded predictor,
+  Simulate an outcome observed after a modeled selection process, fit two-step `heckman` with an excluded predictor,
   and verify a nonempty estimation sample.
 validation_mode: stata
 related_refs: [limited-dependent-variables, missing-data-handling]

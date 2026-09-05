@@ -1,10 +1,10 @@
 slug: maximum-likelihood
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 300
-title: User-Defined Maximum-Likelihood Estimation
+title: User-defined maximum-likelihood estimation
 trigger: >-
-  Use for specifying, evaluating, maximizing, and diagnosing custom likelihoods with ml or mlexp,
+  Use for specifying, evaluating, maximizing, and diagnosing custom likelihoods with `ml` or `mlexp`,
   parameter constraints, starting values, evaluator programs, and likelihood-based inference.
 commands: [ml model, ml check, ml search, ml maximize, mlexp, constraint]
 aliases: [maximum likelihood, MLE, likelihood evaluator, custom likelihood, ml program]
@@ -26,15 +26,15 @@ assumptions:
 - Parameters are identified and transformed so constrained quantities remain in their valid domains.
 gotchas:
 - The evaluator must return one valid log-likelihood contribution per estimation observation.
-- Scale parameters need a positivity-preserving parameterization such as exp({lnsigma}).
+- Scale parameters need a positivity-preserving parameterization such as `exp({lnsigma})`.
 - Convergence can depend on starting values, but changing them cannot rescue an unidentified or misspecified model.
 - A maximizer convergence code alone does not establish a global maximum; compare starts, gradients, and curvature.
 workflows:
 - Write the likelihood mathematically, choose parameter transformations, and validate contributions against known values.
-- Fit a simple nested case first, run ml check or inspect gradients, retry multiple starts, and compare with a built-in estimator.
+- Fit a simple nested case first, run `ml check` or inspect gradients, retry multiple starts, and compare with a built-in estimator.
 validation_case: >-
-  Estimate a normal linear model with mlexp on bundled data, verify convergence, and compare coefficient signs
-  with regress.
+  Estimate a normal linear model with `mlexp` on bundled data, verify convergence, and compare coefficient signs
+  with `regress`.
 validation_mode: stata
 related_refs: [gmm-estimation, limited-dependent-variables]
 install_commands: []

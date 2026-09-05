@@ -1,9 +1,9 @@
 slug: tabout
 skill: packages
-section: Tables and Reporting
+section: Tables and reporting
 order: 40
-title: "tabout: Cross-Tabulations and Summary Tables"
-trigger: Use when the user names tabout or needs one-way, two-way, survey-weighted, panelled, or summary-statistic tables exported as text, CSV, LaTeX, or HTML.
+title: "`tabout`: Cross-tabulations and summary tables"
+trigger: Use when the user names `tabout` or needs one-way, two-way, survey-weighted, paneled, or summary-statistic tables exported as text, CSV, LaTeX, or HTML.
 aliases:
 - tabout
 - crosstab export
@@ -26,16 +26,16 @@ syntax_patterns:
 - tabout groupvar using filename.txt, sum c(mean outcome sd outcome) replace
 assumptions:
 - Row/column variables, denominators, missing-category handling, weights, and totals are defined before export.
-- The c() statistics and f() formats are aligned position by position for the requested output.
+- The `c()` statistics and `f()` formats are aligned position by position for the requested output.
 gotchas:
-- The number and order of f() formats must match the statistics requested in c(); mismatches can misformat a table without changing its values.
-- style(tex) and HTML output require format-specific headings and escaping; validate the emitted source, not only the Stata log.
+- The number and order of `f()` formats must match the statistics requested in `c()`; mismatches can misformat a table without changing its values.
+- "`style(tex)` and HTML output require format-specific headings and escaping; validate the emitted source, not only the Stata log."
 - Missing categories, totals, survey design, and weights alter denominators. State those choices explicitly before interpreting percentages.
 workflows:
-- Run which tabout and ado describe tabout first; ask before installing or updating it in the user's environment.
-- Prototype one small table, lock the c(), f(), totals, labels, and missing-value rules, then add panels or survey settings.
+- Run `which tabout` and `ado describe tabout` first; ask before installing or updating it in the user's environment.
+- Prototype one small table, lock the `c()`, `f()`, totals, labels, and missing-value rules, then add panels or survey settings.
 - Render into a temporary output during validation and inspect both file existence and expected cell structure.
-validation_case: Export a two-way auto.dta table with frequencies and row percentages to tabout_smoke.txt, confirm the file exists, and require an error-free log.
+validation_case: Export a two-way `auto.dta` table with frequencies and row percentages to `tabout_smoke.txt`, confirm the file exists, and require an error-free log.
 validation_mode: stata
 related_refs:
 - tables-reporting

@@ -1,11 +1,11 @@
 slug: data-import-export
 skill: core
-section: Data Operations
+section: Data operations
 order: 120
-title: Data Import and Export
+title: Data import and export
 trigger: >-
   Use for moving data between Stata and CSV, delimited text, Excel, SAS, SPSS, or other supported formats,
-  including import delimited, import excel, export delimited, and export excel.
+  including `import delimited`, `import excel`, `export delimited`, and `export excel`.
 commands:
 - import delimited
 - import excel
@@ -36,11 +36,11 @@ assumptions:
 - The export target can represent the required values and metadata without unacceptable information loss.
 gotchas:
 - Automatic type inference can turn identifiers with leading zeros into numbers or mix numeric and string values.
-- firstrow treats the first Excel row as variable names; invalid names are translated, so inspect the resulting names.
-- replace overwrites the destination, and export commands do not preserve all Stata metadata such as value labels.
+- "`firstrow` treats the first Excel row as variable names; invalid names are translated, so inspect the resulting names."
+- "`replace` overwrites the destination, and export commands do not preserve all Stata metadata such as value labels."
 workflows:
 - Inspect the source delimiter, header row, encoding, missing-value conventions, and identifier columns before import.
-- After import, verify row count, storage types, missingness, and key uniqueness before saving a canonical .dta copy.
+- After import, verify row count, storage types, missingness, and key uniqueness before saving a canonical `.dta` copy.
 validation_case: >-
   Export a small labeled dataset to a temporary CSV, import it into a cleared session, and verify row count
   and numeric values without writing to the repository.

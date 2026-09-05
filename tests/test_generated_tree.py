@@ -157,7 +157,10 @@ class GeneratedTreeTests(unittest.TestCase):
 
                 final_workflow = entry["workflows"][-1]
                 self.assertIn(
-                    f"- {final_workflow}\n\n## Validation",
+                    (
+                        f"{len(entry['workflows'])}. {final_workflow}"
+                        "\n\n## Validation"
+                    ),
                     text,
                 )
 
@@ -190,10 +193,7 @@ class GeneratedTreeTests(unittest.TestCase):
         preflight_heading = (
             "## Installation preflight (read-only)"
         )
-        install_heading = (
-            "## Optional installation "
-            "(authorization required; isolated directory)"
-        )
+        install_heading = "## Optional: Install in an isolated directory"
 
         for relative, (_, entry) in self.canonical_paths().items():
             with self.subTest(reference=relative):

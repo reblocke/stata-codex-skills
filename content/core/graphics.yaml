@@ -1,8 +1,8 @@
 slug: graphics
 skill: core
-section: Output and Workflow
+section: Output and workflow
 order: 510
-title: Stata Graphics for Analysis and Publication
+title: Stata graphics for analysis and publication
 trigger: >-
   Use for scatterplots, line and fitted plots, histograms, distributions, confidence intervals,
   graph combination, schemes, direct labels, axis control, and deterministic graph export.
@@ -27,7 +27,7 @@ assumptions:
 gotchas:
 - Default axis ranges and category ordering can obscure the comparison or exaggerate small changes.
 - Color alone is not an accessible grouping channel; reinforce groups with symbols, line patterns, or direct labels.
-- Graph export replace overwrites files, and named graphs can be silently reused if replace is specified.
+- "`graph export` with `replace` overwrites files, and named graphs can be silently reused when `replace` is specified."
 workflows:
 - State the comparison, choose the simplest mark and meaningful order, then inspect missingness and denominators behind each element.
 - Build at final size, use readable typography and grayscale-safe encodings, and verify the exported artifact rather than only the viewer.

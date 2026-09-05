@@ -1,9 +1,9 @@
 slug: data-manipulation
 skill: packages
-section: Data and Workflow Utilities
+section: Data and workflow utilities
 order: 310
-title: Fast Data-Manipulation Packages for Stata
-trigger: Use when the user asks for gtools, gcollapse, gegen, greshape, gisid, gquantiles, rangestat, egenmore, distinct, missings, carryforward, or faster grouped aggregation, reshape, rolling-window, and missing-data utilities.
+title: Fast data-manipulation packages for Stata
+trigger: Use when the user asks for `gtools`, `gcollapse`, `gegen`, `greshape`, `gisid`, `gquantiles`, `rangestat`, `egenmore`, `distinct`, `missings`, `carryforward`, or faster grouped aggregation, reshape, rolling-window, and missing-data utilities.
 aliases:
 - gtools
 - gcollapse
@@ -53,14 +53,14 @@ assumptions:
 - Group keys, sort order, missing-value rules, weights, and expected row counts are defined before substituting a faster community command.
 - Any accelerated command is expected to reproduce the chosen built-in Stata operation on a small fixture before it is trusted on full data.
 gotchas:
-- gcollapse replaces the dataset in memory, just like collapse; preserve or save an intermediate dataset when the current rows must survive.
+- "`gcollapse` replaces the dataset in memory, just like `collapse`; preserve or save an intermediate dataset when the current rows must survive."
 - Community implementations can differ from built-ins in missing values, weights, storage types, sorting, and labels. Test the exact options used.
-- carryforward encodes a substantive last-observation-carried-forward assumption; do not use it as generic missing-data repair.
+- "`carryforward` encodes a substantive last-observation-carried-forward assumption; do not use it as generic missing-data repair."
 workflows:
-- Preflight only the packages needed for the task with which and ado describe; obtain authorization before installing them.
+- Preflight only the packages needed for the task with `which` and `ado describe`; obtain authorization before installing them.
 - Reproduce the transformation with a small fixture or built-in analogue, assert keys and row counts, then run the accelerated command.
 - Preserve source data, document grouping and window boundaries, and compare summaries/checksums before and after optimization.
-validation_case: Run gcollapse on auto.dta by foreign status, verify two output rows and nonmissing group means, and require an error-free log.
+validation_case: Run `gcollapse` on `auto.dta` by `foreign` status, verify two output rows and nonmissing group means, and require an error-free log.
 validation_mode: stata
 related_refs:
 - data-management

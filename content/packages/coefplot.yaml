@@ -1,9 +1,9 @@
 slug: coefplot
 skill: packages
-section: Graphics and Diagnostics
+section: Graphics and diagnostics
 order: 210
-title: "coefplot: Coefficient and Marginal-Effect Plots"
-trigger: Use when the user asks for coefplot, a forest-style coefficient plot, comparison of stored models, confidence-interval plotting, standardized coefficients, plotted margins, or direct labeling of regression estimates.
+title: "`coefplot`: Coefficient and marginal-effect plots"
+trigger: Use when the user asks for `coefplot`, a forest-style coefficient plot, comparison of stored models, confidence-interval plotting, standardized coefficients, plotted margins, or direct labeling of regression estimates.
 aliases:
 - coefplot
 - coefficient plot
@@ -27,16 +27,16 @@ syntax_patterns:
 - coefplot, vertical recast(scatter) ciopts(recast(rcap))
 assumptions:
 - The plotted estimates are comparable because they target the same outcome/scale or are explicitly separated and labeled when they do not.
-- Stored model names and coefficient names have been inspected before keep(), drop(), order(), or rename() rules are applied.
+- Stored model names and coefficient names have been inspected before `keep()`, `drop()`, `order()`, or `rename()` rules are applied.
 gotchas:
-- coefplot is a community command distinct from Stata's built-in estat coefplot; do not use estat_coefplot.sthlp as its provenance or assume identical syntax.
-- The active or named estimates determine what is plotted. Stale estimates and margins results can silently produce the wrong figure.
+- "`coefplot` is a community command distinct from Stata's built-in `estat coefplot`; do not use `estat_coefplot.sthlp` as its provenance or assume identical syntax."
+- The active or named estimates determine what is plotted. Stale estimates and `margins` results can silently produce the wrong figure.
 - Visual comparability can be misleading when models use different samples, scales, reference categories, or confidence levels.
 workflows:
-- Preflight with which coefplot and ado describe coefplot, and request authorization before installation or update.
+- Preflight with `which coefplot` and `ado describe coefplot`, and request authorization before installation or update.
 - Fit and store clearly named models, inspect coefficient names and samples, then specify the comparison, ordering, labels, reference line, and confidence level.
 - Export at final manuscript dimensions and verify labels, uncertainty, grayscale readability, and consistency with the corresponding table.
-validation_case: Store two regressions from auto.dta, plot the mpg and weight coefficients with a zero reference line, and require an error-free log without relying on built-in estat coefplot help.
+validation_case: Store two regressions from `auto.dta`, plot the `mpg` and `weight` coefficients with a zero reference line, and require an error-free log without relying on built-in `estat coefplot` help.
 validation_mode: stata
 related_refs:
 - graphics

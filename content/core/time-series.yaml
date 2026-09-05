@@ -1,11 +1,11 @@
 slug: time-series
 skill: core
-section: Statistics and Econometrics
+section: Statistics and econometrics
 order: 250
-title: Time-Series Setup, Dynamic Models, and Forecasting
+title: Time-series setup, dynamic models, and forecasting
 trigger: >-
   Use for declaring time-series data, lags and differences, ARIMA models, vector autoregressions,
-  lag-order selection, forecasts, and impulse-response functions with tsset, arima, var, and irf.
+  lag-order selection, forecasts, and impulse-response functions with `tsset`, `arima`, `var`, and `irf`.
 commands: [tsset, tsreport, arima, var, varsoc, irf, forecast]
 aliases: [time series, ARIMA, ARMA, VAR, lag operator, impulse response, IRF]
 routing_terms:
@@ -33,7 +33,7 @@ workflows:
 - Verify time uniqueness and spacing, plot the series, assess transformations, and reserve a chronological validation window.
 - Fit a prespecified dynamic model, check residual diagnostics and stability, then evaluate forecasts or IRFs with uncertainty.
 validation_case: >-
-  Create a deterministic regularly spaced series, declare it with tsset, verify a lag, and fit a stable first-order VAR.
+  Create a deterministic regularly spaced series, declare it with `tsset`, verify a lag, and fit a stable first-order VAR.
 validation_mode: stata
 related_refs: [panel-data, graphics]
 install_commands: []

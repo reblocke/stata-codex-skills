@@ -1,12 +1,12 @@
 slug: regression-discontinuity
 skill: core
-section: Causal Inference
+section: Causal inference
 order: 420
-title: Manual Regression-Discontinuity Workflow with Built-in Stata
+title: Manual regression-discontinuity workflow with built-in Stata
 trigger: >-
-  Use for a transparent built-in sharp or fuzzy regression-discontinuity workflow using regress, lpoly,
-  and twoway; includes cutoff coding, local bandwidths, side-specific slopes, sensitivity, placebo cutoffs,
-  density inspection, and covariate-continuity checks. Route robust bias-corrected inference to rdrobust.
+  Use for a transparent built-in sharp or fuzzy regression-discontinuity workflow using `regress`, `lpoly`,
+  and `twoway`; includes cutoff coding, local bandwidths, side-specific slopes, sensitivity, placebo cutoffs,
+  density inspection, and covariate-continuity checks. Route robust bias-corrected inference to `rdrobust`.
 commands: [regress, ivregress 2sls, lpoly, twoway scatter, twoway lfit, histogram]
 aliases: [regression discontinuity, regression-discontinuity, RD, RDD, cutoff design, local linear regression]
 routing_terms:
@@ -31,13 +31,13 @@ assumptions:
 - Potential outcomes are continuous at the cutoff absent treatment, with no precise manipulation of the running variable.
 - The cutoff, assignment rule, bandwidth, polynomial order, and outcome timing are defined independently of observed effects.
 gotchas:
-- Stata has no built-in rd command; do not infer provenance or syntax from unrelated help files containing the letters rd.
+- Stata has no built-in `rd` command; do not infer provenance or syntax from unrelated help files containing the letters `rd`.
 - Global high-order polynomials can create unstable boundary behavior and misleading discontinuity estimates.
-- Conventional regress standard errors do not provide robust bias-corrected local-polynomial inference.
+- Conventional `regress` standard errors do not provide robust bias-corrected local-polynomial inference.
 - Sorting or heaping at the cutoff and discontinuities in baseline covariates threaten design validity.
 workflows:
 - Center the running variable, verify treatment assignment, plot raw data and separate local fits, then estimate a prespecified local linear model.
-- Repeat plausible bandwidths and polynomial orders, inspect placebo cutoffs and covariates, and route publication-grade robust inference to rdrobust.
+- Repeat plausible bandwidths and polynomial orders, inspect placebo cutoffs and covariates, and route publication-grade robust inference to `rdrobust`.
 validation_case: >-
   Generate a sharp cutoff with a known jump, estimate side-specific local linear slopes within a fixed bandwidth,
   verify a positive discontinuity, and run a placebo cutoff model.

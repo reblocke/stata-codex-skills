@@ -1,11 +1,11 @@
 slug: tables-reporting
 skill: core
-section: Output and Workflow
+section: Output and workflow
 order: 520
-title: Built-in Tables, Collections, and Office Export
+title: Built-in tables, collections, and Office export
 trigger: >-
-  Use for descriptive or model tables with table and etable, collection layout and styling,
-  previewing results, and exporting controlled outputs with collect, putexcel, putdocx, or putpdf.
+  Use for descriptive or model tables with `table` and `etable`, collection layout and styling,
+  previewing results, and exporting controlled outputs with `collect`, `putexcel`, `putdocx`, or `putpdf`.
 commands: [table, etable, collect, collect preview, collect layout, collect export, putexcel, putdocx, putpdf]
 aliases: [reporting table, publication table, etable, collect, Excel export, Word export]
 routing_terms:
@@ -28,13 +28,13 @@ assumptions:
 - Collection dimensions and labels uniquely identify every result before styling or export.
 gotchas:
 - Formatting cannot repair an incorrect denominator or silently mixed estimation samples.
-- collect retains session state until cleared; stale collections can contaminate reruns.
+- "`collect` retains session state until cleared; stale collections can contaminate reruns."
 - Exported spreadsheets and documents may render differently from the Stata preview and require artifact inspection.
 workflows:
 - Compute and validate statistics before styling, then build a small collection with explicit row and column dimensions.
 - Clear stale state, render deterministically, export to a temporary or approved path, and inspect the final artifact.
 validation_case: >-
-  Build a descriptive table and an etable from bundled data, preview each collection, and clear collection state.
+  Build a descriptive `table` and an `etable` from bundled data, preview each collection, and clear collection state.
 validation_mode: stata
 related_refs: [graphics, workflow-best-practices]
 install_commands: []

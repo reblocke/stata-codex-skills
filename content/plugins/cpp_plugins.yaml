@@ -1,9 +1,9 @@
 slug: cpp_plugins
 skill: plugins
-section: C++ Wrapping
+section: C++ wrapping
 order: 20
-title: Safe C++ Wrappers for Stata Plugins
-trigger: Use when a Stata plugin needs C++, extern "C", STL containers, exception containment, a vendored C++ backend, separate C/C++ compilation, cross-platform linking, or investigation of name-mangling and loader errors.
+title: Safe C++ wrappers for Stata plugins
+trigger: Use when a Stata plugin needs C++, `extern "C"`, STL containers, exception containment, a vendored C++ backend, separate C/C++ compilation, cross-platform linking, or investigation of name-mangling and loader errors.
 aliases:
 - C++ Stata plugin
 - extern C
@@ -39,17 +39,17 @@ syntax_patterns:
 - 'try { return run_plugin(argc, argv); } catch (const std::exception &e) { char message[512]; snprintf(message, sizeof(message), "plugin: %s\n", e.what()); SF_error(message); return 909; }'
 assumptions:
 - The wrapped backend's exact version and license are recorded, and its public API can be called without embedding a Python/R runtime.
-- stplugin.c is compiled as C, the wrapper as C++, and the final binary targets the same OS/architecture as Stata.
+- "`stplugin.c` is compiled as C, the wrapper as C++, and the final binary targets the same OS/architecture as Stata."
 gotchas:
-- stata_call must have C linkage or Stata cannot find the symbol; the rest of the implementation can remain idiomatic C++.
-- Never allow a C++ exception to cross the C ABI boundary. Catch standard, allocation, and unknown exceptions and translate them to SF_error plus a nonzero code.
-- Compiling stplugin.c as C++ can alter SDK linkage; build it as a separate C object and link that object into the C++ plugin.
+- "`stata_call` must have C linkage or Stata cannot find the symbol; the rest of the implementation can remain idiomatic C++."
+- Never allow a C++ exception to cross the C ABI boundary. Catch standard, allocation, and unknown exceptions and translate them to `SF_error()` plus a nonzero code.
+- Compiling `stplugin.c` as C++ can alter SDK linkage; build it as a separate C object and link that object into the C++ plugin.
 - Dynamic standard-library dependencies can make a binary compile locally but fail on another machine; inspect linked libraries for every release target.
 workflows:
 - Verify the upstream backend, license, compiler requirements, and test suite; pin the exact source before writing glue code.
 - Build the SDK C object and C++ wrapper separately with warnings enabled, inspect exported symbols, then link the platform-specific plugin.
 - Compare plugin output with the pinned backend on deterministic fixtures and run memory/error-path tests before Stata integration.
-validation_case: Compile a minimal C++17 wrapper with a C-linked stata_call entry point and caught exceptions, inspect the exported symbol, and verify that a forced exception returns a Stata error instead of escaping.
+validation_case: Compile a minimal C++17 wrapper with a C-linked `stata_call` entry point and caught exceptions, inspect the exported symbol, and verify that a forced exception returns a Stata error instead of escaping.
 validation_mode: compilation
 related_refs:
 - plugin-sdk-basics

@@ -36,7 +36,14 @@ class TestRunnerTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(
-                360,
+                420,
+                run_tests.positive_timeout_setting(
+                    "TEST_TIMEOUT",
+                    run_tests.DEFAULT_TEST_TIMEOUT_SECONDS,
+                ),
+            )
+            self.assertEqual(
+                480,
                 run_tests.positive_timeout_setting(
                     "TEST_GLOBAL_TIMEOUT",
                     run_tests.DEFAULT_TEST_GLOBAL_TIMEOUT_SECONDS,
