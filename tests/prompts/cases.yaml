@@ -818,8 +818,10 @@ cases:
   action: clarify
   routing_term: regression table
   prompt: >-
-    I need a publication-ready regression table in Word, but I have not chosen
-    between built-in collect, a sequential asdoc report, esttab, or outreg2.
+    This project has both an esttab RTF pipeline and an outreg2 DOCX pipeline.
+    The journal requires the regression table to preserve one exact submission
+    template, but that template and its source pipeline have not been supplied.
+    Determine which compatibility requirement must be clarified before export.
   expected_skill: null
   expected_refs: []
   forbidden_routes: []
@@ -884,4 +886,53 @@ cases:
   expected_skill: null
   expected_refs: []
   forbidden_routes: []
+  boundary: true
+- id: context-resolved-table-repair
+  action: route
+  prompt: >-
+    Repair the regression table export in our existing eststo/esttab pipeline.
+    Preserve its stored model order and RTF interface; only the confidence
+    interval display is wrong.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/estout.md
+  forbidden_routes:
+  - stata-core/references/tables-reporting.md
+  - stata-packages/packages/outreg2.md
+  boundary: true
+- id: context-resolved-built-in-diagnostics
+  action: route
+  prompt: >-
+    After regress price weight length, our do-file runs estat vif and rvfplot.
+    Fix the diagnostics block using the built-in commands already in the file.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/regression-diagnostics.md
+  forbidden_routes:
+  - stata-packages/packages/diagnostics.md
+  boundary: true
+- id: draft-explicit-package-without-runtime
+  action: route
+  prompt: >-
+    Draft an rdrobust analysis for outcome y at cutoff zero on running variable
+    x. The package is unavailable here and I cannot install it. Preserve this
+    estimator choice and give code for later execution, with its unrun checks
+    identified.
+  expected_skill: stata-packages
+  expected_refs:
+  - stata-packages/packages/rdrobust.md
+  forbidden_routes:
+  - stata-core/references/regression-discontinuity.md
+  boundary: true
+- id: context-resolved-mata-kernel
+  action: route
+  prompt: >-
+    Profiling isolated the slow loop in our Mata matrix kernel. Keep its current
+    Mata signature and vectorize the calculation; we cannot add native binaries
+    or a plugin dependency.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/mata-programming.md
+  forbidden_routes:
+  - stata-c-plugins/references/performance_patterns.md
   boundary: true

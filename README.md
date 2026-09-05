@@ -14,10 +14,12 @@ Local Stata help, upstream material, manifests, and locks provide reviewable
 evidence and provenance; they cannot add, remove, or alter published routes.
 Generated skill folders must not be edited by hand or committed.
 
-The generated tree contains 73 files: three root `SKILL.md` routers, three
-`agents/openai.yaml` files, three compact `PROVENANCE.md` indexes, 63 canonical
-references, and one historical diagnostics compatibility alias. Canonical
-content is split across 38 core, 19 package, and 6 plugin references.
+The generated tree contains 89 files: three root `SKILL.md` routers, 16 category
+routing indexes, three `agents/openai.yaml` files, three compact
+`PROVENANCE.md` indexes, 63 canonical
+references, and one historical diagnostics compatibility alias. Root routers
+link to category indexes containing detailed terms, commands, aliases, and
+context-dependent method boundaries. Canonical content is split across 38 core, 19 package, and 6 plugin references.
 
 ## Requirements
 

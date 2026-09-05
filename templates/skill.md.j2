@@ -21,32 +21,22 @@ description: "{{ skill.description }}"
 {% endfor %}
 {% endif %}
 
-## Routing by terms, names, and task intent
+## Choose the relevant reference
 
-Curated terms and task intent control routing. Supported aliases and commands
-help recognize explicit requests, but never override task intent or the
-clarification boundaries that follow.
+Use the existing code, explicit command or package choice, and requested outcome
+to select a category. Open only its routing reference, then the needed technical
+reference. Category indexes preserve detailed terms, commands, and aliases;
+paths in those indexes are relative to this skill's root.
 
 {% for section in sections %}
-### {{ section.name }}
-
-| Route | Curated terms | Supported aliases and commands | Task intent |
-|---|---|---|---|
-{% for entry in section.entries %}
-| `{{ entry.route_path }}` | {{ entry.routing_terms | join(", ") }} | {{ (entry.aliases + entry.commands) | unique | join(", ") }} | {{ entry.trigger }} |
+- [{{ section.name }}]({{ section.route_path }}): {{ section.guidance }}
 {% endfor %}
 
-{% endfor %}
-{% if routing_boundaries %}
-### Terms that require clarification
+For overlapping methods, use the available context first. Clarify only an
+unresolved choice that changes scientific meaning, compatibility, dependencies,
+or scope. A generic topic name alone does not require a question. Detailed
+boundaries appear beside the affected routes in each category index.
 
-Do not choose a route from these terms alone:
-
-{% for boundary in routing_boundaries %}
-- `{{ boundary.term }}`: {{ boundary.guidance }}
-{% endfor %}
-
-{% endif %}
 {% if route_aliases %}
 ### Compatibility aliases
 

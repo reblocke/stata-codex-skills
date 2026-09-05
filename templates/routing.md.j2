@@ -1,0 +1,21 @@
+# {{ section.name }} routing
+
+{{ section.guidance }} Load only the technical references needed for the task.
+Paths below are relative to the `{{ skill.name }}` skill root.
+
+| Route | Curated terms | Supported aliases and commands | Task intent |
+|---|---|---|---|
+{% for entry in section.entries %}
+| [{{ entry.title }}](../{{ entry.route_path }}) (`{{ entry.route_path }}`) | {{ entry.routing_terms | join(", ") }} | {{ (entry.aliases + entry.commands) | unique | join(", ") }} | {{ entry.trigger }} |
+{% endfor %}
+{% if routing_boundaries %}
+
+## Overlapping methods
+
+Resolve these terms using the request and existing code. Ask only if a
+consequential choice remains unresolved.
+
+{% for boundary in routing_boundaries %}
+- `{{ boundary.term }}`: {{ boundary.guidance }}
+{% endfor %}
+{% endif %}

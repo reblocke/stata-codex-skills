@@ -627,7 +627,7 @@ class DeterministicRenderTests(unittest.TestCase):
             second_snapshot = self.snapshot(second)
 
         self.assertEqual(first_snapshot, second_snapshot)
-        self.assertEqual(73, len(first_snapshot))
+        self.assertEqual(89, len(first_snapshot))
         alias = first_snapshot[
             "stata-packages/packages/diagnostics.md"
         ].decode("utf-8")
@@ -639,19 +639,14 @@ class DeterministicRenderTests(unittest.TestCase):
             first_snapshot["stata-core/agents/openai.yaml"].decode("utf-8")
         )
         self.assertEqual("Stata core", metadata["interface"]["display_name"])
-        core_skill = first_snapshot["stata-core/SKILL.md"].decode("utf-8")
-        self.assertIn(
-            "first Stata session, sysuse auto, inspect a .dta dataset",
-            core_skill,
-        )
-        self.assertIn("Terms that require clarification", core_skill)
-        packages_skill = first_snapshot["stata-packages/SKILL.md"].decode("utf-8")
-        self.assertIn("Supported aliases and commands", packages_skill)
-        self.assertIn("rdsensitivity", packages_skill)
-        self.assertIn(
-            "never override task intent or the clarification boundaries that follow",
-            " ".join(packages_skill.split()),
-        )
+        for skill_name in ("stata-core", "stata-packages", "stata-c-plugins"):
+            root = first_snapshot[f"{skill_name}/SKILL.md"].decode("utf-8")
+            self.assertIn("(routing/01.md)", root)
+            self.assertIn(f"{skill_name}/routing/01.md", first_snapshot)
+        packages_index = first_snapshot[
+            "stata-packages/routing/02.md"
+        ].decode("utf-8")
+        self.assertIn("rdsensitivity", packages_index)
         rdrobust = first_snapshot[
             "stata-packages/packages/rdrobust.md"
         ].decode("utf-8")
@@ -2047,6 +2042,36 @@ class StructuredPromptTests(unittest.TestCase):
                 ("compiled stata plugin", "stata.toc", "platform-specific binaries"),
             ),
         }
+
+        required_boundaries.update({
+            "context-resolved-table-repair": (
+                "stata-packages",
+                ("stata-packages/packages/estout.md",),
+                (
+                    "stata-core/references/tables-reporting.md",
+                    "stata-packages/packages/outreg2.md",
+                ),
+                ("existing", "esttab", "rtf"),
+            ),
+            "context-resolved-built-in-diagnostics": (
+                "stata-core",
+                ("stata-core/references/regression-diagnostics.md",),
+                ("stata-packages/packages/diagnostics.md",),
+                ("estat vif", "built-in", "already"),
+            ),
+            "draft-explicit-package-without-runtime": (
+                "stata-packages",
+                ("stata-packages/packages/rdrobust.md",),
+                ("stata-core/references/regression-discontinuity.md",),
+                ("rdrobust", "unavailable", "cannot install", "unrun"),
+            ),
+            "context-resolved-mata-kernel": (
+                "stata-core",
+                ("stata-core/references/mata-programming.md",),
+                ("stata-c-plugins/references/performance_patterns.md",),
+                ("profiling", "mata", "cannot add native binaries"),
+            ),
+        })
 
         self.assertEqual(set(required_boundaries), set(route_boundaries))
         for case_id, (
