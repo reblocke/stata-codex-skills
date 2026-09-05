@@ -1021,6 +1021,17 @@ def lint_config(config: dict) -> list[str]:
             errors.append(
                 f"config/skills.yaml: skill {skill_key} section_order must contain unique names"
             )
+        guidance = skill.get("section_guidance")
+        if guidance is not None and (
+            not isinstance(guidance, dict)
+            or not isinstance(sections, list)
+            or set(guidance) != set(sections)
+            or any(not is_nonempty_string(value) for value in guidance.values())
+        ):
+            errors.append(
+                f"config/skills.yaml: skill {skill_key} section_guidance must "
+                "cover exactly the section_order with nonempty descriptions"
+            )
         modes = skill.get("validation_modes")
         if (
             not isinstance(modes, list)

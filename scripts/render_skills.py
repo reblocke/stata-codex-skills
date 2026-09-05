@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-from collections import OrderedDict
 from collections.abc import Callable
 from contextlib import contextmanager
 from copy import deepcopy
@@ -139,6 +138,7 @@ PRIVATE_CLEANUP_PREFIX = ".render-cleanup-"
 RENDER_TEMPLATE_NAMES = (
     "reference.md.j2",
     "skill.md.j2",
+    "routing.md.j2",
     "alias.md.j2",
     "provenance.md.j2",
     "openai.yaml.j2",
@@ -1595,10 +1595,10 @@ def preflight_existing_output_root(output_root: Path) -> None:
             errors.append(
                 f"{folder}: expected only SKILL.md and PROVENANCE.md at skill root"
             )
-        route_directories = direct_directories - {"agents"}
+        route_directories = direct_directories - {"agents", "routing"}
         if "agents" not in direct_directories or len(route_directories) != 1:
             errors.append(
-                f"{folder}: expected agents/ and exactly one reference directory"
+                f"{folder}: expected agents/, one reference directory, and optional routing/"
             )
         agents_root = skill_root / "agents"
         if (
@@ -1607,7 +1607,7 @@ def preflight_existing_output_root(output_root: Path) -> None:
             and {path.name for path in agents_root.iterdir()} != {"openai.yaml"}
         ):
             errors.append(f"{folder}: agents/ must contain only openai.yaml")
-        for route_name in route_directories:
+        for route_name in direct_directories - {"agents"}:
             route_root = skill_root / route_name
             for path in route_root.iterdir():
                 if (
@@ -2056,6 +2056,24 @@ def canonical_route(skill: dict, slug: str) -> str:
     return f"{skill['route_dir']}/{slug}.md"
 
 
+def routing_sections(skill: dict, entries: list[dict]) -> list[dict]:
+    """Build category indexes without changing canonical reference paths."""
+
+    sections = []
+    for index, name in enumerate(skill["section_order"], start=1):
+        section_entries = [entry for entry in entries if entry["section"] == name]
+        if section_entries:
+            sections.append(
+                {
+                    "name": name,
+                    "entries": section_entries,
+                    "route_path": f"routing/{index:02d}.md",
+                    "guidance": skill.get("section_guidance", {}).get(name, name),
+                }
+            )
+    return sections
+
+
 def prepare_catalog(
     config: dict,
     content_entries: tuple[RenderContentEntry, ...],
@@ -2382,6 +2400,7 @@ def _render_tree(
 
     reference_template = env.get_template("reference.md.j2")
     skill_template = env.get_template("skill.md.j2")
+    routing_template = env.get_template("routing.md.j2")
     alias_template = env.get_template("alias.md.j2")
     provenance_template = env.get_template("provenance.md.j2")
     openai_template = env.get_template("openai.yaml.j2")
@@ -2394,11 +2413,7 @@ def _render_tree(
         )
 
         entries = grouped[skill_key]
-        sections: OrderedDict[str, list[dict]] = OrderedDict(
-            (section, []) for section in skill["section_order"]
-        )
         for entry in entries:
-            sections[entry["section"]].append(entry)
             _write_staged_text(
                 parent,
                 output_root,
@@ -2426,19 +2441,30 @@ def _render_tree(
                 normalized_markdown(alias_template.render(alias=alias)),
             )
 
-        section_payload = [
-            {"name": name, "entries": section_entries}
-            for name, section_entries in sections.items()
-            if section_entries
-        ]
-        routing_boundaries = [
-            boundary
-            for boundary in config.get("routing_boundaries", [])
-            if any(
-                route.startswith(f"{skill_key}/")
-                for route in boundary.get("routes", [])
+        section_payload = routing_sections(skill, entries)
+        for section in section_payload:
+            section_routes = {
+                f"{skill_key}/{entry['slug']}" for entry in section["entries"]
+            }
+            routing_boundaries = [
+                boundary
+                for boundary in config.get("routing_boundaries", [])
+                if section_routes.intersection(boundary.get("routes", []))
+            ]
+            _write_staged_text(
+                parent,
+                output_root,
+                staged_identity,
+                directory_identities,
+                _safe_render_relative_path(folder, section["route_path"]),
+                normalized_markdown(
+                    routing_template.render(
+                        skill=skill,
+                        section=section,
+                        routing_boundaries=routing_boundaries,
+                    )
+                ),
             )
-        ]
         _write_staged_text(
             parent,
             output_root,
@@ -2449,7 +2475,6 @@ def _render_tree(
                 skill_template.render(
                     skill=skill,
                     sections=section_payload,
-                    routing_boundaries=routing_boundaries,
                     route_aliases=route_aliases,
                 )
             ),
@@ -2503,6 +2528,10 @@ def _expected_rendered_files(
         )
         expected.extend(
             folder / alias["from_route"] for alias in aliases_by_skill[skill_key]
+        )
+        expected.extend(
+            folder / section["route_path"]
+            for section in routing_sections(skill, grouped[skill_key])
         )
     unique = set(expected)
     if len(unique) != len(expected):
