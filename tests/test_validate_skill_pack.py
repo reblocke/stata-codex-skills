@@ -193,6 +193,11 @@ class ValidateCoreTests(unittest.TestCase):
                 observed_do_text = do_file.read_text(encoding="utf-8")
                 log_path = cwd / f"{do_file.stem}.log"
                 log_path.write_text(
+                    f"CODEX_PLUGIN_PHASE::{completion_marker.rsplit('::', 1)[-1]}::before-load\n"
+                    f"CODEX_PLUGIN_PHASE::{completion_marker.rsplit('::', 1)[-1]}::after-load\n"
+                    f"CODEX_PLUGIN_PHASE::{completion_marker.rsplit('::', 1)[-1]}::before-call\n"
+                    "Hello World\n"
+                    f"CODEX_PLUGIN_PHASE::{completion_marker.rsplit('::', 1)[-1]}::after-call\n"
                     f"PASS: plugin-smoke\n{completion_marker}\n",
                     encoding="utf-8",
                 )
@@ -219,6 +224,86 @@ class ValidateCoreTests(unittest.TestCase):
                 'plugin using("../compile/hello.plugin")',
                 observed_do_text,
             )
+            self.assertIn("plugin call hello", observed_do_text.splitlines())
+            self.assertNotIn("hello", observed_do_text.splitlines())
+
+
+class ValidatePluginRuntimeTests(unittest.TestCase):
+    MARKER = "CODEX_VALIDATION_COMPLETE::PLUGIN_RUNTIME::test-run"
+    PHASE = "CODEX_PLUGIN_PHASE::test-run"
+
+    def valid_log_lines(self) -> list[str]:
+        return [
+            f"{self.PHASE}::before-load",
+            f"{self.PHASE}::after-load",
+            f"{self.PHASE}::before-call",
+            "Hello World",
+            f"{self.PHASE}::after-call",
+            "PASS: plugin-smoke",
+            self.MARKER,
+        ]
+
+    def validate_log(self, lines: list[str], returncode: int = 0) -> bool:
+        with TemporaryDirectory(prefix="validate-plugin-evidence-") as temporary:
+            root = Path(temporary)
+
+            def fake_run(stata_binary, do_file, cwd, completion_marker,
+                         timeout_seconds):
+                self.assertEqual(timeout_seconds, 30)
+                self.assertEqual(completion_marker, self.MARKER)
+                log_path = cwd / f"{do_file.stem}.log"
+                log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                return CompletedProcess(["stata"], returncode, "", ""), log_path
+
+            with patch.object(
+                validate_skill_pack, "completion_marker", return_value=self.MARKER
+            ), patch.object(
+                validate_skill_pack, "run_stata_do", side_effect=fake_run
+            ):
+                success, _ = validate_skill_pack.validate_plugin_runtime(
+                    Path("/fake/stata"), root, root / "hello.plugin"
+                )
+            return success
+
+    def test_plugin_do_file_marks_loading_and_calling_in_order(self) -> None:
+        lines = validate_skill_pack.plugin_do_text(
+            Path("../compile/hello.plugin"), self.MARKER
+        ).splitlines()
+        expected = [
+            f'display "{self.PHASE}::before-load"',
+            'program hello, plugin using("../compile/hello.plugin")',
+            f'display "{self.PHASE}::after-load"',
+            f'display "{self.PHASE}::before-call"',
+            "plugin call hello",
+            f'display "{self.PHASE}::after-call"',
+        ]
+        self.assertEqual(lines[2:8], expected)
+
+    def test_plugin_runtime_accepts_complete_callback_evidence(self) -> None:
+        self.assertTrue(self.validate_log(self.valid_log_lines()))
+
+    def test_plugin_runtime_rejects_missing_or_reordered_evidence(self) -> None:
+        valid = self.valid_log_lines()
+        invalid = {
+            "missing callback": [line for line in valid if line != "Hello World"],
+            "echoed callback": [
+                '. display "Hello World"' if line == "Hello World" else line
+                for line in valid
+            ],
+            "missing phase": valid[:1] + valid[2:],
+            "reordered phases": [valid[1], valid[0], *valid[2:]],
+            "missing completion": valid[:-1],
+            "Stata error": [*valid, "r(199);"],
+            "wrong run": [line.replace("test-run", "stale-run") for line in valid],
+        }
+        for label, lines in invalid.items():
+            with self.subTest(label=label):
+                self.assertFalse(self.validate_log(lines))
+
+    def test_plugin_runtime_rejects_timeout_or_failed_cleanup(self) -> None:
+        for returncode in (124, 1):
+            with self.subTest(returncode=returncode):
+                self.assertFalse(self.validate_log(self.valid_log_lines(), returncode))
 
 
 class CliValidationTests(unittest.TestCase):
