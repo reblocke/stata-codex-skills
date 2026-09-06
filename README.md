@@ -88,9 +88,10 @@ Validation evidence is deliberately separated:
 - `make validate` runs licensed Stata integration: static checks, all core and
   package smoke tests, and plugin compilation.
 - `make validate-plugin-runtime` explicitly attempts plugin loading and
-  execution. It is excluded from the default gate because the official sample
-  has hung at the local Stata/macOS loader boundary even when compilation
-  succeeds.
+  execution. It requires ordered loading/call markers, the pinned sample's
+  `Hello World` output, and the run-specific completion marker. It remains
+  separate from the default gate because native-plugin failures can hang or
+  crash Stata.
 
 GitHub Actions installs the frozen environment and runs `make check` on Ubuntu
 and macOS. CI has no Stata license, so licensed integration and plugin runtime
@@ -110,6 +111,14 @@ The validator CLI also accepts repeatable `--suite` and `--package` arguments.
 The default suite is `static`, `core`, `packages`, and `plugin-compile`; it
 never includes plugin execution. `--keep-workdir` retains a failed
 run-specific transaction outside the repository for inspection.
+
+For plugin diagnosis, use `make validate-plugin-runtime KEEP_WORKDIR=1` to
+retain the compiled binary, do-file, and log. The runtime deadline remains
+30 seconds. Read standalone phase-marker output to distinguish loading from
+calling; an absent marker can also reflect log buffering. The runner may
+terminate Stata after its completion marker and verifies process cleanup, so a
+passing result establishes sample execution rather than natural exit or plugin
+unloading. Compilation alone does not establish runtime or numerical fidelity.
 
 Every Stata check uses an isolated temporary `PLUS` and `PERSONAL` path, a
 unique completion marker, bounded subprocess and network timeouts, and

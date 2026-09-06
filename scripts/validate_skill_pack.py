@@ -519,12 +519,17 @@ def validate_packages(
 
 
 def plugin_do_text(plugin_path: Path, marker: str) -> str:
+    phase = f"CODEX_PLUGIN_PHASE::{marker.rsplit('::', 1)[-1]}"
     return "\n".join(
         [
             "clear all",
             "set more off",
+            f'display "{phase}::before-load"',
             f'program hello, plugin using("{plugin_path.as_posix()}")',
-            "hello",
+            f'display "{phase}::after-load"',
+            f'display "{phase}::before-call"',
+            "plugin call hello",
+            f'display "{phase}::after-call"',
             'display "PASS: plugin-smoke"',
             f'display "{marker}"',
             "exit, clear",
@@ -602,13 +607,36 @@ def validate_plugin_runtime(
         timeout_seconds=30,
     )
     log_text = read_text(log_path) if log_path.exists() else ""
+    phase = f"CODEX_PLUGIN_PHASE::{run_token}"
+    expected_lines = (
+        f"{phase}::before-load",
+        f"{phase}::after-load",
+        f"{phase}::before-call",
+        "Hello World",
+        f"{phase}::after-call",
+        "PASS: plugin-smoke",
+        marker,
+    )
+    # Consume standalone log lines in order; echoed commands are not evidence.
+    log_lines = iter(line.strip() for line in log_text.splitlines())
+    evidence_complete = all(
+        any(line == expected for line in log_lines)
+        for expected in expected_lines
+    )
     success = (
         result.returncode == 0
         and log_path.exists()
         and not has_stata_error(log_text)
-        and has_exact_log_line(log_text, "PASS: plugin-smoke")
+        and evidence_complete
     )
-    return success, combined_output(log_text, result.stdout, result.stderr)
+    diagnostics = combined_output(log_text, result.stdout, result.stderr)
+    if not evidence_complete:
+        diagnostics = combined_output(
+            diagnostics,
+            "",
+            "Missing or out-of-order plugin phase, callback, or completion evidence.",
+        )
+    return success, diagnostics
 
 
 def sanitize_diagnostics(
