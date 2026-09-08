@@ -390,6 +390,28 @@ cases:
   - stata-core/references/workflow-best-practices.md
   forbidden_routes: []
   boundary: false
+- id: core-scheduled-screen-lock
+  action: route
+  prompt: >-
+    My nightly Stata job on a Mac finishes its calculations but the scheduler
+    stays busy until I return to the desktop. Update its launch and completion
+    checks so I can test running it without interacting with the screen.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/workflow-best-practices.md
+  forbidden_routes: []
+  boundary: false
+- id: core-process-success-with-analysis-error
+  action: route
+  prompt: >-
+    Our Python subprocess reports return code zero, yet the Stata output ends
+    at an assertion failure and the expected results never appear. Make the
+    automation detect this reliably and retain enough evidence to diagnose it.
+  expected_skill: stata-core
+  expected_refs:
+  - stata-core/references/workflow-best-practices.md
+  forbidden_routes: []
+  boundary: false
 - id: packages-asdoc
   action: route
   prompt: >-

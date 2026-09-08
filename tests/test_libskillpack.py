@@ -172,7 +172,7 @@ class RunStataDoTests(unittest.TestCase):
             "_stata_launch_command",
             side_effect=lambda binary, do_file: [
                 str(binary),
-                "-e",
+                "-b",
                 "do",
                 str(do_file),
             ],
@@ -395,7 +395,7 @@ class RunStataDoTests(unittest.TestCase):
 
             self.assertNotEqual(0, result.returncode)
 
-    def test_exact_marker_kills_anchored_process_group_and_succeeds(self) -> None:
+    def test_exact_marker_without_natural_exit_times_out_and_cleans_up(self) -> None:
         with TemporaryDirectory(prefix="stata-run-") as temp_root:
             cwd = Path(temp_root) / "work"
             do_file = self._make_do_file(cwd)
@@ -420,16 +420,51 @@ class RunStataDoTests(unittest.TestCase):
                     do_file,
                     cwd,
                     completion_marker=marker,
-                    timeout_seconds=1,
+                    timeout_seconds=0,
                 )
 
-            self.assertEqual(0, result.returncode)
+            self.assertEqual(124, result.returncode)
+            self.assertIn("timed out", result.stderr)
             self.assertFalse(process.terminate_called)
             self.assertTrue(process.kill_called)
             self.assertEqual(
                 [call(process.pid, signal.SIGKILL)],
                 self.killpg.call_args_list,
             )
+
+    def test_marker_waits_for_later_natural_exit(self) -> None:
+        with TemporaryDirectory(prefix="stata-run-") as temp_root:
+            cwd = Path(temp_root) / "work"
+            do_file = self._make_do_file(cwd)
+            marker = "VALIDATION COMPLETE: later-natural-exit"
+            process = MarkerThenNonexitProcess()
+
+            def fake_popen(*args, **kwargs) -> MarkerThenNonexitProcess:
+                del args, kwargs
+                (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
+                return process
+
+            def finish_naturally(_seconds: float) -> None:
+                process.exit_code = 0
+                process.exited = True
+
+            with patch.object(
+                libskillpack.subprocess, "Popen", side_effect=fake_popen
+            ), patch.object(
+                libskillpack.time, "sleep", side_effect=finish_naturally
+            ) as sleep:
+                result, _ = libskillpack.run_stata_do(
+                    Path("/fake/stata"),
+                    do_file,
+                    cwd,
+                    completion_marker=marker,
+                    timeout_seconds=1,
+                )
+
+            self.assertEqual(0, result.returncode, result.stderr)
+            sleep.assert_called_once()
+            self.assertFalse(process.terminate_called)
+            self.assertFalse(process.kill_called)
 
     def test_exit_before_cleanup_after_marker_is_not_suppressed(self) -> None:
         for natural_returncode in (7, -int(signal.SIGKILL)):
@@ -449,12 +484,7 @@ class RunStataDoTests(unittest.TestCase):
                     )
                     return process
 
-                states = [
-                    libskillpack._ProcessLeaderState.LIVE_ANCHORED,
-                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-                ]
+                states = iter([libskillpack._ProcessLeaderState.LIVE_ANCHORED])
                 with patch.object(
                     libskillpack.subprocess,
                     "Popen",
@@ -462,7 +492,9 @@ class RunStataDoTests(unittest.TestCase):
                 ), patch.object(
                     libskillpack,
                     "_process_leader_state",
-                    side_effect=states,
+                    side_effect=lambda _process: next(
+                        states, libskillpack._ProcessLeaderState.EXITED_ANCHORED
+                    ),
                 ):
                     result, _ = libskillpack.run_stata_do(
                         Path("/fake/stata"),
@@ -1024,7 +1056,9 @@ class StataContainmentCommandTests(unittest.TestCase):
                 )
 
     def test_launch_uses_fixed_fork_denying_profile(self) -> None:
-        with patch.object(libskillpack.sys, "platform", "darwin"), patch.object(
+        with patch("stata_runner.platform.system", return_value="Darwin"), patch.object(
+            libskillpack.sys, "platform", "darwin"
+        ), patch.object(
             libskillpack,
             "MACOS_SANDBOX_EXEC",
             Path("/usr/bin/true"),
@@ -1034,7 +1068,7 @@ class StataContainmentCommandTests(unittest.TestCase):
             return_value=(True, ""),
         ):
             command = libskillpack._stata_launch_command(
-                Path("/Applications/Stata/StataBE"),
+                Path("/Applications/Stata/StataBE.app/Contents/MacOS/StataBE"),
                 Path("smoke.do"),
             )
 
@@ -1050,9 +1084,8 @@ class StataContainmentCommandTests(unittest.TestCase):
         )
         self.assertEqual(
             [
-                "/Applications/Stata/StataBE",
+                "/Applications/Stata/StataBE.app/Contents/MacOS/StataBE",
                 "-e",
-                "do",
                 "smoke.do",
             ],
             command[3:],
@@ -1082,10 +1115,7 @@ class RunStataContainmentIntegrationTests(unittest.TestCase):
             stub = Path(temp_root) / "stata-stub"
             stub.write_text(
                 "#!/usr/bin/env python3\n"
-                "import time\n"
-                f"open('smoke.log', 'w').write('{marker}\\n')\n"
-                "while True:\n"
-                "    time.sleep(1)\n",
+                f"open('smoke.log', 'w').write('{marker}\\n')\n",
                 encoding="utf-8",
             )
             stub.chmod(0o755)
@@ -1109,7 +1139,6 @@ class RunStataContainmentIntegrationTests(unittest.TestCase):
                 "#!/usr/bin/env python3\n"
                 "import subprocess\n"
                 "import sys\n"
-                "import time\n"
                 "try:\n"
                 "    child = subprocess.Popen(\n"
                 "        [sys.executable, '-c', 'import time; time.sleep(30)'],\n"
@@ -1119,9 +1148,7 @@ class RunStataContainmentIntegrationTests(unittest.TestCase):
                 "    open('fork-denied', 'w').write('denied\\n')\n"
                 "else:\n"
                 "    open('escaped.pid', 'w').write(str(child.pid))\n"
-                f"open('smoke.log', 'w').write('{marker}\\n')\n"
-                "while True:\n"
-                "    time.sleep(1)\n",
+                f"open('smoke.log', 'w').write('{marker}\\n')\n",
                 encoding="utf-8",
             )
             stub.chmod(0o755)
@@ -1157,16 +1184,13 @@ class RunStataContainmentIntegrationTests(unittest.TestCase):
             stub.write_text(
                 "#!/usr/bin/env python3\n"
                 "import os\n"
-                "import time\n"
                 "try:\n"
                 "    child_pid = os.posix_spawn('/usr/bin/sleep', ['sleep', '30'], {})\n"
                 "except OSError:\n"
                 "    open('posix-spawn-denied', 'w').write('denied\\n')\n"
                 "else:\n"
                 "    open('escaped.pid', 'w').write(str(child_pid))\n"
-                f"open('smoke.log', 'w').write('{marker}\\n')\n"
-                "while True:\n"
-                "    time.sleep(1)\n",
+                f"open('smoke.log', 'w').write('{marker}\\n')\n",
                 encoding="utf-8",
             )
             stub.chmod(0o755)
@@ -1349,9 +1373,7 @@ class RunStataContainmentIntegrationTests(unittest.TestCase):
                 "        open('orphan.pid', 'w').write(str(os.getpid()))\n"
                 "        while True:\n"
                 "            time.sleep(1)\n"
-                f"open('smoke.log', 'w').write('{marker}\\n')\n"
-                "while True:\n"
-                "    time.sleep(1)\n",
+                f"open('smoke.log', 'w').write('{marker}\\n')\n",
                 encoding="utf-8",
             )
             stub.chmod(0o755)
@@ -1402,6 +1424,36 @@ class RunStataContainmentIntegrationTests(unittest.TestCase):
             )
 
         self.assertEqual(124, result.returncode)
+
+    def test_marker_then_hang_fails_and_reaps_contained_leader(self) -> None:
+        with TemporaryDirectory(prefix="stata-contained-marker-hang-") as temp_root:
+            marker = "VALIDATION COMPLETE: marker-then-hang"
+            cwd, do_file = self._make_run(temp_root, marker)
+            stub = Path(temp_root) / "stata-stub"
+            stub.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os\n"
+                "import time\n"
+                "open('leader.pid', 'w').write(str(os.getpid()))\n"
+                f"open('smoke.log', 'w').write('{marker}\\n')\n"
+                "while True:\n"
+                "    time.sleep(1)\n",
+                encoding="utf-8",
+            )
+            stub.chmod(0o755)
+
+            result, _ = libskillpack.run_stata_do(
+                stub,
+                do_file,
+                cwd,
+                completion_marker=marker,
+                timeout_seconds=1,
+            )
+            self.assertEqual(124, result.returncode)
+            self.assertIn("did not exit naturally", result.stderr)
+            leader_pid = int((cwd / "leader.pid").read_text(encoding="utf-8"))
+            with self.assertRaises(ProcessLookupError):
+                os.kill(leader_pid, 0)
 
 
 class StrictYamlTests(unittest.TestCase):

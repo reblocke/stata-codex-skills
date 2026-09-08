@@ -128,6 +128,7 @@ class RenderInputSnapshot:
     content_root: Path
     content_entries: tuple[RenderContentEntry, ...]
     template_files: tuple[tuple[str, RenderInputFile], ...]
+    runtime_file: RenderInputFile
     lock_files: tuple[tuple[str, RenderInputFile | None], ...]
     package_lock_directory_version: tuple[int, int, int, int]
 
@@ -142,7 +143,9 @@ RENDER_TEMPLATE_NAMES = (
     "alias.md.j2",
     "provenance.md.j2",
     "openai.yaml.j2",
+    "unattended-execution.md.j2",
 )
+RUNTIME_HELPER_PATH = REPO_ROOT / "scripts" / "stata_runner.py"
 RENDER_STATIC_LOCK_NAMES = (
     "upstream.yaml",
     "stata-help.yaml",
@@ -448,6 +451,7 @@ def capture_render_inputs(
         content_root=resolved_content_root,
         content_entries=tuple(content_entries),
         template_files=template_files,
+        runtime_file=_capture_render_input_file(RUNTIME_HELPER_PATH),
         lock_files=tuple(lock_files),
         package_lock_directory_version=package_lock_directory_version,
     )
@@ -480,6 +484,7 @@ def verify_render_inputs(snapshot: RenderInputSnapshot) -> None:
             snapshot.config_file,
             *(entry.source for entry in snapshot.content_entries),
             *(source for _, source in snapshot.template_files),
+            snapshot.runtime_file,
         ]
         for source in sources:
             if _capture_render_input_file(source.path) != source:
@@ -1511,6 +1516,7 @@ def _validate_renderer_source_separation(
         ("content", content_root),
         ("templates", TEMPLATES_ROOT),
         ("locks", LOCK_ROOT),
+        ("runtime helper", RUNTIME_HELPER_PATH),
     )
     for label, source in sources:
         if _paths_overlap(output_root, source):
@@ -1595,10 +1601,19 @@ def preflight_existing_output_root(output_root: Path) -> None:
             errors.append(
                 f"{folder}: expected only SKILL.md and PROVENANCE.md at skill root"
             )
-        route_directories = direct_directories - {"agents", "routing"}
+        route_directories = direct_directories - {"agents", "routing", "scripts"}
+        shared_reference_root = skill_root / "references"
+        if (
+            len(route_directories) == 2
+            and "references" in route_directories
+            and {path.name for path in shared_reference_root.iterdir()}
+            == {"unattended-execution.md"}
+        ):
+            route_directories.remove("references")
         if "agents" not in direct_directories or len(route_directories) != 1:
             errors.append(
-                f"{folder}: expected agents/, one reference directory, and optional routing/"
+                f"{folder}: expected agents/, one reference directory, and optional "
+                "routing/, shared execution reference, and scripts/"
             )
         agents_root = skill_root / "agents"
         if (
@@ -1607,7 +1622,14 @@ def preflight_existing_output_root(output_root: Path) -> None:
             and {path.name for path in agents_root.iterdir()} != {"openai.yaml"}
         ):
             errors.append(f"{folder}: agents/ must contain only openai.yaml")
-        for route_name in direct_directories - {"agents"}:
+        if "scripts" in direct_directories:
+            scripts_root = skill_root / "scripts"
+            if {path.name for path in scripts_root.iterdir()} != {"stata_runner.py"}:
+                errors.append(f"{folder}: scripts/ must contain only stata_runner.py")
+            helper = scripts_root / "stata_runner.py"
+            if not helper.is_file() or helper.is_symlink():
+                errors.append(f"{folder}: runtime helper must be an ordinary file")
+        for route_name in direct_directories - {"agents", "scripts"}:
             route_root = skill_root / route_name
             for path in route_root.iterdir():
                 if (
@@ -2390,6 +2412,7 @@ def _render_tree(
     lock_files: tuple[tuple[str, RenderInputFile | None], ...],
     parent: RenderParentHandle,
     staged_identity: tuple[int, int],
+    runtime_file: RenderInputFile,
 ) -> None:
     env = build_environment(template_files)
     lock_index = embedded_lock_index(lock_files)
@@ -2404,6 +2427,7 @@ def _render_tree(
     alias_template = env.get_template("alias.md.j2")
     provenance_template = env.get_template("provenance.md.j2")
     openai_template = env.get_template("openai.yaml.j2")
+    execution_template = env.get_template("unattended-execution.md.j2")
 
     for skill_key, skill in config["skills"].items():
         folder = _safe_render_relative_path(skill["folder"])
@@ -2411,6 +2435,22 @@ def _render_tree(
             folder,
             skill["route_dir"],
         )
+
+        for relative, text in (
+            (
+                "references/unattended-execution.md",
+                normalized_markdown(execution_template.render()),
+            ),
+            ("scripts/stata_runner.py", runtime_file.data.decode("utf-8")),
+        ):
+            _write_staged_text(
+                parent,
+                output_root,
+                staged_identity,
+                directory_identities,
+                _safe_render_relative_path(folder, relative),
+                text,
+            )
 
         entries = grouped[skill_key]
         for entry in entries:
@@ -2520,6 +2560,8 @@ def _expected_rendered_files(
                 folder / "SKILL.md",
                 folder / "PROVENANCE.md",
                 folder / "agents" / "openai.yaml",
+                folder / "references" / "unattended-execution.md",
+                folder / "scripts" / "stata_runner.py",
             )
         )
         expected.extend(
@@ -4621,6 +4663,7 @@ def render_all(
                     render_inputs.lock_files,
                     parent,
                     staged_identity,
+                    render_inputs.runtime_file,
                 )
                 _assert_render_parent_current(parent)
                 _assert_staged_root_identity(

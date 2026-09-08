@@ -3456,6 +3456,34 @@ class AtomicRenderTests(unittest.TestCase):
                 self.transaction_artifacts(parent, target.name),
             )
 
+    def test_runtime_change_after_capture_cannot_replace_prior_tree(self) -> None:
+        with TemporaryDirectory(prefix="atomic-render-runtime-") as temp_root:
+            parent = Path(temp_root)
+            target = self.seeded_target(parent)
+            prior = self.snapshot(target)
+            helper = parent / "stata_runner.py"
+            helper.write_bytes(render_skills.RUNTIME_HELPER_PATH.read_bytes())
+            real_validate = render_skills.validate_render_inputs
+
+            def validate_then_change_runtime(*args: object) -> None:
+                real_validate(*args)
+                helper.write_bytes(helper.read_bytes() + b"\n# changed\n")
+
+            with patch.object(
+                render_skills, "RUNTIME_HELPER_PATH", helper,
+            ), patch.object(
+                render_skills,
+                "validate_render_inputs",
+                side_effect=validate_then_change_runtime,
+            ), self.assertRaisesRegex(
+                render_skills.RenderTransactionError,
+                "render inputs changed after validation",
+            ):
+                render_skills.render_all(output_root=target)
+
+            self.assertEqual(prior, self.snapshot(target))
+            self.assertEqual([], self.transaction_artifacts(parent, target.name))
+
     def test_input_change_inside_transaction_restores_prior_tree(
         self,
     ) -> None:

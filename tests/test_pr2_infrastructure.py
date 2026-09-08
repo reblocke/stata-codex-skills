@@ -627,7 +627,7 @@ class DeterministicRenderTests(unittest.TestCase):
             second_snapshot = self.snapshot(second)
 
         self.assertEqual(first_snapshot, second_snapshot)
-        self.assertEqual(89, len(first_snapshot))
+        self.assertEqual(95, len(first_snapshot))
         alias = first_snapshot[
             "stata-packages/packages/diagnostics.md"
         ].decode("utf-8")

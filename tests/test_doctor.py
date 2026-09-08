@@ -53,6 +53,23 @@ class DoctorTests(unittest.TestCase):
         for path in cli_scripts:
             with self.subTest(script=path.name):
                 tree = ast.parse(path.read_text(encoding="utf-8"))
+                if path.name == "stata_runner.py":
+                    # This stdlib-only helper ships independently in each skill;
+                    # it must not require the repository's Unicode/render guard.
+                    # Generated-tree tests also execute each isolated copy.
+                    for node in ast.walk(tree):
+                        if isinstance(node, ast.ImportFrom):
+                            self.assertEqual(0, node.level)
+                            self.assertIn(
+                                (node.module or "").split(".")[0],
+                                sys.stdlib_module_names,
+                            )
+                        elif isinstance(node, ast.Import):
+                            for alias in node.names:
+                                self.assertIn(
+                                    alias.name.split(".")[0], sys.stdlib_module_names
+                                )
+                    continue
                 guard_call = next(
                     node
                     for node in tree.body

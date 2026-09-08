@@ -84,6 +84,7 @@ class ValidateCoreTests(unittest.TestCase):
             self.assertIn(calls[1][2], calls[1][3])
             self.assertIn("display 1", calls[0][3])
             self.assertIn("display 2", calls[1][3])
+            self.assertTrue(all(call[3].endswith("exit, clear STATA\n") for call in calls))
             self.assertEqual(work_root_path / "core" / "first", calls[0][1])
             self.assertEqual(work_root_path / "core" / "second", calls[1][1])
 
@@ -170,6 +171,7 @@ class ValidateCoreTests(unittest.TestCase):
 
             self.assertTrue(results[0][1])
             self.assertIn('sysdir set PLUS "plus"', observed_do_text)
+            self.assertTrue(observed_do_text.endswith("exit, clear STATA\n"))
             self.assertNotIn(
                 'sysdir set PLUS "packages/sample/plus"',
                 observed_do_text,
@@ -278,6 +280,7 @@ class ValidatePluginRuntimeTests(unittest.TestCase):
             f'display "{self.PHASE}::after-call"',
         ]
         self.assertEqual(lines[2:8], expected)
+        self.assertEqual(lines[-1], "exit, clear STATA")
 
     def test_plugin_runtime_accepts_complete_callback_evidence(self) -> None:
         self.assertTrue(self.validate_log(self.valid_log_lines()))
