@@ -340,7 +340,7 @@ def stata_entry_do_text(entry: dict, marker: str) -> str:
             entry["smoke_test"],
             f'display "PASS: {entry["slug"]}"',
             f'display "{marker}"',
-            "exit, clear",
+            "exit, clear STATA",
         ]
     ) + "\n"
 
@@ -413,7 +413,7 @@ def package_do_text(entry: dict, plus_dir: Path, marker: str) -> str:
     lines.append(entry["smoke_test"])
     lines.append(f'display "PASS: {entry["slug"]}"')
     lines.append(f'display "{marker}"')
-    lines.append("exit, clear")
+    lines.append("exit, clear STATA")
     return "\n".join(lines) + "\n"
 
 
@@ -532,7 +532,7 @@ def plugin_do_text(plugin_path: Path, marker: str) -> str:
             f'display "{phase}::after-call"',
             'display "PASS: plugin-smoke"',
             f'display "{marker}"',
-            "exit, clear",
+            "exit, clear STATA",
         ]
     ) + "\n"
 

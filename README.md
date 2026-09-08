@@ -34,6 +34,14 @@ macOS, Stata under `/Applications/Stata`, `/usr/bin/sandbox-exec`, network
 access for isolated package and SDK retrieval, and `clang` for plugin
 compilation.
 
+The local macOS app-bundle launch contract uses the executable directly with
+`-e <do-file>` and wrappers ending in `exit, clear STATA`. Qualify that exact
+argument sequence against the installed Stata edition/version using success and
+deliberate-error fixtures. A documented alternative such as `-e do <do-file>`
+is not interchangeable with the installation-tested invocation. An unattended
+run does not by itself establish operation while the screen is locked; that
+condition needs a separate observed test.
+
 ## Quick start
 
 ```bash
@@ -115,10 +123,12 @@ run-specific transaction outside the repository for inspection.
 For plugin diagnosis, use `make validate-plugin-runtime KEEP_WORKDIR=1` to
 retain the compiled binary, do-file, and log. The runtime deadline remains
 30 seconds. Read standalone phase-marker output to distinguish loading from
-calling; an absent marker can also reflect log buffering. The runner may
-terminate Stata after its completion marker and verifies process cleanup, so a
-passing result establishes sample execution rather than natural exit or plugin
-unloading. Compilation alone does not establish runtime or numerical fidelity.
+calling; an absent marker can also reflect log buffering. The runner requires
+both the exact completion marker and natural process exit before its deadline,
+then verifies process cleanup. A marker followed by a hanging process fails;
+terminating that process during cleanup cannot produce a passing result. Sample
+execution and process exit do not establish numerical fidelity for other plugins.
+Compilation alone does not establish runtime success.
 
 Every Stata check uses an isolated temporary `PLUS` and `PERSONAL` path, a
 unique completion marker, bounded subprocess and network timeouts, and
@@ -219,6 +229,15 @@ Skills are installed per machine; an OpenAI account does not synchronize
 used from any repository on that machine. A project may additionally use
 `AGENTS.md` to route built-in work to `stata-core`, community-package work to
 `stata-packages`, and native plugin work to `stata-c-plugins`.
+
+Each skill bundles the same standard-library `scripts/stata_runner.py` helper
+and `references/unattended-execution.md` guide for macOS and Linux. The helper
+requires a fresh private run directory, natural process exit, and a matching
+Stata return-code sidecar; it preserves logs and reports timeouts as failures.
+Existing projects can adopt a reviewed, versioned copy without depending on a
+mutable skill installation. Qualify the actual Stata executable, including
+successful and deliberately failing locked-screen runs before claiming that
+environment is supported.
 
 For a custom Codex home:
 

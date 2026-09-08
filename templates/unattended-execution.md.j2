@@ -1,0 +1,65 @@
+# Unattended Stata execution
+
+Use this workflow for terminal, scheduled, or remote Stata runs. Preserve the
+project's scientific assertions and package or plugin checks when changing how
+Stata starts and completes.
+
+## Choose and qualify the launcher
+
+Invoke the Stata executable directly through the bundled
+[`scripts/stata_runner.py`](../scripts/stata_runner.py) helper. It uses the
+Python standard library and supports macOS and Linux process groups; Windows
+fails explicitly and needs a separately qualified launcher.
+
+For a macOS app-bundle binary, use unattended `-e` execution. The [Stata Mac manual, section B.3](https://www.stata.com/manuals/gsmb.pdf)
+documents `-e do <file>` and automatic exit; `-b` can leave a completion dialog.
+The helper uses `-e <wrapper>` because that spelling executed successfully on
+the tested Stata/BE 18 installation, where `-e do <wrapper>` did not produce the
+expected log. Qualify the actual executable and argument spelling after an
+installation or version change. macOS app batch mode remains an application
+process; it is not a guarantee of a true headless console environment.
+For a genuine console executable, the helper uses `-b do <wrapper>` instead.
+
+From the skill's root, an example run is:
+
+```bash
+python3 scripts/stata_runner.py \
+  --stata "/Applications/Stata/Stata.app/Contents/MacOS/StataBE" \
+  --do-file "/path/to/project/scripts/job.do" \
+  --run-dir "/path/to/private/run outputs/new-run" \
+  --cwd "/path/to/project" \
+  --timeout 300
+```
+
+Select the actual executable and a new run directory; the helper retains the
+wrapper, log, stdout, stderr, Stata return-code sidecar, and JSON result for
+diagnosis. Keep these outside public source trees because Stata logs may contain
+license or data metadata.
+Set a timeout suitable for the workload.
+
+## Verify completion
+
+Success requires natural process exit and an exact run-specific Stata
+return-code record in a fresh sidecar file; inspect the retained log separately.
+An operating-system status of zero alone is insufficient. A completion marker
+followed by forced termination is a failed unattended run. Timeout cleanup
+targets only the process group created for that run; never use a broad Stata
+process-name kill.
+
+Before adopting the launcher, test a successful do-file, a deliberate Stata
+error, and a timeout in fresh directories, including paths with spaces. Check
+the retained evidence and absence of residual owned processes. A successful
+launch does not establish numerical correctness or plugin fidelity.
+
+Verify successful and deliberately failing runs while the screen is actually
+locked before claiming locked-screen reliability. Desktop completion without
+interaction does not establish that condition. Sleep, unavailable licenses,
+and locked or unavailable data volumes remain separate execution constraints.
+
+## Adopt in a project
+
+Existing project launchers remain in place until deliberate migration. For a
+reproducible pipeline, copy the reviewed helper into the project and record its
+source commit or digest, then qualify that copy with the project's checks.
+Avoid a runtime dependency on the mutable installed skill directory. Keep
+rollback to the prior launcher available until acceptance succeeds.

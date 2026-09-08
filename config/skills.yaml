@@ -33,7 +33,7 @@ skills:
       - stata
     rules:
       - Follow existing code and explicit tool choices; prefer built-in commands when they meet an otherwise unspecified need.
-      - When running code from the terminal, use batch mode and inspect the generated log file.
+      - For terminal or scheduled runs, follow [unattended execution](references/unattended-execution.md) and verify natural exit plus fresh Stata return-code evidence.
       - Preserve raw data and write cleaned or derived outputs separately.
       - Validate merge results, missing-value handling, and stored results before chaining commands.
     critical_gotchas:
@@ -74,6 +74,7 @@ skills:
       - stata
     rules:
       - Before executing dependent code, check the package and its dependencies with the reference preflight commands. Report unavailable runtime validation separately from code drafting.
+      - For automated package runs, follow [unattended execution](references/unattended-execution.md) and retain the package-specific assertions.
       - Use an isolated temporary `PLUS` directory for automated package tests.
       - Prefer the smallest reproducible example that exercises the required package syntax.
       - Do not install or update packages in a user's normal Stata environment without authorization.
@@ -111,7 +112,8 @@ skills:
     rules:
       - Preserve the requested interface and distinguish compilation checks from plugin loading and runtime validation.
       - Prefer wrapping an existing C or C++ backend over reimplementing an algorithm.
-      - Catch every exception that could escape `stata_call` and validate return codes in batch mode.
+      - Catch every exception that could escape `stata_call` and validate Stata return codes.
+      - For plugin execution, follow [unattended execution](references/unattended-execution.md); a compilation pass does not establish loading, execution, or natural exit.
       - Treat plugin crashes as high risk because they terminate the Stata session.
     critical_gotchas: []
     interface:

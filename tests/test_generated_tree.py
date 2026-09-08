@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import redirect_stdout
 import io
 import re
+import subprocess
 from pathlib import Path
 import sys
 from tempfile import TemporaryDirectory
@@ -55,7 +56,7 @@ class GeneratedTreeTests(unittest.TestCase):
             for skill_key, _, entry in cls.entries
         }
 
-    def test_complete_tree_has_exactly_the_expected_89_files(self) -> None:
+    def test_complete_tree_has_exactly_the_expected_95_files(self) -> None:
         canonical = self.canonical_paths()
         root_files = {
             f"{skill['folder']}/{relative}"
@@ -64,6 +65,8 @@ class GeneratedTreeTests(unittest.TestCase):
                 "SKILL.md",
                 "PROVENANCE.md",
                 "agents/openai.yaml",
+                "references/unattended-execution.md",
+                "scripts/stata_runner.py",
             )
         }
         aliases = {
@@ -91,8 +94,24 @@ class GeneratedTreeTests(unittest.TestCase):
             aliases,
         )
         self.assertEqual(16, len(indexes))
-        self.assertEqual(89, len(expected))
+        self.assertEqual(95, len(expected))
         self.assertEqual(expected, actual)
+
+    def test_each_skill_bundles_the_standalone_runner_without_source_drift(self) -> None:
+        source_bytes = (REPO_ROOT / "scripts" / "stata_runner.py").read_bytes()
+        for skill in self.config["skills"].values():
+            with self.subTest(skill=skill["folder"]):
+                helper = self.output_root / skill["folder"] / "scripts" / "stata_runner.py"
+                self.assertEqual(source_bytes, helper.read_bytes())
+                result = subprocess.run(
+                    [sys.executable, "-B", str(helper), "--help"],
+                    cwd=self.output_root,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                )
+                self.assertEqual(0, result.returncode, result.stderr)
+                self.assertIn("--run-dir", result.stdout)
 
     def test_library_is_quiet_and_cli_prints_one_summary(self) -> None:
         self.assertEqual("", self.library_output)
@@ -288,7 +307,23 @@ class GeneratedTreeTests(unittest.TestCase):
             render_skills.preflight_existing_output_root(target)
             for skill in self.config["skills"].values():
                 shutil.rmtree(target / skill["folder"] / "routing")
+                shutil.rmtree(target / skill["folder"] / "scripts")
+                (target / skill["folder"] / "references" / "unattended-execution.md").unlink()
+                if skill["folder"] == "stata-packages":
+                    (target / skill["folder"] / "references").rmdir()
             render_skills.preflight_existing_output_root(target)
+
+    def test_unexpected_scripts_prevent_replacing_an_existing_tree(self) -> None:
+        import shutil
+
+        with TemporaryDirectory(prefix="generated-script-guard-") as temp_root:
+            target = Path(temp_root) / "generated"
+            shutil.copytree(self.output_root, target)
+            extra = target / "stata-core" / "scripts" / "unrelated.py"
+            extra.write_text("# preserve local work\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "scripts/ must contain only"):
+                render_skills.preflight_existing_output_root(target)
+            self.assertTrue(extra.is_file())
 
     def test_routing_indexes_do_not_allow_extra_directories_or_non_markdown(self) -> None:
         import shutil

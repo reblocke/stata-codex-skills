@@ -24,6 +24,7 @@ from yaml.nodes import MappingNode
 from yaml.resolver import BaseResolver
 
 from process_guard.authorization import allow_detached_process
+from stata_runner import launch_arguments
 from runtime_guard import (
     REQUIRED_PYTHON,
     REQUIRED_UNICODE_VERSION,
@@ -1213,10 +1214,7 @@ def _stata_launch_command(
         str(MACOS_SANDBOX_EXEC),
         "-p",
         STATA_SANDBOX_PROFILE,
-        str(stata_binary),
-        "-e",
-        "do",
-        str(child_do_file),
+        *launch_arguments(stata_binary, child_do_file),
     ]
 
 
@@ -1227,12 +1225,13 @@ def run_stata_do(
     completion_marker: str,
     timeout_seconds: int = 300,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
-    """Run one Stata do-file and require its exact, run-specific marker.
+    """Require an exact run-specific marker and natural Stata process exit.
 
-    Stata's macOS ``-e do`` mode names its plain-text log after the do-file in
-    the process working directory.  Validation deliberately accepts only that
-    path: stale logs elsewhere (especially in the repository root) are never
-    candidates.
+    The qualified macOS app-bundle invocation is ``-e <do-file>``. Its plain-text
+    log is named after the do-file in the process working directory. Validation
+    deliberately accepts only that path: stale logs elsewhere (especially in
+    the repository root) are never candidates. A marker followed by a hanging
+    process fails at the deadline; cleanup never turns forced exit into success.
     """
     ensure_dir(cwd)
     log_path = cwd / f"{do_file.stem}.log"
@@ -1261,14 +1260,6 @@ def run_stata_do(
                     line.strip() == completion_marker
                     for line in log_text.splitlines()
                 )
-                if marker_found:
-                    leader_state = _process_leader_state(process)
-                    if leader_state is _ProcessLeaderState.UNANCHORED:
-                        raise RuntimeError(
-                            "Lost ownership of the Stata process-group leader "
-                            "before cleanup."
-                        )
-                    break
             leader_state = _process_leader_state(process)
             if leader_state is _ProcessLeaderState.UNANCHORED:
                 raise RuntimeError(
@@ -1295,11 +1286,6 @@ def run_stata_do(
     marker_found = any(line.strip() == completion_marker for line in log_text.splitlines())
     diagnostics: list[str] = []
     process_returncode = process.returncode if process.returncode is not None else 1
-    killed_after_marker = (
-        marker_found
-        and stop_result.leader_kill_sent
-        and process_returncode == -int(signal.SIGKILL)
-    )
     if not log_path.exists():
         diagnostics.append(f"Stata did not create the expected log {log_path.name}.")
     elif not marker_found:
@@ -1308,9 +1294,13 @@ def run_stata_do(
     if timed_out:
         effective_returncode = 124
         diagnostics.append(f"Stata timed out after {timeout_seconds} seconds.")
+        if marker_found:
+            diagnostics.append(
+                "The completion marker was present, but Stata did not exit naturally."
+            )
     elif not stop_result.cleanup_confirmed:
         effective_returncode = 1
-    elif process_returncode != 0 and not killed_after_marker:
+    elif process_returncode != 0:
         effective_returncode = process_returncode
     elif not log_path.exists():
         effective_returncode = 1
