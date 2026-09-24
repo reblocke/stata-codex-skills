@@ -148,8 +148,9 @@ Derive tests from example IDs and code, not code from independently edited prose
 Tests must also check the actual rendered code bytes against the authoritative
 body so that a template mutation cannot escape the contract.
 
-Migrate the eight core/package entries named in the findings table. Classify
-remaining published blocks honestly as runnable, fragment, or illustrative;
+Migrate the core/package entries named in the findings table and
+`content/core/bootstrap-simulation.yaml`. Classify remaining published blocks
+honestly as runnable, fragment, or illustrative;
 record their actual coverage. Do not relabel all examples as fragments to avoid
 tests. Non-migrated material must not acquire an unsupported execution claim.
 Keep Stata, Mata, C/C++, and shell examples in their correct language contexts.
