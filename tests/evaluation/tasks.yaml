@@ -1,0 +1,135 @@
+# Frozen before source, template, or routing edits. These prompts and oracles are
+# independent of the wording in the skill pack. All data are synthetic.
+schema_version: 1
+trial_plan:
+  variants: [original, correctness-repaired, candidate]
+  critical_repetitions: 3
+  other_repetitions: 1
+  per_trial_seconds: 180
+  per_trial_instruction_token_budget: 8000
+  per_trial_tool_output_token_budget: 12000
+  success_tolerances:
+    exact_counts_keys_categories: 0
+    deterministic_real_values_absolute: 1.0e-10
+    stochastic_estimates: predeclare_per_task_before_execution
+tasks:
+  - id: loops
+    critical: true
+    prompt: "Write a Stata do-file with foreach and forvalues loops that creates squared and cubed values for integers 1 through 5. Run it on synthetic data."
+    route: stata-core/references/programming-basics.md
+    oracle: "Both loops parse under the default newline delimiter; row 5 has square 25 and cube 125."
+  - id: joinby-cardinality
+    critical: true
+    prompt: "Join two synthetic employee rows to three contract rows within firm A, and one to one within firm B. State and verify the output grain."
+    route: stata-core/references/data-management.md
+    oracle: "Firm A has exactly 6 pairs, B exactly 1; duplicate or missing keys are audited."
+  - id: merge-disposition
+    critical: true
+    prompt: "Merge synthetic master keys 1,2 with lookup keys 2,3. Keep and report all row dispositions."
+    route: stata-core/references/data-management.md
+    oracle: "Exactly one master-only, one matched, and one using-only row; no silent drop."
+  - id: collapse-values
+    critical: true
+    prompt: "Collapse synthetic values 10,20 in group 1 and 8,12 in group 2, then check output keys and means."
+    route: stata-core/references/data-management.md
+    oracle: "Exactly two unique group keys; means are 15 and 10 with original input recoverable."
+  - id: clean-rerun
+    critical: true
+    prompt: "Run a tiny seeded synthetic Stata analysis twice in independent clean sessions and compare substantive results."
+    route: stata-core/references/workflow-best-practices.md
+    oracle: "Two natural exits and fresh status evidence; same declared counts and values, without comparing timestamps."
+  - id: prediction-samples
+    critical: true
+    prompt: "Fit OLS with one deliberately missing covariate, predict in-sample and on an unlabeled future row, and identify each sample."
+    route: stata-core/references/linear-regression.md
+    oracle: "Excluded row is outside e(sample); prediction and evaluation membership are distinct and explicit."
+  - id: rclass-qualifier-weight
+    critical: true
+    prompt: "Write a reusable weighted-mean rclass program accepting if/in and analytic weights; test a valid subset and an unsupported weight."
+    route: stata-core/references/advanced-programming.md
+    oracle: "Named r(mean) matches weighted fixture; invalid weight has declared nonzero rc and leaves data unchanged."
+  - id: missing-tristate
+    critical: true
+    prompt: "Classify synthetic ages 17, 21, ., and .a as adult, minor, or unknown; distinguish unknown from false."
+    route: stata-core/references/variables-operators.md
+    oracle: "Real ages map correctly; both numeric missing codes remain unknown."
+  - id: missing-false-policy
+    critical: false
+    prompt: "Show an explicit policy in Stata that codes a missing eligibility input as false, and label it as a policy choice."
+    route: stata-core/references/variables-operators.md
+    oracle: "Missing-as-false is named separately from unknown-preserving classification."
+  - id: identifier-fidelity
+    critical: true
+    prompt: "Join synthetic IDs '000012345678901234' and '123456789012345678' without losing leading zeros or digits."
+    route: stata-core/references/variables-operators.md
+    oracle: "Original string IDs remain exact; widening previously rounded numeric IDs is not claimed to recover digits."
+  - id: bootstrap-ledger
+    critical: false
+    prompt: "Draft a small simulation with replication IDs, fixed seed, failure ledger, and Monte Carlo standard error for a synthetic mean."
+    route: stata-core/references/bootstrap-simulation.md
+    oracle: "Denominator and failed replications explicit; reproducible seed and predeclared summary."
+  - id: gcollapse-draft-unavailable
+    critical: true
+    prompt: "Draft gcollapse code for synthetic groups while gtools is unavailable. Do not install packages or claim execution."
+    route: stata-packages/packages/data-manipulation.md
+    oracle: "Draft is useful; missing runtime marked unverified; no installation."
+  - id: rangestat-draft-unavailable
+    critical: false
+    prompt: "Draft a rangestat rolling-window calculation for a synthetic panel without installing any package."
+    route: stata-packages/packages/data-manipulation.md
+    oracle: "Only rangestat dependencies and window endpoints discussed; no unrelated utility install."
+  - id: did-boundary
+    critical: true
+    prompt: "My established code uses csdid for staggered adoption. Explain a small extension without changing the estimator."
+    route: stata-packages/packages/did.md
+    oracle: "Preserves csdid and its estimand; does not switch to didregress."
+  - id: rd-boundary
+    critical: false
+    prompt: "Our existing RD analysis uses rdrobust. Add an inference check without replacing the estimator."
+    route: stata-packages/packages/rdrobust.md
+    oracle: "Preserves rdrobust and flags bandwidth or bias-correction choices as scientific choices."
+  - id: matching-boundary
+    critical: false
+    prompt: "Explain our existing psmatch2 matching code, including its matched sample."
+    route: stata-packages/packages/psmatch2.md
+    oracle: "Does not silently rewrite as teffects."
+  - id: table-boundary
+    critical: false
+    prompt: "Extend an existing esttab output with one additional model without changing the export pipeline."
+    route: stata-packages/packages/estout.md
+    oracle: "Preserves named stored models and esttab."
+  - id: polynomial-boundary
+    critical: false
+    prompt: "My current code uses lprobust. Explain what its interval means without selecting a new estimator."
+    route: stata-packages/packages/nprobust.md
+    oracle: "Keeps lprobust and distinguishes robust bias-corrected inference."
+  - id: mata-plugin-boundary
+    critical: false
+    prompt: "A Mata calculation seems slow but has not been profiled. Explain the next diagnostic step."
+    route: stata-core/references/mata-programming.md
+    oracle: "Profiles first; does not propose an unrequested native rewrite."
+  - id: explain-only
+    critical: true
+    prompt: "Explain what Stata's e(sample) means in this displayed regress command. No execution is requested."
+    route: stata-core/references/linear-regression.md
+    oracle: "Concise explanation only; no install, data execution, or full methods review."
+  - id: data-contract
+    critical: true
+    prompt: "Plan a synthetic person-visit cohort join with duplicate visits, missing IDs, inclusive day 0 and exclusive day 30 endpoints."
+    route: stata-core/references/data-management.md
+    oracle: "Grain, keys, identifier representation, tie handling, endpoints, disposition, and output schema explicit."
+  - id: safe-refactor
+    critical: true
+    prompt: "Refactor a slow Stata cohort do-file while preserving its estimand, row counts, and output columns."
+    route: stata-core/references/workflow-best-practices.md
+    oracle: "Declares behavior and allowed mutations; minimal patch and negative regression cases; no estimand redesign."
+  - id: result-extraction
+    critical: true
+    prompt: "Extract a named coefficient and sample size from two fitted Stata models into a stable results table."
+    route: stata-core/references/advanced-programming.md
+    oracle: "Model identity and named coefficient access retained; volatile results copied before overwrite."
+  - id: plugin-explain-only
+    critical: false
+    prompt: "Explain the difference between compiling and executing a Stata C plugin; do not run it."
+    route: stata-c-plugins/references/testing_strategy.md
+    oracle: "Compilation is not called runtime proof; no execution or environment change."
