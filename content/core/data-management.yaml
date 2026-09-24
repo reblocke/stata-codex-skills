@@ -57,8 +57,8 @@ workflows:
 - Use `joinby` only when every within-key combination is substantively meaningful and verify the expected Cartesian row count.
 - Use `reshape` on a small copy first, assert the `i()` identifier, and verify that suffixes or `j()` values map to the intended occasions.
 validation_case: >-
-  Build small master and using datasets, verify `m:1` key cardinality, assert all `merge` results, and verify a
-  deliberate `joinby` Cartesian count.
+  Assert matched, master-only, and using-only merge rows; verify grouped means and keys after `collapse`;
+  and establish known within-key Cartesian counts after `joinby`.
 validation_mode: stata
 related_refs:
 - variables-operators
@@ -66,11 +66,12 @@ related_refs:
 install_commands: []
 smoke_test: |-
   clear all
-  tempfile master groups
+  tempfile master groups employees contracts
   input id group value
   1 1 10
   2 1 20
   3 2 30
+  4 3 40
   end
   isid id
   save `master'
@@ -78,15 +79,48 @@ smoke_test: |-
   input group str4 label
   1 "one"
   2 "two"
+  4 "four"
   end
   isid group
   save `groups'
   use `master', clear
   merge m:1 group using `groups'
-  assert _merge == 3
-  drop _merge
+  count if _merge == 1
+  assert r(N) == 1
+  count if _merge == 2
+  assert r(N) == 1
+  count if _merge == 3
+  assert r(N) == 3
+  keep if _merge == 3
   collapse (mean) mean_value=value, by(group)
+  isid group
   assert _N == 2
+  assert mean_value == 15 if group == 1
+  assert mean_value == 30 if group == 2
+  clear
+  input str1 firm str2 employee
+  "A" "e1"
+  "A" "e2"
+  "B" "e3"
+  end
+  save `employees'
+  clear
+  input str1 firm str2 contract
+  "A" "c1"
+  "A" "c2"
+  "A" "c3"
+  "B" "c4"
+  end
+  isid firm contract
+  save `contracts'
+  use `employees', clear
+  joinby firm using `contracts'
+  isid firm employee contract
+  assert _N == 7
+  count if firm == "A"
+  assert r(N) == 6
+  count if firm == "B"
+  assert r(N) == 1
 provenance:
   local_help_topics: [generate, merge, joinby, duplicates, isid, append, reshape, collapse, egen]
   local_help_globs: []

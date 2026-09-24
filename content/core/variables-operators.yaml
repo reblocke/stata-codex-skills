@@ -31,7 +31,10 @@ source_topics:
 - if
 - functions
 syntax_patterns:
-- generate byte eligible = age >= 18 & !missing(age)
+- |-
+  generate byte adult_unknown_preserved = .
+  replace adult_unknown_preserved = age >= 18 if !missing(age)
+- generate byte adult_missing_as_false = age >= 18 & !missing(age)
 - replace category = 1 if inlist(code, "A", "B")
 - generate double ratio = numerator / denominator if denominator != 0 & !missing(denominator)
 assumptions:
@@ -40,14 +43,14 @@ assumptions:
 gotchas:
 - Numeric missing values sort above every real number, so `age > 65` also selects missing age unless guarded.
 - A single equals sign (`=`) assigns a value; double equals (`==`) tests equality inside expressions and qualifiers.
-- "`float` storage can lose decimal precision; use `double` for identifiers or calculations requiring exact precision."
+- Preserve identifiers as their original strings when leading zeros or long digits matter; converting a rounded numeric ID to `double` cannot recover lost digits.
 - Logical expressions involving strings and numeric missing values follow different missing-value conventions.
 workflows:
 - Inspect storage types and missingness, `generate` into a new variable, `tabulate` the result with `missing`, then `replace` only verified cases.
 - Use explicit parentheses in expressions that mix `&` and `|`, and `assert` impossible states after classification.
 validation_case: >-
-  Construct real and missing values, classify them with guarded comparisons, and assert that missing observations
-  are not inadvertently treated as high values.
+  Test ordinary and extended numeric missing values under separately named unknown-preserving and missing-as-false policies;
+  retain long string identifiers with leading zeros exactly.
 validation_mode: stata
 related_refs:
 - data-management
@@ -55,16 +58,28 @@ related_refs:
 install_commands: []
 smoke_test: |-
   clear
-  input double x
-  5
-  12
+  input double age
+  17
+  21
   .
+  .a
   end
-  generate byte high = x > 10 & !missing(x)
-  assert high == 0 in 1
-  assert high == 1 in 2
-  assert high == 0 in 3
-  assert missing(x[3])
+  generate byte adult_unknown_preserved = .
+  replace adult_unknown_preserved = age >= 18 if !missing(age)
+  generate byte adult_missing_as_false = age >= 18 & !missing(age)
+  assert adult_unknown_preserved == 0 in 1
+  assert adult_unknown_preserved == 1 in 2
+  assert missing(adult_unknown_preserved) in 3/4
+  assert adult_missing_as_false == 0 in 3/4
+  assert age[4] == .a
+  clear
+  input str18 person_id
+  "000012345678901234"
+  "123456789012345678"
+  end
+  isid person_id
+  assert person_id[1] == "000012345678901234"
+  assert person_id[2] == "123456789012345678"
 provenance:
   local_help_topics: [generate, missing, if, functions]
   local_help_globs: []

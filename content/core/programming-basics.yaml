@@ -19,12 +19,18 @@ routing_terms:
 - quietly run a Stata command
 source_topics: [foreach, forvalues, macro, do]
 syntax_patterns:
-- local outcomes "y1 y2 y3"
-- foreach outcome of local outcomes { regress `outcome' exposure covariates }
-- forvalues year = 2010/2020 { summarize outcome if calendar_year == `year' }
+- |-
+  local powers "2 3"
+  foreach power of local powers {
+      generate double value`power' = base^`power'
+  }
+- |-
+  forvalues row = 1/5 {
+      assert value2[`row'] == `row'^2
+  }
 - do "analysis.do" input_path output_path
 assumptions:
-- Macro contents and loop lists are defined at the intended scope and contain valid quoted tokens.
+- The loop examples require an existing numeric `base` variable with values 1 through 5; the `do` line requires its named file and arguments.
 - Repeated commands are safe at each iteration and produce uniquely named or intentionally replaced outputs.
 gotchas:
 - "`local` macros disappear outside their defining scope; globals persist and can create hidden cross-script state."
@@ -34,7 +40,7 @@ workflows:
 - Prototype one concrete command, parameterize only the changing pieces, then inspect expanded commands on a small loop.
 - Use `local` macros and temporary files by default, check `_rc` after expected failures, and make reruns idempotent.
 validation_case: >-
-  Loop over a fixed numeric list, construct deterministic variables, and verify both macro expansion and final values.
+  Execute the published `foreach` and `forvalues` bodies after their declared setup, then verify expansion and final values.
 validation_mode: stata
 related_refs: [advanced-programming, workflow-best-practices]
 install_commands: []
@@ -42,11 +48,14 @@ smoke_test: |-
   clear
   set obs 5
   generate int base = _n
-  forvalues power = 2/3 {
+  local powers "2 3"
+  foreach power of local powers {
       generate double value`power' = base^`power'
   }
-  local expected 25
-  assert value2[5] == `expected'
+  forvalues row = 1/5 {
+      assert value2[`row'] == `row'^2
+  }
+  assert value2[5] == 25
   assert value3[2] == 8
 provenance:
   local_help_topics: [foreach, forvalues, macro, do]

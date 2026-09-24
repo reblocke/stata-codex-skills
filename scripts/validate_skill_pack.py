@@ -366,26 +366,54 @@ def validate_core(
     for entry in entries:
         slug = entry.get("slug", "<missing-slug>")
         try:
-            run_dir = ensure_dir(work_root / "core" / slug)
-            marker = completion_marker(f"core-{slug}")
-            run_token = marker.rsplit("::", 1)[-1]
-            do_file = run_dir / f"{slug}_smoke_{run_token}.do"
-            write_text(do_file, stata_entry_do_text(entry, marker))
-            result, log_path = run_stata_do(
-                stata_binary,
-                do_file,
-                run_dir,
-                completion_marker=marker,
-                timeout_seconds=90,
+            repetitions = entry.get("clean_repetitions", 1)
+            results_for_entry: list[str] = []
+            successful_runs = []
+            diagnostics_for_entry = []
+            for attempt in range(repetitions):
+                run_root = work_root / "core" / slug
+                run_dir = ensure_dir(
+                    run_root / f"clean-{attempt + 1}"
+                    if repetitions > 1 else run_root
+                )
+                marker = completion_marker(f"core-{slug}-{attempt + 1}")
+                run_token = marker.rsplit("::", 1)[-1]
+                do_file = run_dir / f"{slug}_smoke_{run_token}.do"
+                write_text(do_file, stata_entry_do_text(entry, marker))
+                result, log_path = run_stata_do(
+                    stata_binary,
+                    do_file,
+                    run_dir,
+                    completion_marker=marker,
+                    timeout_seconds=90,
+                )
+                log_text = read_text(log_path) if log_path.exists() else ""
+                successful_runs.append(
+                    result.returncode == 0
+                    and log_path.exists()
+                    and not has_stata_error(log_text)
+                    and has_exact_log_line(log_text, f"PASS: {slug}")
+                )
+                diagnostics_for_entry.append(
+                    combined_output(log_text, result.stdout, result.stderr)
+                )
+                if repetitions > 1:
+                    substantive_lines = [
+                        line.strip() for line in log_text.splitlines()
+                        if line.strip().startswith("CODEX_RESULT:")
+                    ]
+                    if len(substantive_lines) != 1:
+                        successful_runs[-1] = False
+                    else:
+                        results_for_entry.append(substantive_lines[0])
+            success = all(successful_runs) and (
+                repetitions == 1
+                or len(results_for_entry) == repetitions
+                and len(set(results_for_entry)) == 1
             )
-            log_text = read_text(log_path) if log_path.exists() else ""
-            success = (
-                result.returncode == 0
-                and log_path.exists()
-                and not has_stata_error(log_text)
-                and has_exact_log_line(log_text, f"PASS: {slug}")
-            )
-            diagnostics = combined_output(log_text, result.stdout, result.stderr)
+            diagnostics = "\n".join(diagnostics_for_entry)
+            if repetitions > 1 and len(set(results_for_entry)) > 1:
+                diagnostics += "\nIndependent clean-session results differ."
         except Exception as error:
             success = False
             diagnostics = f"{type(error).__name__}: {error}"

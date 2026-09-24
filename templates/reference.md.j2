@@ -44,13 +44,16 @@ Use only the commands that match the requested task:
 
 ## Syntax patterns
 
-Use these task-specific patterns as a starting point:
+These patterns are separate illustrations. Check their stated context before
+running them:
+{% for line in entry.syntax_patterns %}
+
+### Pattern {{ loop.index }}
 
 ```stata
-{% for line in entry.syntax_patterns %}
 {{ line }}
-{% endfor %}
 ```
+{% endfor %}
 {% endif %}
 
 ## Common gotchas

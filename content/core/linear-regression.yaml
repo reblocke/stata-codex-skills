@@ -34,19 +34,35 @@ workflows:
 - Define outcome, exposure, covariates, functional form, and variance estimator before fitting; then inspect residual and influence diagnostics.
 - For IV models, document the causal instrument argument, inspect first-stage strength, and compare with the non-IV specification.
 validation_case: >-
-  Fit OLS with a factor variable and robust standard errors, calculate adjusted predictions, generate fitted values,
-  and verify that estimation and prediction samples agree.
+  Fit OLS on synthetic data with deliberate exclusions, then distinguish estimation, prediction, and evaluation samples,
+  including an out-of-sample prediction and a missing-covariate row.
 validation_mode: stata
 related_refs: [regression-diagnostics, descriptive-statistics, limited-dependent-variables]
 install_commands: []
 smoke_test: |-
   clear all
-  sysuse auto, clear
-  regress price c.mpg##i.foreign weight, vce(robust)
-  assert e(N) == 74
-  margins foreign
+  input byte id double x double y
+  1 1 5
+  2 2 8
+  3 3 11
+  4 4 14
+  5 5 .
+  6 . 20
+  end
+  regress y x, vce(robust)
+  assert e(N) == 4
+  generate byte estimation_sample = e(sample)
+  assert estimation_sample == 1 if id <= 4
+  assert estimation_sample == 0 if id >= 5
+  margins, at(x=(1 2))
   predict double fitted, xb
-  assert !missing(fitted)
+  generate byte prediction_sample = !missing(fitted)
+  generate byte evaluation_sample = estimation_sample & !missing(y)
+  assert prediction_sample == 1 if id <= 5
+  assert prediction_sample == 0 if id == 6
+  assert evaluation_sample == 1 if id <= 4
+  assert evaluation_sample == 0 if id >= 5
+  assert abs(fitted[5] - 17) < 1e-10
 provenance:
   local_help_topics: [regress, ivregress, margins, predict]
   local_help_globs: []

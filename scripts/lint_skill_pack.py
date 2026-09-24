@@ -88,6 +88,9 @@ NONEMPTY_LIST_FIELDS = {
     "workflows",
 }
 VALIDATION_MODES = {"stata", "compilation", "manual-review"}
+INLINE_STATA_LOOP_RE = re.compile(
+    r"(?m)^[ \t]*(?:foreach|forvalues)\b[^\r\n]*\{[ \t]*\S"
+)
 STYLE_WORD_RE = re.compile(r"[^\W\d_][\w+.-]*", re.UNICODE)
 DEFAULT_STYLE_ALLOWED_CAPITALIZED_WORDS = {
     "C",
@@ -3960,6 +3963,15 @@ def lint_entry(
         errors.append(f"{source_label}: smoke_test must be null or a nonempty string")
     if mode == "stata" and not is_nonempty_string(smoke_test):
         errors.append(f"{source_label}: stata validation requires smoke_test")
+    clean_repetitions = entry.get("clean_repetitions", 1)
+    if clean_repetitions not in (1, 2) or isinstance(clean_repetitions, bool):
+        errors.append(f"{source_label}: clean_repetitions must be 1 or 2")
+    elif clean_repetitions == 2 and (
+        not isinstance(smoke_test, str) or 'display "CODEX_RESULT:' not in smoke_test
+    ):
+        errors.append(
+            f"{source_label}: repeated clean sessions require a CODEX_RESULT display"
+        )
     if mode == "manual-review" and smoke_test:
         errors.append(f"{source_label}: manual-review entries must not claim an executable smoke_test")
     if mode == "compilation":
@@ -3992,6 +4004,15 @@ def lint_entry(
                 errors.append(
                     f"{source_label}: {field} contains generic content {value!r}"
                 )
+    if skill_key == "core":
+        for field in ("syntax_patterns", "smoke_test"):
+            value = entry.get(field)
+            blocks = value if isinstance(value, list) else [value]
+            for block in blocks:
+                if isinstance(block, str) and INLINE_STATA_LOOP_RE.search(block):
+                    errors.append(
+                        f"{source_label}: {field} has an inline foreach/forvalues body"
+                    )
     validation_case = str(entry.get("validation_case", ""))
     if (
         any(

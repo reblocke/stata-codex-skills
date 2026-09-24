@@ -40,8 +40,9 @@ workflows:
 - Separate immutable inputs, intermediate data, reports, and temporary files; rerun end to end and inspect logs and artifacts.
 - For terminal or scheduled jobs, use [unattended execution](unattended-execution.md) to qualify the launcher and retain fresh Stata return-code evidence alongside project assertions.
 validation_case: >-
-  Execute a temporary-data workflow twice from a clean session with fixed version and assertions, confirming identical key results.
+  Execute the same seeded temporary-data workflow in two independent clean Stata sessions and compare its declared count and mean.
 validation_mode: stata
+clean_repetitions: 2
 related_refs: [programming-basics, basics-getting-started]
 install_commands: []
 smoke_test: |-
@@ -56,6 +57,8 @@ smoke_test: |-
   use `derived', clear
   assert _N == 10
   assert !missing(value)
+  quietly summarize value, meanonly
+  display "CODEX_RESULT: N=" r(N) " mean=" %21.17g r(mean)
 provenance:
   local_help_topics: [log, version, cd]
   local_help_globs: []
