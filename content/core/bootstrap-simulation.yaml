@@ -20,13 +20,16 @@ syntax_patterns: []
 assumptions:
 - The resampling or permutation unit reflects the actual assignment and dependence structure.
 - The data-generating process and returned statistic represent the estimand and scenarios the simulation is meant to study.
+- Each scenario and replication has a stable ID, a fixed RNG policy, a declared failure rule, and a predeclared summary and denominator.
 gotchas:
 - Resample at the independent sampling unit; observation-level resampling is invalid for clustered or repeated data.
 - Too few replications make Monte Carlo error visible in standard errors, percentiles, and p-values.
 - Each simulation replication must return the intended statistic and reset all mutable state.
+- Dropping failed or nonconverged replications without a ledger can change the effective denominator and hide simulation instability.
 workflows:
 - Define the sampling unit, statistic, replication count, seed, and confidence-interval method before running a bootstrap.
 - Test a simulation program once, run a small seeded batch, inspect failures and bias, then scale to the planned replications.
+- Record every scenario and replication ID with status, statistic, and failure reason; report attempted, successful, and failed counts, then compute the predeclared estimate and Monte Carlo uncertainty from the stated denominator.
 validation_case: >-
   `bootstrap` a synthetic mean with a fixed seed and small replication count, verify the replication count,
   and confirm the original sample remains available.
@@ -56,6 +59,31 @@ examples:
   min_version: 18
   prerequisites: [A defined `test_program` returning `r(stat)` and a justified exchangeability unit.]
   code: "permute treatment statistic=r(stat), reps(1000) seed(271828): test_program"
+- id: core-simulation-ledger
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [Five synthetic independent replications; one predeclared nonconvergence is retained in the ledger.]
+  code: |-
+    clear
+    set seed 271828
+    set obs 5
+    generate byte scenario_id = 1
+    generate byte replication_id = _n
+    generate byte converged = replication_id != 4
+    generate str14 failure_reason = cond(converged, "", "nonconvergence")
+    generate double estimate = runiform() if converged
+    count
+    scalar attempted = r(N)
+    count if converged
+    scalar successful = r(N)
+    scalar failed = attempted - successful
+    quietly summarize estimate if converged
+    scalar mc_mean = r(mean)
+    scalar mc_se = r(sd) / sqrt(r(N))
+  test_id: core-simulation-ledger
+  fixture: tests/stata/examples/core-simulation-ledger.yaml
+  expected_rc: 0
 provenance:
   local_help_topics: [bootstrap, simulate, permute]
   local_help_globs: []

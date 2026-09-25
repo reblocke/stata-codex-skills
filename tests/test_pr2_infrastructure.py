@@ -2075,6 +2075,57 @@ class StructuredPromptTests(unittest.TestCase):
                 ("stata-c-plugins/references/performance_patterns.md",),
                 ("profiling", "mata", "cannot add native binaries"),
             ),
+            "workflow-data-contract-negative": (
+                "stata-core",
+                ("stata-core/references/variables-operators.md",),
+                ("stata-core/references/data-management.md",),
+                ("leading zeros", "no merge"),
+            ),
+            "workflow-data-contract-boundary": (
+                "stata-core",
+                ("stata-core/references/data-management.md",),
+                ("stata-packages/packages/data-manipulation-gtools.md",),
+                ("merge cardinality", "row dispositions"),
+            ),
+            "workflow-safe-refactor-negative": (
+                "stata-core",
+                ("stata-core/references/mathematical-functions.md",),
+                ("stata-core/references/workflow-best-practices.md",),
+                ("set seed", "not a code edit"),
+            ),
+            "workflow-safe-refactor-boundary": (
+                "stata-core",
+                (
+                    "stata-core/references/workflow-best-practices.md",
+                    "stata-core/references/data-management.md",
+                ),
+                ("stata-packages/packages/data-manipulation-gtools.md",),
+                ("cohort", "estimand fixed"),
+            ),
+            "workflow-results-negative": (
+                "stata-core",
+                ("stata-core/references/linear-regression.md",),
+                ("stata-core/references/advanced-programming.md",),
+                ("estimation sample", "do not need"),
+            ),
+            "workflow-results-boundary": (
+                "stata-core",
+                ("stata-core/references/advanced-programming.md",),
+                ("stata-core/references/tables-reporting.md",),
+                ("r mean", "overwrite"),
+            ),
+            "workflow-simulation-negative": (
+                "stata-core",
+                ("stata-core/references/descriptive-statistics.md",),
+                ("stata-core/references/bootstrap-simulation.md",),
+                ("sample mean", "no resampling"),
+            ),
+            "workflow-simulation-boundary": (
+                "stata-core",
+                ("stata-core/references/bootstrap-simulation.md",),
+                ("stata-packages/packages/xtabond2.md",),
+                ("synthetic data", "independent replication"),
+            ),
         })
 
         self.assertEqual(set(required_boundaries), set(route_boundaries))

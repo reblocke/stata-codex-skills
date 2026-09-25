@@ -18,6 +18,12 @@ description: "{{ skill.description }}"
 {% for rule in common_contract %}
 - {{ rule }}
 {% endfor %}
+
+## Task mode
+
+{% for mode, rule in workflow_modes.items() %}
+- **{{ mode | replace('_', ' ') }}**: {{ rule }}
+{% endfor %}
 {% if skill.critical_gotchas %}
 
 ## Critical gotchas

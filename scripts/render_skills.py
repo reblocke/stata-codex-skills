@@ -2583,6 +2583,7 @@ def _render_tree(
                     sections=section_payload,
                     route_aliases=route_aliases,
                     common_contract=config["common_contract"],
+                    workflow_modes=config["workflow_modes"],
                 )
             ),
         )

@@ -23,14 +23,17 @@ assumptions:
 - The `codex_mean` example requires Stata 18, a numeric variable, and optional `if`/`in` and analytic weights; it returns `r(mean)` and `r(N)` without changing data.
 - The `ereturn post` line is a fragment inside a separate `eclass` program with conformable named `b` and `V` matrices and a marked sample.
 - "`if`/`in` qualifiers, weights, missingness, and current estimation state are handled deliberately."
+- A reusable program declares inputs, outputs, qualifiers, dependencies, returned values, failure codes, and permitted state changes before its implementation.
 gotchas:
 - A program that ignores `marksample` can silently estimate on observations excluded by the caller.
 - "`r()` results are overwritten by many commands; copy values before issuing another `rclass` command."
 - "`preserve` must be paired with `restore` on every exit path, including handled errors."
 - An `eclass` command must post conformable coefficient and variance matrices with stable names.
+- Estimation and `r()` results are volatile. Copy named coefficients, `e(N)`, and sample membership immediately after the intended model, before fitting another model or running a command that overwrites returns.
 workflows:
 - Write the public syntax and returned-results contract first, then implement a minimal valid path and explicit error checks.
 - Test valid, boundary, and invalid inputs in clean sessions; verify data restoration and returned results after each path.
+- For multi-model extraction, retain explicit model IDs and named coefficient access, then assert a stable result schema and the estimation sample for each row; avoid positional coefficient indices when names are available.
 validation_case: >-
   Execute the published `rclass` body with `if`/`in` and analytic weights, compare named returns with a known weighted mean,
   and reject unsupported frequency weights without data changes.
@@ -70,6 +73,25 @@ examples:
   min_version: 18
   prerequisites: [An enclosing `eclass` program with conformable named `b` and `V` matrices and a marked `touse` sample.]
   code: ereturn post b V, esample(touse)
+- id: core-named-results
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites:
+  - Synthetic x, y_one, and y_two variables; the stable output is model ID, named x coefficient, and estimation N.
+  code: |-
+    tempfile results
+    tempname handle
+    postfile `handle' str8 model double beta_x long n using `results', replace
+    quietly regress y_one x
+    post `handle' ("model_1") (_b[x]) (e(N))
+    quietly regress y_two x
+    post `handle' ("model_2") (_b[x]) (e(N))
+    postclose `handle'
+    use `results', clear
+  test_id: core-named-results
+  fixture: tests/stata/examples/core-named-results.yaml
+  expected_rc: 0
 provenance:
   local_help_topics: [program, syntax, return, ereturn]
   local_help_globs: []

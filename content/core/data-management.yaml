@@ -42,16 +42,19 @@ syntax_patterns: []
 assumptions:
 - Entity and observation keys have a documented meaning and expected cardinality in every input.
 - Data transformations preserve the intended analysis unit or explicitly create a new documented unit.
+- Cohort inputs declare observation grain, units, identifier representation, missingness policy, and immutable source files before any join or filter.
 gotchas:
 - Verify key uniqueness with `isid` or `duplicates` before choosing `1:1`, `m:1`, or `1:m` `merge` cardinality.
 - Missing key values can match other missing values and cannot identify real entities; audit them before merging.
 - "`merge` retains master-only and using-only rows by default; inspect `_merge` before filtering or dropping it."
 - Avoid `merge m:m` because it performs positional matching within key groups rather than a relational join.
 - "`collapse` replaces the data in memory, so `preserve` or save a derived copy before destructive aggregation."
+- Timestamp ties, inclusive or exclusive window endpoints, and every unmatched or excluded row need an explicit policy before cohort construction.
 workflows:
 - Determine the real key, assert its cardinality on both datasets, `merge`, tabulate `_merge`, and assert the intended disposition.
 - Use `joinby` only when every within-key combination is substantively meaningful and verify the expected Cartesian row count.
 - Use `reshape` on a small copy first, assert the `i()` identifier, and verify that suffixes or `j()` values map to the intended occasions.
+- For a cohort transformation, declare output grain and schema; count input, matched, unmatched, filtered, and final rows; resolve duplicate events with a deterministic tie rule; assert keys, units, and endpoint behavior on a small synthetic fixture.
 validation_case: >-
   Assert matched, master-only, and using-only merge rows; verify grouped means and keys after `collapse`;
   and establish known within-key Cartesian counts after `joinby`.
@@ -148,6 +151,23 @@ examples:
   min_version: 18
   prerequisites: [A unique `id` and consistently suffixed `measure` columns for each time value.]
   code: reshape long measure, i(id) j(time)
+- id: core-cohort-contract
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [Synthetic person-visit rows with string identifiers, day offsets, and a stable source-row tie breaker; the output grain is one person-day.]
+  code: |-
+    generate byte in_window = visit_day >= 0 & visit_day < 30
+    bysort person_id visit_day (priority source_row): generate byte selected = _n == _N
+    count if !in_window
+    scalar excluded_window = r(N)
+    count if in_window & !selected
+    scalar excluded_tie = r(N)
+    keep if in_window & selected
+    isid person_id visit_day
+  test_id: core-cohort-contract
+  fixture: tests/stata/examples/core-cohort-contract.yaml
+  expected_rc: 0
 provenance:
   local_help_topics: [generate, merge, joinby, duplicates, isid, append, reshape, collapse, egen]
   local_help_globs: []

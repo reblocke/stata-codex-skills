@@ -1,0 +1,21 @@
+schema_version: 1
+id: core-named-results
+setup: |-
+  clear
+  input byte x double y_one double y_two
+  1 2 4
+  2 4 7
+  3 6 10
+  4 8 13
+  end
+assertions: |-
+  assert _N == 2
+  isid model
+  assert model == "model_1" in 1
+  assert model == "model_2" in 2
+  assert abs(beta_x - 2) < 1e-10 in 1
+  assert abs(beta_x - 3) < 1e-10 in 2
+  assert n == 4
+  confirm variable model
+  confirm variable beta_x
+  confirm variable n

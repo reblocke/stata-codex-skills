@@ -11,6 +11,12 @@ common_contract:
   - Preserve source data, account for rows after joins or filters, and verify declared output fields and returned results.
   - Check Stata errors and data side effects; when execution is requested, require fresh evidence and natural process exit.
 
+workflow_modes:
+  explain: Answer the requested concept from the supplied context; do not install packages, execute data, or expand into a full methods review.
+  edit: Declare the current interface and behavior, make the smallest requested patch, and verify permitted data changes without redesigning the scientific question.
+  execute: Use the existing runner, check fresh Stata status and assertions, and retain private logs only for diagnosis.
+  scientific_analysis: State the estimand, population, assumptions, and uncertainty before changing a consequential method choice.
+
 skills:
   core:
     name: stata-core

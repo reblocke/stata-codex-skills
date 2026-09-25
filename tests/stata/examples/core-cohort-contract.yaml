@@ -1,0 +1,19 @@
+schema_version: 1
+id: core-cohort-contract
+setup: |-
+  clear
+  input str3 person_id int visit_day byte priority byte source_row
+  "001" 0 1 1
+  "001" 10 0 2
+  "001" 10 1 3
+  "001" 30 1 4
+  "002" 5 1 5
+  end
+assertions: |-
+  assert scalar(excluded_window) == 1
+  assert scalar(excluded_tie) == 1
+  assert _N == 3
+  assert strlen(person_id) == 3
+  assert visit_day >= 0 & visit_day < 30
+  assert source_row == 3 if person_id == "001" & visit_day == 10
+  isid person_id visit_day

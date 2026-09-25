@@ -122,6 +122,14 @@ class GeneratedTreeTests(unittest.TestCase):
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertIn("--run-dir", result.stdout)
 
+    def test_every_root_renders_reviewed_task_modes(self) -> None:
+        for skill in self.config["skills"].values():
+            root = (self.output_root / skill["folder"] / "SKILL.md").read_text()
+            for mode, rule in self.config["workflow_modes"].items():
+                with self.subTest(skill=skill["folder"], mode=mode):
+                    self.assertIn(f"**{mode.replace('_', ' ')}**: {rule}", root)
+            self.assertIn("do not install packages, execute data", root)
+
     def test_library_is_quiet_and_cli_prints_one_summary(self) -> None:
         self.assertEqual("", self.library_output)
         self.assertEqual(self.output_root.resolve(), self.rendered_root)

@@ -3626,6 +3626,13 @@ def lint_config(
         or len(common_contract) != len(set(common_contract))
     ):
         errors.append("config/skills.yaml: common_contract must contain 2 to 5 distinct safeguards")
+    workflow_modes = config.get("workflow_modes")
+    if (
+        not isinstance(workflow_modes, dict)
+        or set(workflow_modes) != {"explain", "edit", "execute", "scientific_analysis"}
+        or any(not is_nonempty_string(value) for value in workflow_modes.values())
+    ):
+        errors.append("config/skills.yaml: workflow_modes must define four nonempty task modes")
     skills = config.get("skills")
     if not isinstance(skills, dict) or not skills:
         return [*errors, "config/skills.yaml: skills must be a nonempty mapping"]
