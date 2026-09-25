@@ -79,11 +79,21 @@ class PublishedLoopTests(unittest.TestCase):
                 if not entry.get("examples"):
                     continue
                 skill = config["skills"][skill_key]
-                reference = root / skill["folder"] / skill["route_dir"] / f"{entry['slug']}.md"
-                rendered = reference.read_text()
+                base = root / skill["folder"] / skill["route_dir"]
                 for index, example in enumerate(entry["examples"], start=1):
                     with self.subTest(example=example["id"]):
-                        section = rendered.split(f"### Example {index}\n", 1)[1]
+                        if entry.get("recipes"):
+                            recipe = next(
+                                item for item in entry["recipes"]
+                                if example["id"] in item["example_ids"]
+                            )
+                            reference = base / f"{entry['slug']}-{recipe['slug']}.md"
+                            local_index = recipe["example_ids"].index(example["id"]) + 1
+                        else:
+                            reference = base / f"{entry['slug']}.md"
+                            local_index = index
+                        rendered = reference.read_text()
+                        section = rendered.split(f"### Example {local_index}\n", 1)[1]
                         self.assertIn(f"- ID: `{example['id']}`.", section)
                         code = section.split(f"```{example['language']}\n", 1)[1].split("\n```", 1)[0]
                         self.assertEqual(example["code"], code)

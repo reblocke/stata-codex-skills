@@ -627,7 +627,7 @@ class DeterministicRenderTests(unittest.TestCase):
             second_snapshot = self.snapshot(second)
 
         self.assertEqual(first_snapshot, second_snapshot)
-        self.assertEqual(95, len(first_snapshot))
+        self.assertEqual(104, len(first_snapshot))
         alias = first_snapshot[
             "stata-packages/packages/diagnostics.md"
         ].decode("utf-8")
@@ -646,7 +646,11 @@ class DeterministicRenderTests(unittest.TestCase):
         packages_index = first_snapshot[
             "stata-packages/routing/02.md"
         ].decode("utf-8")
-        self.assertIn("rdsensitivity", packages_index)
+        self.assertIn("rdrobust", packages_index)
+        self.assertIn(
+            "rdsensitivity",
+            first_snapshot["stata-packages/routing/aliases.md"].decode("utf-8"),
+        )
         rdrobust = first_snapshot[
             "stata-packages/packages/rdrobust.md"
         ].decode("utf-8")

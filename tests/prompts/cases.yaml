@@ -452,6 +452,60 @@ cases:
   - stata-packages/packages/data-manipulation.md
   forbidden_routes: []
   boundary: false
+- id: packages-gtools-recipe
+  action: route
+  prompt: >-
+    I need a faster gcollapse grouped mean with gegen group totals; verify
+    the grouped result against a small built-in collapse fixture.
+  expected_skill: stata-packages
+  expected_refs: [stata-packages/packages/data-manipulation-gtools.md]
+  forbidden_routes: []
+  boundary: false
+- id: packages-rangestat-recipe
+  action: route
+  prompt: >-
+    Compute a rolling mean with rangestat using an explicitly inclusive
+    time window within each panel.
+  expected_skill: stata-packages
+  expected_refs: [stata-packages/packages/data-manipulation-rangestat.md]
+  forbidden_routes: []
+  boundary: false
+- id: packages-egenmore-recipe
+  action: route
+  prompt: >-
+    Count unique category values within groups using egenmore nvals, after
+    checking that the requested extension is installed.
+  expected_skill: stata-packages
+  expected_refs: [stata-packages/packages/data-manipulation-egenmore.md]
+  forbidden_routes: []
+  boundary: false
+- id: packages-distinct-recipe
+  action: route
+  prompt: >-
+    Count the distinct joint combinations of patient-free synthetic keys
+    with the community distinct command.
+  expected_skill: stata-packages
+  expected_refs: [stata-packages/packages/data-manipulation-distinct.md]
+  forbidden_routes: []
+  boundary: false
+- id: packages-missings-recipe
+  action: route
+  prompt: >-
+    Produce a missings report for specified synthetic variables while
+    preserving the original dataset.
+  expected_skill: stata-packages
+  expected_refs: [stata-packages/packages/data-manipulation-missings.md]
+  forbidden_routes: []
+  boundary: false
+- id: packages-carryforward-recipe
+  action: route
+  prompt: >-
+    Carry forward a prior status with carryforward only after declaring
+    panel order and the missing-value policy.
+  expected_skill: stata-packages
+  expected_refs: [stata-packages/packages/data-manipulation-carryforward.md]
+  forbidden_routes: []
+  boundary: false
 - id: packages-did
   action: route
   prompt: >-

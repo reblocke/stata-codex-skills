@@ -1,0 +1,11 @@
+# Command and alias lookup
+
+Use this lookup when a command or alias does not identify one technical
+reference immediately. If a term has multiple candidates, follow the existing
+method or read the affected category boundary before choosing.
+
+| Command or alias | Candidate references |
+|---|---|
+{% for item in aliases %}
+| `{{ item.term }}` | {% for route in item.routes %}[{{ route.title }}](../{{ route.path }}){% if not loop.last %}, {% endif %}{% endfor %} |
+{% endfor %}

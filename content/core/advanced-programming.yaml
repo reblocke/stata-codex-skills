@@ -7,6 +7,7 @@ trigger: >-
   Use for defining `.ado` programs, parsing `syntax`, respecting `if`/`in` qualifiers and weights, returning
   `r()` or `e()` results, managing program versions, preserving data, and writing estimation-command interfaces.
 commands: [program define, syntax, marksample, return, ereturn, preserve, restore, version]
+route_cues: [program define, syntax, marksample, ereturn]
 aliases: [ado programming, Stata program, rclass, eclass, syntax parser, returned results]
 routing_terms:
 - program define

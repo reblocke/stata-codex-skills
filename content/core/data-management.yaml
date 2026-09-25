@@ -17,6 +17,7 @@ commands:
 - reshape
 - collapse
 - egen
+route_cues: [merge, joinby, collapse, reshape]
 aliases: [merge data, join data, append data, reshape data, collapse data, duplicate keys, data cleaning]
 routing_terms:
 - merge 1:1 key

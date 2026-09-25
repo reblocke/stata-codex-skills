@@ -3618,6 +3618,14 @@ def lint_config(
         errors.append(
             "config/skills.yaml: source_resolution must make provenance selectors authoritative"
         )
+    common_contract = config.get("common_contract")
+    if (
+        not isinstance(common_contract, list)
+        or not 2 <= len(common_contract) <= 5
+        or any(not is_nonempty_string(rule) for rule in common_contract)
+        or len(common_contract) != len(set(common_contract))
+    ):
+        errors.append("config/skills.yaml: common_contract must contain 2 to 5 distinct safeguards")
     skills = config.get("skills")
     if not isinstance(skills, dict) or not skills:
         return [*errors, "config/skills.yaml: skills must be a nonempty mapping"]
@@ -3922,6 +3930,14 @@ def lint_entry(
             errors.append(f"{source_label}: {field} must not be empty")
         elif len(value) != len(set(value)):
             errors.append(f"{source_label}: {field} contains duplicates")
+    route_cues = entry.get("route_cues", [])
+    if (
+        not isinstance(route_cues, list)
+        or len(route_cues) > 4
+        or len(route_cues) != len(set(route_cues))
+        or any(cue not in entry.get("commands", []) for cue in route_cues)
+    ):
+        errors.append(f"{source_label}: route_cues must be up to four reviewed commands")
     routing_terms = entry.get("routing_terms", [])
     if isinstance(routing_terms, list):
         normalized_pairs = [
@@ -4060,6 +4076,62 @@ def lint_entry(
             language not in EXAMPLE_LANGUAGES for language in pattern_languages
         ):
             errors.append(f"{source_label}: pattern_languages must label every legacy block")
+    recipes = entry.get("recipes")
+    if recipes is not None:
+        if skill_key != "packages" or not isinstance(recipes, list) or not recipes:
+            errors.append(f"{source_label}: recipes require a nonempty package list")
+        else:
+            observed_slugs: set[str] = set()
+            observed_examples: set[str] = set()
+            observed_installs: list[str] = []
+            known_examples = {
+                item.get("id") for item in examples or [] if isinstance(item, dict)
+            }
+            for index, recipe in enumerate(recipes, start=1):
+                label = f"{source_label}: recipe {index}"
+                if not isinstance(recipe, dict):
+                    errors.append(f"{label} must be a mapping")
+                    continue
+                slug = recipe.get("slug")
+                if not is_safe_slug(slug) or slug in observed_slugs:
+                    errors.append(f"{label} has an invalid or duplicate slug")
+                else:
+                    observed_slugs.add(slug)
+                if not is_nonempty_string(recipe.get("title")):
+                    errors.append(f"{label} requires a title")
+                for field in ("aliases", "example_ids", "preflight_commands", "install_commands", "dependencies"):
+                    values = recipe.get(field)
+                    if not isinstance(values, list) or not values or any(
+                        not is_nonempty_string(value) for value in values
+                    ) or len(values) != len(set(values)):
+                        errors.append(f"{label} {field} must be a nonempty unique string list")
+                for command in recipe.get("preflight_commands", []) if isinstance(recipe.get("preflight_commands"), list) else []:
+                    if not isinstance(command, str) or not READ_ONLY_PREFLIGHT_RE.match(uncaptured_command(command)):
+                        errors.append(f"{label} preflight must be read-only")
+                for example_id in recipe.get("example_ids", []) if isinstance(recipe.get("example_ids"), list) else []:
+                    if example_id not in known_examples or example_id in observed_examples:
+                        errors.append(f"{label} has unresolved or duplicate example {example_id!r}")
+                    observed_examples.add(example_id)
+                observed_installs.extend(
+                    recipe.get("install_commands", [])
+                    if isinstance(recipe.get("install_commands"), list) else []
+                )
+                if not is_nonempty_string(recipe.get("validation_note")):
+                    errors.append(f"{label} requires a validation note")
+            if observed_examples != known_examples:
+                errors.append(f"{source_label}: recipes must account for every example")
+            if sorted(observed_installs) != sorted(entry.get("install_commands", [])):
+                errors.append(f"{source_label}: recipe installs must match reviewed lock commands")
+            lock_path = PACKAGE_LOCK_ROOT / f"{entry.get('slug')}.yaml"
+            if lock_path.is_file():
+                lock_payload = read_yaml(lock_path)
+                descriptors = {
+                    Path(item.get("descriptor", "")).stem
+                    for item in lock_payload.get("distributions", [])
+                    if isinstance(item, dict)
+                }
+                if observed_slugs != descriptors:
+                    errors.append(f"{source_label}: recipes must match locked distributions")
     clean_repetitions = entry.get("clean_repetitions", 1)
     if clean_repetitions not in (1, 2) or isinstance(clean_repetitions, bool):
         errors.append(f"{source_label}: clean_repetitions must be 1 or 2")
@@ -4901,6 +4973,11 @@ def lint_repo(check_generated: bool = True) -> list[str]:
                 slugs[slug] = skill_key
             route_path = f"{skill['name']}/{skill['route_dir']}/{slug}.md"
             route_paths.add(route_path)
+            for recipe in entry.get("recipes", []) if isinstance(entry.get("recipes"), list) else []:
+                if isinstance(recipe, dict) and is_safe_slug(recipe.get("slug")):
+                    route_paths.add(
+                        f"{skill['name']}/{skill['route_dir']}/{slug}-{recipe['slug']}.md"
+                    )
             if (
                 is_nonempty_string(entry.get("trigger"))
                 and copy_text_within_limits(entry["trigger"])

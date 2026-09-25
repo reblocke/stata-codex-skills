@@ -6,6 +6,11 @@ source_resolution:
   resolved_files_field: provenance.local_help_files
   source_topics_role: Reader-facing topic labels only; never used for filesystem matching.
 
+common_contract:
+  - Identify observation grain, keys, units, identifier representation, and missingness policy before changing data.
+  - Preserve source data, account for rows after joins or filters, and verify declared output fields and returned results.
+  - Check Stata errors and data side effects; when execution is requested, require fresh evidence and natural process exit.
+
 skills:
   core:
     name: stata-core

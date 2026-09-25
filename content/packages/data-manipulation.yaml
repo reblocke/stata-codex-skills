@@ -32,6 +32,7 @@ commands:
 - distinct
 - missings
 - carryforward
+route_cues: [gcollapse, rangestat, distinct, carryforward]
 source_topics:
 - gtools
 - rangestat
@@ -90,6 +91,12 @@ examples:
   min_version: 18
   prerequisites: [Installed `gtools`, unique `idvars`, and consistently suffixed `stub` variables.]
   code: greshape long stub, i(idvars) j(timevar)
+- id: package-gquantiles-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Installed `gtools`, numeric outcome values, and a declared quantile/missingness policy.]
+  code: gquantiles quartile = outcome, nquantiles(4)
 - id: package-rangestat-fragment
   language: stata
   kind: fragment
@@ -120,6 +127,55 @@ examples:
   min_version: 18
   prerequisites: [Installed `carryforward`; declared panel/time order and an explicit last-observation-carried-forward policy.]
   code: 'bysort panel_id (timevar): carryforward status, replace'
+recipes:
+- slug: gtools
+  title: Grouped operations with gtools
+  aliases: [gtools, gcollapse, gegen, greshape, gisid, gquantiles]
+  example_ids: [package-gcollapse-means, package-gegen-fragment, package-greshape-fragment, package-gquantiles-fragment]
+  preflight_commands: [which gcollapse, which gegen, ado describe gtools]
+  install_commands: [ssc install gtools]
+  dependencies: [The reviewed gtools distribution includes platform plugin binaries.]
+  validation_note: Only the gcollapse grouped-mean example has a licensed execution fixture; other gtools commands require task-specific validation.
+- slug: rangestat
+  title: Rolling-window statistics with rangestat
+  aliases: [rangestat, rolling-window statistics]
+  example_ids: [package-rangestat-fragment]
+  preflight_commands: [which rangestat, ado describe rangestat]
+  install_commands: [ssc install rangestat]
+  dependencies: [Check the reviewed rangestat distribution and any local runtime requirements before execution.]
+  validation_note: The default licensed gate verifies the reviewed installation, but does not execute this command on a numerical fixture.
+- slug: egenmore
+  title: Extended egen functions with egenmore
+  aliases: [egenmore, egen nvals]
+  example_ids: [package-egenmore-fragment]
+  preflight_commands: [ado describe egenmore]
+  install_commands: [ssc install egenmore]
+  dependencies: [Check the reviewed egenmore distribution and requested egen function before execution.]
+  validation_note: The default licensed gate verifies the reviewed installation, but does not execute nvals on a numerical fixture.
+- slug: distinct
+  title: Key counts with distinct
+  aliases: [distinct, joint distinct count]
+  example_ids: [package-distinct-fragment]
+  preflight_commands: [which distinct, ado describe distinct]
+  install_commands: [ssc install distinct]
+  dependencies: [Check the reviewed distinct distribution before execution.]
+  validation_note: The default licensed gate verifies the reviewed installation, but does not assert a distinct-count fixture.
+- slug: missings
+  title: Missing-value reports with missings
+  aliases: [missings, missing-value report]
+  example_ids: [package-missings-fragment]
+  preflight_commands: [which missings, ado describe missings]
+  install_commands: [ssc install missings]
+  dependencies: [Check the reviewed missings distribution before execution.]
+  validation_note: The default licensed gate verifies the reviewed installation, but does not assert a missingness-report fixture.
+- slug: carryforward
+  title: Ordered carry-forward values
+  aliases: [carryforward, last-observation-carried-forward]
+  example_ids: [package-carryforward-fragment]
+  preflight_commands: [which carryforward, ado describe carryforward]
+  install_commands: [ssc install carryforward]
+  dependencies: [Check the reviewed carryforward distribution and the required within-panel order before execution.]
+  validation_note: The default licensed gate verifies the reviewed installation, but does not assert a carry-forward fixture.
 provenance:
   reviewed: true
   local_help_topics:

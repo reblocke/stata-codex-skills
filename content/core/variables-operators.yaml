@@ -15,6 +15,7 @@ commands:
 - inlist()
 - inrange()
 - if
+route_cues: [missing(), generate, recast, inrange()]
 aliases: [variable type, missing value, generate variable, replace variable, logical operator, factor variable]
 routing_terms:
 - generate expression

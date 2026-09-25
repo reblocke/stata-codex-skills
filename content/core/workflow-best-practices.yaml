@@ -8,6 +8,7 @@ trigger: >-
   assertions, error handling, modular execution, clean-session reproduction, artifact separation,
   and unattended or locked-screen execution.
 commands: [version, pwd, cd, log using, do, run, assert, tempfile, set seed, exit]
+route_cues: [version, assert, set seed, exit]
 aliases: [reproducible workflow, Stata project, do-file organization, batch mode, logging, clean run, unattended execution, locked-screen execution]
 routing_terms:
 - batch-mode Stata run
