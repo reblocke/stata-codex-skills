@@ -80,3 +80,5 @@ provenance:
   - plugins/stata-c-plugins/skills/stata-c-plugins/references/packaging_and_help.md
   package_only: false
   upstream_only: false
+pattern_kinds: [fragment, fragment, fragment, fragment]
+pattern_languages: [text, text, stata, stata]

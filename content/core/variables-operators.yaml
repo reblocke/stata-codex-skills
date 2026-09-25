@@ -30,13 +30,7 @@ source_topics:
 - missing
 - if
 - functions
-syntax_patterns:
-- |-
-  generate byte adult_unknown_preserved = .
-  replace adult_unknown_preserved = age >= 18 if !missing(age)
-- generate byte adult_missing_as_false = age >= 18 & !missing(age)
-- replace category = 1 if inlist(code, "A", "B")
-- generate double ratio = numerator / denominator if denominator != 0 & !missing(denominator)
+syntax_patterns: []
 assumptions:
 - Each variable's storage type, coding scheme, unit, and missing-value representation are understood.
 - Boolean classifications define how missing and out-of-domain values should be handled.
@@ -56,30 +50,54 @@ related_refs:
 - data-management
 - mathematical-functions
 install_commands: []
-smoke_test: |-
-  clear
-  input double age
-  17
-  21
-  .
-  .a
-  end
-  generate byte adult_unknown_preserved = .
-  replace adult_unknown_preserved = age >= 18 if !missing(age)
-  generate byte adult_missing_as_false = age >= 18 & !missing(age)
-  assert adult_unknown_preserved == 0 in 1
-  assert adult_unknown_preserved == 1 in 2
-  assert missing(adult_unknown_preserved) in 3/4
-  assert adult_missing_as_false == 0 in 3/4
-  assert age[4] == .a
-  clear
-  input str18 person_id
-  "000012345678901234"
-  "123456789012345678"
-  end
-  isid person_id
-  assert person_id[1] == "000012345678901234"
-  assert person_id[2] == "123456789012345678"
+smoke_test: null
+examples:
+- id: core-adult-unknown
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [A numeric `age` variable; missing ages represent unmeasured eligibility.]
+  code: |-
+    generate byte adult_unknown_preserved = .
+    replace adult_unknown_preserved = age >= 18 if !missing(age)
+  test_id: core-adult-unknown
+  fixture: tests/stata/examples/core-adult-unknown.yaml
+  expected_rc: 0
+- id: core-adult-missing-false
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [A numeric `age` variable; the explicit policy is to code unmeasured age as false.]
+  code: generate byte adult_missing_as_false = age >= 18 & !missing(age)
+  test_id: core-adult-missing-false
+  fixture: tests/stata/examples/core-adult-missing-false.yaml
+  expected_rc: 0
+- id: core-string-identifiers
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [Original identifier strings have not already been converted to rounded numeric values.]
+  code: |-
+    clear
+    input str18 person_id
+    "000012345678901234"
+    "123456789012345678"
+    end
+  test_id: core-string-identifiers
+  fixture: tests/stata/examples/core-string-identifiers.yaml
+  expected_rc: 0
+- id: core-category-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [An existing string `code` and initialized numeric `category` variable with a declared missing-value policy.]
+  code: replace category = 1 if inlist(code, "A", "B")
+- id: core-ratio-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Existing numeric `numerator` and `denominator` variables and a stated zero-denominator policy.]
+  code: generate double ratio = numerator / denominator if denominator != 0 & !missing(denominator)
 provenance:
   local_help_topics: [generate, missing, if, functions]
   local_help_globs: []

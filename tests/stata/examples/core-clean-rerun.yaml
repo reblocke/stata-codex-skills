@@ -1,0 +1,8 @@
+schema_version: 1
+id: core-clean-rerun
+setup: clear
+assertions: |-
+  assert _N == 10
+  assert !missing(value)
+  quietly summarize value, meanonly
+  display "CODEX_RESULT: N=" r(N) " mean=" %21.17g r(mean)

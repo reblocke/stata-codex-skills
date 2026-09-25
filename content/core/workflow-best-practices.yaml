@@ -22,11 +22,7 @@ routing_terms:
 - Stata completion dialog
 - Stata run waiting for screen unlock
 source_topics: [log, version, cd]
-syntax_patterns:
-- cd "`project_root'"
-- log using "`output_dir'/analysis.log", text replace name(analysis)
-- assert _N == expected_rows
-- do "scripts/01_build_cohort.do"
+syntax_patterns: []
 assumptions:
 - Raw inputs are immutable, and every generated file has an explicit derived-data or output destination.
 - The declared Stata version, package environment, paths, seeds, and execution order are sufficient for a clean rerun.
@@ -45,20 +41,39 @@ validation_mode: stata
 clean_repetitions: 2
 related_refs: [programming-basics, basics-getting-started]
 install_commands: []
-smoke_test: |-
-  clear all
-  version 18
-  pwd
-  set seed 271828
-  tempfile derived
-  set obs 10
-  generate double value = runiform()
-  save `derived'
-  use `derived', clear
-  assert _N == 10
-  assert !missing(value)
-  quietly summarize value, meanonly
-  display "CODEX_RESULT: N=" r(N) " mean=" %21.17g r(mean)
+smoke_test: null
+examples:
+- id: core-clean-rerun
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [A clean Stata session with a writable temporary directory; no external data.]
+  code: |-
+    clear all
+    version 18
+    set seed 271828
+    tempfile derived
+    set obs 10
+    generate double value = runiform()
+    save `derived'
+    use `derived', clear
+  test_id: core-clean-rerun
+  fixture: tests/stata/examples/core-clean-rerun.yaml
+  expected_rc: 0
+- id: core-project-log-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Defined `project_root` and `output_dir` local macros and a writable destination with an intentional log replacement policy.]
+  code: |-
+    cd "`project_root'"
+    log using "`output_dir'/analysis.log", text replace name(analysis)
+- id: core-cohort-do-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [An existing `scripts/01_build_cohort.do` file and declared input/output paths.]
+  code: do "scripts/01_build_cohort.do"
 provenance:
   local_help_topics: [log, version, cd]
   local_help_globs: []

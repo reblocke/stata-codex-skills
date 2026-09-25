@@ -65,3 +65,5 @@ provenance:
   - plugins/stata/skills/stata/packages/coefplot.md
   package_only: true
   upstream_only: false
+pattern_kinds: [fragment, fragment, fragment, fragment]
+pattern_languages: [stata, stata, stata, stata]

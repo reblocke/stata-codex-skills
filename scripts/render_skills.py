@@ -2132,6 +2132,7 @@ def prepare_catalog(
             entry.setdefault("preflight_commands", [])
             entry.setdefault("install_commands", [])
             entry.setdefault("smoke_test", None)
+            entry.setdefault("examples", [])
             entry["route_path"] = canonical_route(skill, slug)
             entry["skill_name"] = skill["name"]
             by_slug[slug] = (skill_key, entry)

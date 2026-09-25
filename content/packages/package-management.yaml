@@ -103,3 +103,5 @@ provenance:
   - plugins/stata/skills/stata/packages/package-management.md
   package_only: false
   upstream_only: false
+pattern_kinds: [fragment, fragment, fragment, fragment, fragment, fragment]
+pattern_languages: [stata, stata, stata, stata, stata, stata]

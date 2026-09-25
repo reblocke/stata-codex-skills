@@ -88,6 +88,9 @@ NONEMPTY_LIST_FIELDS = {
     "workflows",
 }
 VALIDATION_MODES = {"stata", "compilation", "manual-review"}
+EXAMPLE_KINDS = {"runnable", "fragment", "illustrative"}
+EXAMPLE_LANGUAGES = {"stata", "mata", "c", "cpp", "sh", "text"}
+EXAMPLE_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 INLINE_STATA_LOOP_RE = re.compile(
     r"(?m)^[ \t]*(?:foreach|forvalues)\b[^\r\n]*\{[ \t]*\S"
 )
@@ -3913,7 +3916,9 @@ def lint_entry(
         value = entry.get(field)
         if not isinstance(value, list) or any(not is_nonempty_string(item) for item in value):
             errors.append(f"{source_label}: {field} must be a string list")
-        elif field in NONEMPTY_LIST_FIELDS and not value:
+        elif field in NONEMPTY_LIST_FIELDS and not value and not (
+            field == "syntax_patterns" and entry.get("examples")
+        ):
             errors.append(f"{source_label}: {field} must not be empty")
         elif len(value) != len(set(value)):
             errors.append(f"{source_label}: {field} contains duplicates")
@@ -3961,12 +3966,104 @@ def lint_entry(
     smoke_test = entry.get("smoke_test")
     if smoke_test is not None and not is_nonempty_string(smoke_test):
         errors.append(f"{source_label}: smoke_test must be null or a nonempty string")
-    if mode == "stata" and not is_nonempty_string(smoke_test):
+    if mode == "stata" and not is_nonempty_string(smoke_test) and not entry.get("examples"):
         errors.append(f"{source_label}: stata validation requires smoke_test")
+    examples = entry.get("examples")
+    pattern_kinds = entry.get("pattern_kinds")
+    pattern_languages = entry.get("pattern_languages")
+    if examples is not None:
+        if pattern_kinds is not None or pattern_languages is not None:
+            errors.append(f"{source_label}: migrated examples cannot have legacy pattern labels")
+        if not isinstance(examples, list) or not examples:
+            errors.append(f"{source_label}: examples must be a nonempty list")
+        elif entry.get("syntax_patterns") or smoke_test:
+            errors.append(
+                f"{source_label}: examples conflict with legacy syntax_patterns or smoke_test"
+            )
+        else:
+            runnable_count = 0
+            local_example_ids: set[str] = set()
+            local_test_ids: set[str] = set()
+            for index, example in enumerate(examples, start=1):
+                label = f"{source_label}: example {index}"
+                if not isinstance(example, dict):
+                    errors.append(f"{label} must be a mapping")
+                    continue
+                if not EXAMPLE_ID_RE.fullmatch(str(example.get("id", ""))):
+                    errors.append(f"{label} has an invalid id")
+                elif example["id"] in local_example_ids:
+                    errors.append(f"{label} has a duplicate id")
+                else:
+                    local_example_ids.add(example["id"])
+                if example.get("language") not in EXAMPLE_LANGUAGES:
+                    errors.append(f"{label} has an invalid language")
+                if example.get("kind") not in EXAMPLE_KINDS:
+                    errors.append(f"{label} has an invalid kind")
+                if not is_nonempty_string(example.get("code")):
+                    errors.append(f"{label} requires a canonical code body")
+                prerequisites = example.get("prerequisites")
+                if not isinstance(prerequisites, list) or any(
+                    not is_nonempty_string(item) for item in prerequisites
+                ):
+                    errors.append(f"{label} prerequisites must be a string list")
+                minimum = example.get("min_version")
+                if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 18:
+                    errors.append(f"{label} min_version must be an integer of at least 18")
+                if example.get("kind") == "runnable":
+                    runnable_count += 1
+                    if example.get("language") != "stata":
+                        errors.append(f"{label} runnable language requires a validator")
+                    if not EXAMPLE_ID_RE.fullmatch(str(example.get("test_id", ""))):
+                        errors.append(f"{label} requires a stable test_id")
+                    elif example["test_id"] in local_test_ids:
+                        errors.append(f"{label} has a duplicate test_id")
+                    else:
+                        local_test_ids.add(example["test_id"])
+                    if not isinstance(example.get("expected_rc"), int) or isinstance(
+                        example.get("expected_rc"), bool
+                    ) or example["expected_rc"] < 0:
+                        errors.append(f"{label} expected_rc must be a nonnegative integer")
+                    fixture = example.get("fixture")
+                    if fixture != f"tests/stata/examples/{example.get('test_id')}.yaml":
+                        errors.append(f"{label} fixture must match its test_id")
+                    else:
+                        fixture_path = REPO_ROOT / fixture
+                        if not fixture_path.is_file() or fixture_path.is_symlink():
+                            errors.append(f"{label} fixture is missing or not a regular file")
+                        else:
+                            try:
+                                payload = read_yaml(fixture_path)
+                            except Exception as error:
+                                errors.append(f"{label} fixture cannot be read: {error}")
+                                continue
+                            if not isinstance(payload, dict) or payload.get("schema_version") != 1 or payload.get("id") != example.get("test_id"):
+                                errors.append(f"{label} has an invalid fixture header")
+                            elif not is_nonempty_string(payload.get("setup")) or not is_nonempty_string(payload.get("assertions")):
+                                errors.append(f"{label} fixture needs setup and assertions")
+                            elif example["code"].strip() in (
+                                payload["setup"] + payload["assertions"]
+                            ):
+                                errors.append(f"{label} fixture duplicates the canonical code body")
+                elif any(example.get(field) is not None for field in ("test_id", "fixture", "expected_rc")):
+                    errors.append(f"{label} non-runnable block cannot claim execution")
+                if example.get("kind") == "fragment" and not prerequisites:
+                    errors.append(f"{label} fragment needs its required context")
+            if mode == "stata" and runnable_count == 0:
+                errors.append(f"{source_label}: stata examples require a runnable case")
+    else:
+        patterns = entry.get("syntax_patterns", [])
+        if not isinstance(pattern_kinds, list) or len(pattern_kinds) != len(patterns) or any(
+            kind not in {"fragment", "illustrative"} for kind in pattern_kinds
+        ):
+            errors.append(f"{source_label}: pattern_kinds must classify every legacy block")
+        if not isinstance(pattern_languages, list) or len(pattern_languages) != len(patterns) or any(
+            language not in EXAMPLE_LANGUAGES for language in pattern_languages
+        ):
+            errors.append(f"{source_label}: pattern_languages must label every legacy block")
     clean_repetitions = entry.get("clean_repetitions", 1)
     if clean_repetitions not in (1, 2) or isinstance(clean_repetitions, bool):
         errors.append(f"{source_label}: clean_repetitions must be 1 or 2")
-    elif clean_repetitions == 2 and (
+    elif clean_repetitions == 2 and not entry.get("examples") and (
         not isinstance(smoke_test, str) or 'display "CODEX_RESULT:' not in smoke_test
     ):
         errors.append(
@@ -4768,6 +4865,8 @@ def lint_repo(check_generated: bool = True) -> list[str]:
     route_paths: set[str] = set()
     route_triggers: dict[str, str] = {}
     repeated_text: Counter[str] = Counter()
+    example_ids: dict[str, Path] = {}
+    test_ids: dict[str, Path] = {}
     for skill_key, path, entry in entries:
         skill = config["skills"][skill_key]
         errors.extend(
@@ -4781,6 +4880,19 @@ def lint_repo(check_generated: bool = True) -> list[str]:
         )
         if not isinstance(entry, dict):
             continue
+        for example in entry.get("examples", []) if isinstance(entry.get("examples"), list) else []:
+            if not isinstance(example, dict):
+                continue
+            for field, observed in (("id", example_ids), ("test_id", test_ids)):
+                value = example.get(field)
+                if not is_nonempty_string(value):
+                    continue
+                if value in observed:
+                    errors.append(
+                        f"{path}: duplicate example {field} {value!r} also used by {observed[value]}"
+                    )
+                else:
+                    observed[value] = path
         slug = entry.get("slug")
         if isinstance(slug, str):
             if slug in slugs:

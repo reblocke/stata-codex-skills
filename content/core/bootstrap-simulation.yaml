@@ -16,10 +16,7 @@ routing_terms:
 - seeded simulation study
 - randomization inference in Stata
 source_topics: [bootstrap, simulate, permute]
-syntax_patterns:
-- "bootstrap mean=r(mean), reps(1000) seed(271828): summarize outcome"
-- "simulate estimate=r(estimate), reps(1000) seed(271828): simulation_program"
-- "permute treatment statistic=r(stat), reps(1000) seed(271828): test_program"
+syntax_patterns: []
 assumptions:
 - The resampling or permutation unit reflects the actual assignment and dependence structure.
 - The data-generating process and returned statistic represent the estimand and scenarios the simulation is meant to study.
@@ -31,16 +28,34 @@ workflows:
 - Define the sampling unit, statistic, replication count, seed, and confidence-interval method before running a bootstrap.
 - Test a simulation program once, run a small seeded batch, inspect failures and bias, then scale to the planned replications.
 validation_case: >-
-  `bootstrap` a bundled-data mean with a fixed seed and small replication count, verify the replication count,
+  `bootstrap` a synthetic mean with a fixed seed and small replication count, verify the replication count,
   and confirm the original sample remains available.
 validation_mode: stata
 related_refs: [mathematical-functions, linear-regression]
 install_commands: []
-smoke_test: |-
-  clear all
-  sysuse auto, clear
-  bootstrap mean=r(mean), reps(10) seed(271828) nodots: summarize price
-  assert e(N_reps) == 10
+smoke_test: null
+examples:
+- id: core-bootstrap-mean
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [Ten synthetic numeric `outcome` values; observation-level resampling is appropriate only for independent rows.]
+  code: "bootstrap mean=r(mean), reps(10) seed(271828) nodots: summarize outcome"
+  test_id: core-bootstrap-mean
+  fixture: tests/stata/examples/core-bootstrap-mean.yaml
+  expected_rc: 0
+- id: core-simulate-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [A defined `simulation_program` returning named `r(estimate)` for every replication.]
+  code: "simulate estimate=r(estimate), reps(1000) seed(271828): simulation_program"
+- id: core-permute-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [A defined `test_program` returning `r(stat)` and a justified exchangeability unit.]
+  code: "permute treatment statistic=r(stat), reps(1000) seed(271828): test_program"
 provenance:
   local_help_topics: [bootstrap, simulate, permute]
   local_help_globs: []

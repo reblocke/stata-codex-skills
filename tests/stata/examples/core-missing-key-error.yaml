@@ -1,0 +1,12 @@
+schema_version: 1
+id: core-missing-key-error
+setup: |-
+  clear
+  input id value
+  1 10
+  . 20
+  end
+assertions: |-
+  assert _N == 2
+  assert missing(id[2])
+  assert value[2] == 20

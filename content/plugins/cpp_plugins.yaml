@@ -69,3 +69,5 @@ provenance:
   - plugins/stata-c-plugins/skills/stata-c-plugins/references/cpp_plugins.md
   package_only: false
   upstream_only: false
+pattern_kinds: [fragment, fragment, fragment, fragment]
+pattern_languages: [cpp, sh, sh, cpp]

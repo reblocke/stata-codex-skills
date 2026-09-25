@@ -64,3 +64,5 @@ provenance:
   - plugins/stata/skills/stata/packages/outreg2.md
   package_only: true
   upstream_only: false
+pattern_kinds: [fragment, fragment, fragment]
+pattern_languages: [stata, stata, stata]

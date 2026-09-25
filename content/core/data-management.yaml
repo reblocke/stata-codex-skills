@@ -37,12 +37,7 @@ source_topics:
 - reshape
 - collapse
 - egen
-syntax_patterns:
-- isid patient_id visit_date
-- merge m:1 site_id using "sites.dta"
-- joinby firm using "contracts.dta"
-- reshape long measure, i(id) j(time)
-- collapse (mean) mean_price=price, by(group)
+syntax_patterns: []
 assumptions:
 - Entity and observation keys have a documented meaning and expected cardinality in every input.
 - Data transformations preserve the intended analysis unit or explicitly create a new documented unit.
@@ -64,63 +59,94 @@ related_refs:
 - variables-operators
 - workflow-best-practices
 install_commands: []
-smoke_test: |-
-  clear all
-  tempfile master groups employees contracts
-  input id group value
-  1 1 10
-  2 1 20
-  3 2 30
-  4 3 40
-  end
-  isid id
-  save `master'
-  clear
-  input group str4 label
-  1 "one"
-  2 "two"
-  4 "four"
-  end
-  isid group
-  save `groups'
-  use `master', clear
-  merge m:1 group using `groups'
-  count if _merge == 1
-  assert r(N) == 1
-  count if _merge == 2
-  assert r(N) == 1
-  count if _merge == 3
-  assert r(N) == 3
-  keep if _merge == 3
-  collapse (mean) mean_value=value, by(group)
-  isid group
-  assert _N == 2
-  assert mean_value == 15 if group == 1
-  assert mean_value == 30 if group == 2
-  clear
-  input str1 firm str2 employee
-  "A" "e1"
-  "A" "e2"
-  "B" "e3"
-  end
-  save `employees'
-  clear
-  input str1 firm str2 contract
-  "A" "c1"
-  "A" "c2"
-  "A" "c3"
-  "B" "c4"
-  end
-  isid firm contract
-  save `contracts'
-  use `employees', clear
-  joinby firm using `contracts'
-  isid firm employee contract
-  assert _N == 7
-  count if firm == "A"
-  assert r(N) == 6
-  count if firm == "B"
-  assert r(N) == 1
+smoke_test: null
+examples:
+- id: core-merge-disposition
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [Synthetic master and using data are created in separate temporary files; group is unique in using data.]
+  code: |-
+    tempfile groups
+    clear
+    input group str4 label
+    1 "one"
+    2 "two"
+    4 "four"
+    end
+    isid group
+    save `groups'
+    clear
+    input id group value
+    1 1 10
+    2 1 20
+    3 2 30
+    4 3 40
+    end
+    isid id
+    merge m:1 group using `groups'
+  test_id: core-merge-disposition
+  fixture: tests/stata/examples/core-merge-disposition.yaml
+  expected_rc: 0
+- id: core-joinby-cardinality
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [Every within-firm employee-contract pair is substantively intended.]
+  code: |-
+    tempfile contracts
+    clear
+    input str1 firm str2 contract
+    "A" "c1"
+    "A" "c2"
+    "A" "c3"
+    "B" "c4"
+    end
+    isid firm contract
+    save `contracts'
+    clear
+    input str1 firm str2 employee
+    "A" "e1"
+    "A" "e2"
+    "B" "e3"
+    end
+    joinby firm using `contracts'
+  test_id: core-joinby-cardinality
+  fixture: tests/stata/examples/core-joinby-cardinality.yaml
+  expected_rc: 0
+- id: core-collapse-means
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [Numeric `value` and numeric `group` variables; aggregation replaces the data in memory.]
+  code: collapse (mean) mean_value=value, by(group)
+  test_id: core-collapse-means
+  fixture: tests/stata/examples/core-collapse-means.yaml
+  expected_rc: 0
+- id: core-duplicate-key-error
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [Synthetic data deliberately contain a duplicate `id` key.]
+  code: isid id
+  test_id: core-duplicate-key-error
+  fixture: tests/stata/examples/core-duplicate-key-error.yaml
+  expected_rc: 459
+- id: core-missing-key-error
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [Synthetic data deliberately contain a missing `id` key.]
+  code: isid id
+  test_id: core-missing-key-error
+  fixture: tests/stata/examples/core-missing-key-error.yaml
+  expected_rc: 459
+- id: core-reshape-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [A unique `id` and consistently suffixed `measure` columns for each time value.]
+  code: reshape long measure, i(id) j(time)
 provenance:
   local_help_topics: [generate, merge, joinby, duplicates, isid, append, reshape, collapse, egen]
   local_help_globs: []

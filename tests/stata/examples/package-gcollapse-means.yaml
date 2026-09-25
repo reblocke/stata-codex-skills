@@ -1,0 +1,16 @@
+schema_version: 1
+id: package-gcollapse-means
+setup: |-
+  clear
+  input group outcome
+  1 10
+  1 20
+  2 8
+  2 12
+  end
+assertions: |-
+  isid group
+  assert _N == 2
+  assert mean_y == 15 if group == 1
+  assert mean_y == 10 if group == 2
+  assert n == 2

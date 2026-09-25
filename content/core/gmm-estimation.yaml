@@ -52,3 +52,5 @@ provenance:
   upstream_only: false
   package_only: false
   reviewed: true
+pattern_kinds: [fragment, fragment]
+pattern_languages: [stata, stata]

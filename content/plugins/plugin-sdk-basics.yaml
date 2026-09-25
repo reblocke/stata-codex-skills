@@ -69,3 +69,5 @@ provenance:
   upstream_files: []
   package_only: false
   upstream_only: false
+pattern_kinds: [fragment, fragment, fragment, fragment, fragment]
+pattern_languages: [stata, c, c, c, sh]

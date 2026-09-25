@@ -1,0 +1,21 @@
+schema_version: 1
+id: core-prediction-samples
+setup: |-
+  clear
+  input byte id double x double y
+  1 1 5
+  2 2 8
+  3 3 11
+  4 4 14
+  5 5 .
+  6 . 20
+  end
+assertions: |-
+  assert e(N) == 4
+  assert estimation_sample == 1 if id <= 4
+  assert estimation_sample == 0 if id >= 5
+  assert prediction_sample == 1 if id <= 5
+  assert prediction_sample == 0 if id == 6
+  assert evaluation_sample == 1 if id <= 4
+  assert evaluation_sample == 0 if id >= 5
+  assert abs(fitted[5] - 17) < 1e-10

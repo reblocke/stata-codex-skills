@@ -91,3 +91,5 @@ provenance:
   - plugins/stata/skills/stata/packages/graph-schemes.md
   package_only: true
   upstream_only: false
+pattern_kinds: [illustrative, illustrative, illustrative, illustrative, illustrative]
+pattern_languages: [stata, stata, stata, stata, stata]

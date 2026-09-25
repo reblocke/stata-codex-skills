@@ -1,0 +1,8 @@
+schema_version: 1
+id: core-string-identifiers
+setup: clear
+assertions: |-
+  isid person_id
+  assert _N == 2
+  assert person_id[1] == "000012345678901234"
+  assert person_id[2] == "123456789012345678"

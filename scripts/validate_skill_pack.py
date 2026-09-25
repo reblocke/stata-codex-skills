@@ -345,6 +345,138 @@ def stata_entry_do_text(entry: dict, marker: str) -> str:
     ) + "\n"
 
 
+def example_do_text(
+    entry: dict,
+    example: dict,
+    fixture: dict,
+    code_file: Path,
+    marker: str,
+    *,
+    plus_dir: Path | None = None,
+) -> str:
+    """Run the exact published code in a child do-file after independent setup."""
+
+    lines = [
+        "clear all",
+        f"version {example['min_version']}",
+        "set more off",
+        "set seed 271828",
+    ]
+    if plus_dir is not None:
+        lines.extend(
+            [
+                f'sysdir set PLUS "{plus_dir.as_posix()}"',
+                f'sysdir set PERSONAL "{(plus_dir / "personal").as_posix()}"',
+                *entry.get("install_commands", []),
+            ]
+        )
+        lines.extend(
+            re.sub(r"(?i)^\s*(?:(?:capture|quietly|noisily)\s+)+", "", command).strip()
+            for command in entry.get("preflight_commands", [])
+        )
+    lines.extend(
+        [
+            fixture["setup"],
+            f'capture noisily do "{code_file.name}"',
+            "local codex_example_rc = _rc",
+            f"assert `codex_example_rc' == {example['expected_rc']}",
+            fixture["assertions"],
+            f'display "PASS: {entry["slug"]}:{example["id"]}"',
+            f'display "{marker}"',
+            "exit, clear STATA",
+        ]
+    )
+    return "\n".join(lines) + "\n"
+
+
+def validate_entry_examples(
+    stata_binary: Path,
+    work_root: Path,
+    entry: dict,
+    *,
+    package: bool = False,
+) -> tuple[bool, str]:
+    successes: list[bool] = []
+    diagnostics: list[str] = []
+    for example in entry["examples"]:
+        if example["kind"] != "runnable":
+            continue
+        fixture = read_yaml(REPO_ROOT / example["fixture"])
+        substantive_results: list[str] = []
+        repetitions = entry.get("clean_repetitions", 1)
+        for attempt in range(repetitions):
+            run_dir = ensure_dir(
+                work_root
+                / ("packages" if package else "core")
+                / entry["slug"]
+                / example["id"]
+                / f"run-{attempt + 1}"
+            )
+            code_file = run_dir / "published-example.do"
+            write_text(code_file, example["code"].rstrip("\n") + "\n")
+            plus_dir = None
+            if package:
+                plus_dir = ensure_dir(run_dir / "plus")
+                ensure_dir(plus_dir / "personal")
+            marker = completion_marker(f"example-{example['id']}-{attempt + 1}")
+            do_file = run_dir / f"example_{marker.rsplit('::', 1)[-1]}.do"
+            child_plus = (
+                Path(os.path.relpath(plus_dir, start=run_dir))
+                if plus_dir is not None else None
+            )
+            write_text(
+                do_file,
+                example_do_text(
+                    entry,
+                    example,
+                    fixture,
+                    code_file,
+                    marker,
+                    plus_dir=child_plus,
+                ),
+            )
+            result, log_path = run_stata_do(
+                stata_binary,
+                do_file,
+                run_dir,
+                completion_marker=marker,
+                timeout_seconds=180 if package else 90,
+            )
+            log_text = read_text(log_path) if log_path.exists() else ""
+            success = (
+                result.returncode == 0
+                and log_path.exists()
+                and has_exact_log_line(
+                    log_text, f"PASS: {entry['slug']}:{example['id']}"
+                )
+                and (example["expected_rc"] != 0 or not has_stata_error(log_text))
+            )
+            if package and success and entry.get("install_commands"):
+                lock_ok, lock_diagnostics = verify_package_install_lock(
+                    entry["slug"], plus_dir
+                )
+                success = lock_ok
+                diagnostics.append(lock_diagnostics)
+            successes.append(success)
+            diagnostics.append(combined_output(log_text, result.stdout, result.stderr))
+            if repetitions > 1:
+                lines = [
+                    line.strip() for line in log_text.splitlines()
+                    if line.strip().startswith("CODEX_RESULT:")
+                ]
+                if len(lines) != 1:
+                    successes[-1] = False
+                else:
+                    substantive_results.append(lines[0])
+        if repetitions > 1 and (
+            len(substantive_results) != repetitions
+            or len(set(substantive_results)) != 1
+        ):
+            successes.append(False)
+            diagnostics.append("Independent clean-session results differ or are missing.")
+    return bool(successes) and all(successes), "\n".join(diagnostics)
+
+
 def validate_core(
     stata_binary: Path,
     work_root: Path,
@@ -366,6 +498,12 @@ def validate_core(
     for entry in entries:
         slug = entry.get("slug", "<missing-slug>")
         try:
+            if entry.get("examples"):
+                success, diagnostics = validate_entry_examples(
+                    stata_binary, work_root, entry
+                )
+                results.append((slug, success, diagnostics))
+                continue
             repetitions = entry.get("clean_repetitions", 1)
             results_for_entry: list[str] = []
             successful_runs = []
@@ -499,6 +637,12 @@ def validate_packages(
     for entry in entries:
         slug = entry.get("slug", "<missing-slug>")
         try:
+            if entry.get("examples"):
+                success, diagnostics = validate_entry_examples(
+                    stata_binary, work_root, entry, package=True
+                )
+                results.append((slug, success, diagnostics))
+                continue
             run_dir = ensure_dir(work_root / "packages" / slug)
             plus_dir = ensure_dir(run_dir / "plus")
             ensure_dir(plus_dir / "personal")

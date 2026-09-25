@@ -1,0 +1,22 @@
+schema_version: 1
+id: core-weighted-rclass
+setup: |-
+  clear
+  input byte id double x double w
+  1 2 1
+  2 4 1
+  3 6 2
+  4 8 2
+  end
+assertions: |-
+  codex_mean x if id >= 2 in 1/3 [aw=w]
+  assert r(N) == 2
+  assert abs(r(mean) - 16/3) < 1e-10
+  capture noisily codex_mean x [fw=w]
+  local unsupported_rc = _rc
+  assert `unsupported_rc' == 101
+  capture noisily codex_mean x if id == 99
+  local empty_rc = _rc
+  assert `empty_rc' == 2000
+  assert _N == 4
+  assert x[4] == 8

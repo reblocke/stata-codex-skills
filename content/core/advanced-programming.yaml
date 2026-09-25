@@ -17,24 +17,7 @@ routing_terms:
 - ereturn post results
 - ado command development
 source_topics: [program, syntax, return, ereturn]
-syntax_patterns:
-- |-
-  program define codex_mean, rclass
-      version 18
-      syntax varname(numeric) [if] [in] [aweight]
-      marksample touse
-      if "`weight'" == "" {
-          quietly summarize `varlist' if `touse', meanonly
-      }
-      else {
-          quietly summarize `varlist' [`weight'`exp'] if `touse', meanonly
-      }
-      local result_mean = r(mean)
-      local result_n = r(N)
-      return scalar mean = `result_mean'
-      return scalar N = `result_n'
-  end
-- ereturn post b V, esample(touse)
+syntax_patterns: []
 assumptions:
 - The `codex_mean` example requires Stata 18, a numeric variable, and optional `if`/`in` and analytic weights; it returns `r(mean)` and `r(N)` without changing data.
 - The `ereturn post` line is a fragment inside a separate `eclass` program with conformable named `b` and `V` matrices and a marked sample.
@@ -53,37 +36,39 @@ validation_case: >-
 validation_mode: stata
 related_refs: [programming-basics, mata-programming]
 install_commands: []
-smoke_test: |-
-  clear all
-  capture program drop codex_mean
-  program define codex_mean, rclass
-      version 18
-      syntax varname(numeric) [if] [in] [aweight]
-      marksample touse
-      if "`weight'" == "" {
-          quietly summarize `varlist' if `touse', meanonly
-      }
-      else {
-          quietly summarize `varlist' [`weight'`exp'] if `touse', meanonly
-      }
-      local result_mean = r(mean)
-      local result_n = r(N)
-      return scalar mean = `result_mean'
-      return scalar N = `result_n'
-  end
-  input byte id double x double w
-  1 2 1
-  2 4 1
-  3 6 2
-  4 8 2
-  end
-  codex_mean x if id >= 2 in 1/3 [aw=w]
-  assert r(N) == 2
-  assert abs(r(mean) - 16/3) < 1e-12
-  capture noisily codex_mean x [fw=w]
-  assert _rc != 0
-  assert _N == 4
-  assert x[4] == 8
+smoke_test: null
+examples:
+- id: core-weighted-rclass
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [A numeric variable and optional analytic weights; no existing `codex_mean` program.]
+  code: |-
+    program define codex_mean, rclass
+        version 18
+        syntax varname(numeric) [if] [in] [aweight]
+        marksample touse
+        if "`weight'" == "" {
+            quietly summarize `varlist' if `touse', meanonly
+        }
+        else {
+            quietly summarize `varlist' [`weight'`exp'] if `touse', meanonly
+        }
+        if r(N) == 0 error 2000
+        local result_mean = r(mean)
+        local result_n = r(N)
+        return scalar mean = `result_mean'
+        return scalar N = `result_n'
+    end
+  test_id: core-weighted-rclass
+  fixture: tests/stata/examples/core-weighted-rclass.yaml
+  expected_rc: 0
+- id: core-ereturn-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [An enclosing `eclass` program with conformable named `b` and `V` matrices and a marked `touse` sample.]
+  code: ereturn post b V, esample(touse)
 provenance:
   local_help_topics: [program, syntax, return, ereturn]
   local_help_globs: []

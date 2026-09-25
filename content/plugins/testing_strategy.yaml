@@ -73,3 +73,5 @@ provenance:
   - plugins/stata-c-plugins/skills/stata-c-plugins/references/testing_strategy.md
   package_only: false
   upstream_only: false
+pattern_kinds: [fragment, illustrative, fragment, fragment, fragment]
+pattern_languages: [stata, stata, stata, stata, stata]

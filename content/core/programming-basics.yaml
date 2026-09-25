@@ -18,17 +18,7 @@ routing_terms:
 - capture command errors
 - quietly run a Stata command
 source_topics: [foreach, forvalues, macro, do]
-syntax_patterns:
-- |-
-  local powers "2 3"
-  foreach power of local powers {
-      generate double value`power' = base^`power'
-  }
-- |-
-  forvalues row = 1/5 {
-      assert value2[`row'] == `row'^2
-  }
-- do "analysis.do" input_path output_path
+syntax_patterns: []
 assumptions:
 - The loop examples require an existing numeric `base` variable with values 1 through 5; the `do` line requires its named file and arguments.
 - Repeated commands are safe at each iteration and produce uniquely named or intentionally replaced outputs.
@@ -44,19 +34,39 @@ validation_case: >-
 validation_mode: stata
 related_refs: [advanced-programming, workflow-best-practices]
 install_commands: []
-smoke_test: |-
-  clear
-  set obs 5
-  generate int base = _n
-  local powers "2 3"
-  foreach power of local powers {
-      generate double value`power' = base^`power'
-  }
-  forvalues row = 1/5 {
-      assert value2[`row'] == `row'^2
-  }
-  assert value2[5] == 25
-  assert value3[2] == 8
+smoke_test: null
+examples:
+- id: core-loop-foreach
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [A numeric `base` variable with values 1 through 5.]
+  code: |-
+    local powers "2 3"
+    foreach power of local powers {
+        generate double value`power' = base^`power'
+    }
+  test_id: core-loop-foreach
+  fixture: tests/stata/examples/core-loop-foreach.yaml
+  expected_rc: 0
+- id: core-loop-forvalues
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [A numeric `value2` variable equal to the square of row number for rows 1 through 5.]
+  code: |-
+    forvalues row = 1/5 {
+        assert value2[`row'] == `row'^2
+    }
+  test_id: core-loop-forvalues
+  fixture: tests/stata/examples/core-loop-forvalues.yaml
+  expected_rc: 0
+- id: core-do-arguments
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [An `analysis.do` file that accepts the two positional path arguments.]
+  code: do "analysis.do" input_path output_path
 provenance:
   local_help_topics: [foreach, forvalues, macro, do]
   local_help_globs: []

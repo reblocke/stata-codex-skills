@@ -1,0 +1,15 @@
+schema_version: 1
+id: core-adult-missing-false
+setup: |-
+  clear
+  input double age
+  17
+  21
+  .
+  .a
+  end
+assertions: |-
+  assert adult_missing_as_false == 0 in 1
+  assert adult_missing_as_false == 1 in 2
+  assert adult_missing_as_false == 0 in 3/4
+  assert age[4] == .a
