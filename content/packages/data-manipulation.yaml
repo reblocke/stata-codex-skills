@@ -132,9 +132,9 @@ recipes:
   title: Grouped operations with gtools
   aliases: [gtools, gcollapse, gegen, greshape, gisid, gquantiles]
   example_ids: [package-gcollapse-means, package-gegen-fragment, package-greshape-fragment, package-gquantiles-fragment]
-  preflight_commands: [which gcollapse, which gegen, ado describe gtools]
+  preflight_commands: [which gcollapse, which gegen, which greshape, which gisid, which gquantiles, ado describe gtools]
   install_commands: [ssc install gtools]
-  dependencies: [The reviewed gtools distribution includes platform plugin binaries.]
+  dependencies: [The reviewed gtools distribution supplies its ado files, Mata library, and platform plugin binaries; confirm that the target Stata process loads its matching plugin.]
   validation_note: Only the gcollapse grouped-mean example has a licensed execution fixture; other gtools commands require task-specific validation.
 - slug: rangestat
   title: Rolling-window statistics with rangestat
@@ -142,15 +142,15 @@ recipes:
   example_ids: [package-rangestat-fragment]
   preflight_commands: [which rangestat, ado describe rangestat]
   install_commands: [ssc install rangestat]
-  dependencies: [Check the reviewed rangestat distribution and any local runtime requirements before execution.]
+  dependencies: [The basic rolling-mean fragment uses the reviewed rangestat distribution, including rangestat_run.ado. Optional custom mm_quantile() statistics require moremata, which is outside this lock and needs separate review.]
   validation_note: The default licensed gate verifies the reviewed installation, but does not execute this command on a numerical fixture.
 - slug: egenmore
   title: Extended egen functions with egenmore
   aliases: [egenmore, egen nvals]
   example_ids: [package-egenmore-fragment]
-  preflight_commands: [ado describe egenmore]
+  preflight_commands: [which _gnvals, ado describe egenmore]
   install_commands: [ssc install egenmore]
-  dependencies: [Check the reviewed egenmore distribution and requested egen function before execution.]
+  dependencies: [The shown nvals function is supplied by the reviewed egenmore distribution; no other utility on this landing page is needed for this fragment.]
   validation_note: The default licensed gate verifies the reviewed installation, but does not execute nvals on a numerical fixture.
 - slug: distinct
   title: Key counts with distinct
@@ -158,7 +158,7 @@ recipes:
   example_ids: [package-distinct-fragment]
   preflight_commands: [which distinct, ado describe distinct]
   install_commands: [ssc install distinct]
-  dependencies: [Check the reviewed distinct distribution before execution.]
+  dependencies: [The shown joint-key count uses the reviewed distinct distribution; no other utility on this landing page is needed for this fragment.]
   validation_note: The default licensed gate verifies the reviewed installation, but does not assert a distinct-count fixture.
 - slug: missings
   title: Missing-value reports with missings
@@ -166,7 +166,7 @@ recipes:
   example_ids: [package-missings-fragment]
   preflight_commands: [which missings, ado describe missings]
   install_commands: [ssc install missings]
-  dependencies: [Check the reviewed missings distribution before execution.]
+  dependencies: [The shown report uses the reviewed missings distribution; no other utility on this landing page is needed for this fragment.]
   validation_note: The default licensed gate verifies the reviewed installation, but does not assert a missingness-report fixture.
 - slug: carryforward
   title: Ordered carry-forward values
@@ -174,7 +174,7 @@ recipes:
   example_ids: [package-carryforward-fragment]
   preflight_commands: [which carryforward, ado describe carryforward]
   install_commands: [ssc install carryforward]
-  dependencies: [Check the reviewed carryforward distribution and the required within-panel order before execution.]
+  dependencies: [The shown command uses the reviewed carryforward distribution and a declared within-panel order; no other utility on this landing page is needed for this fragment.]
   validation_note: The default licensed gate verifies the reviewed installation, but does not assert a carry-forward fixture.
 provenance:
   reviewed: true
