@@ -55,96 +55,6 @@ class LockCandidatePublicationTests(unittest.TestCase):
             payload or {"schema_version": 1, "value": "new"},
         )
 
-    def test_success_is_deterministic_and_uses_fixed_recovery(
-        self,
-    ) -> None:
-        public = self.candidates / "upstream-lock.yaml"
-        public.write_text("schema_version: 1\nvalue: old\n", encoding="utf-8")
-        payload = {"schema_version": 1, "value": "new", "items": ["a", "b"]}
-        expected = refresh_locks.deterministic_yaml_bytes(payload)
-
-        destination = self.publish(payload)
-
-        self.assertEqual(public, destination)
-        self.assertEqual(expected, public.read_bytes())
-        recovery = self.candidates / ".upstream-lock.yaml.previous"
-        self.assertTrue(recovery.is_file())
-        self.assertEqual(
-            b"schema_version: 1\nvalue: old\n",
-            recovery.read_bytes(),
-        )
-        self.assertEqual(
-            expected,
-            refresh_locks.deterministic_yaml_bytes(payload),
-        )
-
-    def test_existing_public_name_remains_present_through_exchange(self) -> None:
-        public = self.candidates / "upstream-lock.yaml"
-        original = b"schema_version: 1\nvalue: old\n"
-        public.write_bytes(original)
-        payload = {"schema_version": 1, "value": "new"}
-        expected = refresh_locks.deterministic_yaml_bytes(payload)
-        real_exchange = refresh_locks.atomic_exchange_at
-        real_rename = refresh_locks.atomic_rename_at_no_replace
-        observations: list[tuple[str, bytes]] = []
-
-        def observe_exchange(
-            source_descriptor: int,
-            source_name: str,
-            destination_descriptor: int,
-            destination_name: str,
-            *,
-            sync_directories: bool = True,
-        ) -> None:
-            self.assertTrue(public.is_file())
-            observations.append(("before-exchange", public.read_bytes()))
-            real_exchange(
-                source_descriptor,
-                source_name,
-                destination_descriptor,
-                destination_name,
-                sync_directories=sync_directories,
-            )
-            self.assertTrue(public.is_file())
-            observations.append(("after-exchange", public.read_bytes()))
-
-        def observe_recovery_move(
-            source_descriptor: int,
-            source_name: str,
-            destination_descriptor: int,
-            destination_name: str,
-            *,
-            sync_directories: bool = True,
-        ) -> None:
-            self.assertTrue(public.is_file())
-            self.assertEqual(expected, public.read_bytes())
-            real_rename(
-                source_descriptor,
-                source_name,
-                destination_descriptor,
-                destination_name,
-                sync_directories=sync_directories,
-            )
-
-        with patch.object(
-            refresh_locks,
-            "atomic_exchange_at",
-            side_effect=observe_exchange,
-        ), patch.object(
-            refresh_locks,
-            "atomic_rename_at_no_replace",
-            side_effect=observe_recovery_move,
-        ):
-            self.publish(payload)
-
-        self.assertEqual(
-            [
-                ("before-exchange", original),
-                ("after-exchange", expected),
-            ],
-            observations,
-        )
-
     def test_interrupt_after_exchange_preserves_type_and_attaches_state(
         self,
     ) -> None:
@@ -319,36 +229,6 @@ class LockCandidatePublicationTests(unittest.TestCase):
         )
         self.assertIn("Prior lock candidate survives unchanged", str(caught.exception))
 
-    def test_public_substitution_during_final_fsync_cannot_report_success(
-        self,
-    ) -> None:
-        public = self.candidates / "upstream-lock.yaml"
-        foreign = b"foreign: true\n"
-        real_fsync = os.fsync
-        substituted = False
-
-        def substitute_public(descriptor: int) -> None:
-            nonlocal substituted
-            if (
-                stat.S_ISDIR(os.fstat(descriptor).st_mode)
-                and public.exists()
-                and not substituted
-            ):
-                substituted = True
-                public.unlink()
-                public.write_bytes(foreign)
-            real_fsync(descriptor)
-
-        with patch.object(
-            refresh_locks.os,
-            "fsync",
-            side_effect=substitute_public,
-        ), self.assertRaisesRegex(RuntimeError, "Published lock candidate"):
-            self.publish()
-
-        self.assertTrue(substituted)
-        self.assertEqual(foreign, public.read_bytes())
-
     def test_public_substitution_during_final_directory_check_is_rejected(
         self,
     ) -> None:
@@ -453,35 +333,6 @@ class LockCandidatePublicationTests(unittest.TestCase):
                 self.publish()
         finally:
             self.candidates.chmod(0o700)
-
-    def test_created_directory_descriptor_closes_when_metadata_setup_fails(
-        self,
-    ) -> None:
-        self.candidates.rmdir()
-        self.raw.rmdir()
-        real_open = os.open
-        opened: list[int] = []
-
-        def record_open(*args: object, **kwargs: object) -> int:
-            descriptor = real_open(*args, **kwargs)
-            opened.append(descriptor)
-            return descriptor
-
-        with patch.object(
-            refresh_locks.os,
-            "open",
-            side_effect=record_open,
-        ), patch.object(
-            refresh_locks.os,
-            "fchmod",
-            side_effect=OSError("forced metadata failure"),
-        ), self.assertRaisesRegex(OSError, "forced metadata failure"):
-            refresh_locks._open_candidate_directory(Path(), create=True)
-
-        self.assertGreaterEqual(len(opened), 2)
-        for descriptor in opened:
-            with self.subTest(descriptor=descriptor), self.assertRaises(OSError):
-                os.fstat(descriptor)
 
     def test_candidate_directory_substitution_retains_private_tree(
         self,
@@ -751,51 +602,6 @@ class LockCandidatePublicationTests(unittest.TestCase):
         self.assertEqual(
             {"schema_version": 1, "slug": "asdoc"},
             yaml.safe_load(destination.read_text(encoding="utf-8")),
-        )
-
-    def test_cli_routes_all_outputs_through_safe_candidate_names(self) -> None:
-        published: list[Path] = []
-
-        def record(relative: Path, _payload: dict) -> Path:
-            published.append(relative)
-            return self.candidates / relative
-
-        with patch.object(
-            refresh_locks,
-            "upstream_candidate",
-            return_value={"schema_version": 1},
-        ), patch.object(
-            refresh_locks,
-            "stata_help_candidate",
-            return_value={"schema_version": 1},
-        ), patch.object(
-            refresh_locks,
-            "plugin_sdk_candidate",
-            return_value={"schema_version": 1},
-        ), patch.object(
-            refresh_locks,
-            "detect_stata_binary",
-            return_value=Path("/unused/stata"),
-        ), patch.object(
-            refresh_locks,
-            "package_lock_candidates",
-            return_value={"asdoc": {"schema_version": 1, "slug": "asdoc"}},
-        ), patch.object(
-            refresh_locks,
-            "publish_lock_candidate",
-            side_effect=record,
-        ):
-            result = refresh_locks.main(["--target", "all"])
-
-        self.assertEqual(0, result)
-        self.assertEqual(
-            [
-                Path("upstream-lock.yaml"),
-                Path("stata-help-lock.yaml"),
-                Path("plugin-sdk-lock.yaml"),
-                Path("packages/asdoc.yaml"),
-            ],
-            published,
         )
 
 

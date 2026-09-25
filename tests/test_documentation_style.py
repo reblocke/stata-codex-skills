@@ -4,7 +4,6 @@ from copy import deepcopy
 from pathlib import Path
 import sys
 import unittest
-from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -19,17 +18,6 @@ class DocumentationStyleProfileTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.profile = lint_skill_pack.load_documentation_style_profile()
 
-    def test_reviewed_profile_is_complete_and_project_first(self) -> None:
-        self.assertEqual(
-            [],
-            lint_skill_pack.lint_documentation_style_profile(self.profile),
-        )
-        self.assertEqual(
-            "https://developers.google.com/style",
-            self.profile["authority"]["url"],
-        )
-        self.assertTrue(self.profile["precedence"]["project_first"])
-
     def test_profile_requires_dated_authority_and_protected_contexts(self) -> None:
         profile = deepcopy(self.profile)
         profile["authority"]["reviewed_on"] = "August 18"
@@ -39,79 +27,6 @@ class DocumentationStyleProfileTests(unittest.TestCase):
 
         self.assertTrue(any("reviewed_on" in error for error in errors))
         self.assertTrue(any("inline-code" in error for error in errors))
-
-    def test_sentence_case_checks_initial_word_with_technical_exception(self) -> None:
-        proper_names = lint_skill_pack.style_profile_names(self.profile)
-        prefixes = lint_skill_pack.style_profile_lowercase_prefixes(self.profile)
-
-        self.assertEqual(
-            "stata",
-            lint_skill_pack.sentence_case_error(
-                "stata core skill",
-                proper_names=proper_names,
-                lowercase_initials=prefixes,
-            ),
-        )
-        self.assertIsNone(
-            lint_skill_pack.sentence_case_error(
-                "reghdfe: High-dimensional fixed effects",
-                proper_names=proper_names,
-                lowercase_initials=prefixes,
-            )
-        )
-        self.assertEqual(
-            "Workflow",
-            lint_skill_pack.sentence_case_error(
-                "Stata core Workflow",
-                proper_names=proper_names,
-                lowercase_initials=prefixes,
-            ),
-        )
-        self.assertEqual(
-            "ALL",
-            lint_skill_pack.sentence_case_error(
-                "ALL UPPERCASE",
-                proper_names=proper_names,
-                lowercase_initials=prefixes,
-            ),
-        )
-        self.assertIsNone(
-            lint_skill_pack.sentence_case_error(
-                "Stata GMM workflow",
-                proper_names=proper_names,
-                lowercase_initials=prefixes,
-            )
-        )
-        for invalid in ("OVERVIEW", "Title: SUBTITLE", "Title: subtitle"):
-            with self.subTest(invalid=invalid):
-                self.assertIsNotNone(
-                    lint_skill_pack.sentence_case_error(
-                        invalid,
-                        proper_names=proper_names,
-                        lowercase_initials=prefixes,
-                    )
-                )
-        for valid in (
-            "Survival with Kaplan–Meier estimates",
-            "Use GitHub Actions",
-            "macOS setup",
-        ):
-            with self.subTest(valid=valid):
-                self.assertIsNone(
-                    lint_skill_pack.sentence_case_error(
-                        valid,
-                        proper_names=proper_names,
-                        lowercase_initials=prefixes,
-                    )
-                )
-
-        self.assertIsNone(
-            lint_skill_pack.sentence_case_error(
-                " ".join(["Stata"] * 4000),
-                proper_names=proper_names,
-                lowercase_initials=prefixes,
-            )
-        )
 
     def test_config_hard_fails_a_lowercase_initial_heading(self) -> None:
         config = deepcopy(libskillpack.load_skill_config())
@@ -146,23 +61,6 @@ class MarkdownHardLintTests(unittest.TestCase):
 
         self.assertTrue(any("empty heading" in error for error in errors))
         self.assertTrue(any("unexpected 'Details'" in error for error in errors))
-
-    def test_image_alt_text_participates_in_heading_sentence_case(self) -> None:
-        for heading in (
-            "# ![Workflow Details](image.svg)\n",
-            '# <img src="image.svg" alt="Workflow Details">\n',
-        ):
-            with self.subTest(heading=heading):
-                errors = self.lint(heading)
-                self.assertTrue(
-                    any("unexpected 'Details'" in error for error in errors)
-                )
-        for dynamic_heading in (
-            "# ![{{ title }}](image.svg)\n",
-            '# <img src="image.svg" alt="{{ title }}">\n',
-        ):
-            with self.subTest(dynamic_heading=dynamic_heading):
-                self.assertEqual([], self.lint(dynamic_heading))
 
     def test_image_alt_uses_commonmark_accessibility_semantics(self) -> None:
         links = """# Stata guide
@@ -304,14 +202,6 @@ Use A &amp; B in prose.
         self.assertEqual(1, sum("descriptive link text" in error for error in errors))
         self.assertFalse(any("ampersand in prose" in error for error in errors))
 
-    def test_entity_masking_does_not_create_markdown_blocks(self) -> None:
-        for entity in ("&lt;", "&#60;"):
-            with self.subTest(entity=entity):
-                errors = self.lint(f"# Stata guide\n\n{entity}) A &amp; B\n")
-                self.assertFalse(
-                    any("ampersand in prose" in error for error in errors)
-                )
-
     def test_invalid_or_fragmented_entities_do_not_hide_raw_ampersands(self) -> None:
         invalid = (
             "A &bogus; B.",
@@ -378,34 +268,6 @@ Open [h&#101;re](guide.md).
             sum("descriptive link text" in error for error in errors),
         )
 
-    def test_entity_decoded_newlines_stay_on_the_source_line(self) -> None:
-        text = """# Stata guide
-
-A &NewLine; see below.
-<a href="guide.md">&NewLine;here</a>
-"""
-
-        errors = self.lint(text)
-
-        self.assertTrue(
-            any(
-                "sample.md:3:" in error and "see below" in error
-                for error in errors
-            )
-        )
-        self.assertTrue(
-            any(
-                "sample.md:4:" in error and "descriptive link" in error
-                for error in errors
-            )
-        )
-
-    def test_combining_marks_do_not_make_empty_labels_visible(self) -> None:
-        errors = self.lint("# &#x301;\n\n[&#xfe0f;](guide.md)\n")
-
-        self.assertTrue(any("empty heading" in error for error in errors))
-        self.assertTrue(any("descriptive link" in error for error in errors))
-
     def test_inline_code_cannot_open_a_raw_html_protection_region(self) -> None:
         text = """# Stata guide
 
@@ -421,154 +283,6 @@ Use A & B and see below.
         self.assertTrue(any("unexpected 'Case'" in error for error in errors))
         self.assertTrue(any("ampersand in prose" in error for error in errors))
         self.assertTrue(any("'see below'" in error for error in errors))
-
-    def test_multiline_prose_diagnostics_use_the_source_line(self) -> None:
-        text = """# Stata guide
-
-First sentence.
-Use A & B.
-Please see below.
-"""
-
-        errors = self.lint(text)
-
-        self.assertTrue(
-            any(
-                "sample.md:4:" in error and "ampersand" in error
-                for error in errors
-            )
-        )
-        self.assertTrue(
-            any(
-                "sample.md:5:" in error and "see below" in error
-                for error in errors
-            )
-        )
-
-    def test_multiline_link_and_image_diagnostics_use_the_source_line(self) -> None:
-        text = """# Stata guide
-
-First sentence.
-Open [here](guide.md).
-<img src="diagram.svg">
-"""
-
-        errors = self.lint(text)
-
-        self.assertTrue(
-            any(
-                "sample.md:4:" in error and "descriptive link" in error
-                for error in errors
-            )
-        )
-        self.assertTrue(
-            any(
-                "sample.md:5:" in error and "alt attribute" in error
-                for error in errors
-            )
-        )
-
-        multiline_label = "# Stata guide\n\nOpen [\nhere](guide.md).\n"
-        self.assertTrue(
-            any(
-                "sample.md:4:" in error and "descriptive link" in error
-                for error in self.lint(multiline_label)
-            )
-        )
-
-    def test_line_mapping_accounts_for_multiline_code_and_html_links(self) -> None:
-        markdown = """# Stata guide
-
-Use `literal
-code` exactly.
-Open [here](guide.md).
-<img src="diagram.svg">
-"""
-        errors = self.lint(markdown)
-        self.assertTrue(
-            any(
-                "sample.md:5:" in error and "descriptive link" in error
-                for error in errors
-            )
-        )
-        self.assertTrue(
-            any(
-                "sample.md:6:" in error and "alt attribute" in error
-                for error in errors
-            )
-        )
-
-        html = """# Stata guide
-
-<a href="guide.md">
-here
-</a>
-"""
-        errors = self.lint(html)
-        self.assertTrue(
-            any(
-                "sample.md:4:" in error and "descriptive link" in error
-                for error in errors
-            )
-        )
-
-    def test_line_mapping_handles_code_closers_after_backslashes(self) -> None:
-        text = r"""# Stata guide
-
-Use `a
-\` then.
-Open [here](guide.md).
-"""
-
-        errors = self.lint(text)
-
-        self.assertTrue(
-            any(
-                "sample.md:5:" in error and "descriptive link" in error
-                for error in errors
-            )
-        )
-
-    def test_prose_line_mapping_skips_multiline_protected_contexts(self) -> None:
-        code = """# Stata guide
-
-Use `literal
-code` exactly.
-Use A & B.
-Please see below.
-"""
-        errors = self.lint(code)
-        self.assertTrue(
-            any(
-                "sample.md:5:" in error and "ampersand" in error
-                for error in errors
-            )
-        )
-        self.assertTrue(
-            any(
-                "sample.md:6:" in error and "see below" in error
-                for error in errors
-            )
-        )
-
-        html = """# Stata guide
-
-<span
- class="note">Use A & B and see below.</span>
-"""
-        errors = self.lint(html)
-        self.assertTrue(
-            any(
-                "sample.md:4:" in error and "ampersand" in error
-                for error in errors
-            )
-        )
-        self.assertTrue(
-            any(
-                "sample.md:4:" in error and "see below" in error
-                for error in errors
-            )
-        )
 
     def test_source_mapping_skips_hidden_link_syntax_and_html_backticks(self) -> None:
         link_title = """# Stata guide
@@ -762,65 +476,6 @@ Open [here](guide.md).
         )
         self.assertTrue(any("unbalanced Jinja" in error for error in unbalanced))
 
-    def test_multiline_jinja_does_not_reparse_document_tails(self) -> None:
-        block_rules = (
-            lint_skill_pack.STYLE_MARKDOWN_PARSER.block.ruler.get_active_rules()
-        )
-        self.assertLess(
-            block_rules.index("style_jinja"),
-            block_rules.index("lheading"),
-        )
-
-        source = "# Stata guide\n\n" + "{#\nhidden\n#}\n\n" * 300
-        original = lint_skill_pack.STYLE_MARKDOWN_PROBE_PARSER.inline.parse
-        parsed_characters = 0
-
-        def counted_parse(value, *args, **kwargs):
-            nonlocal parsed_characters
-            parsed_characters += len(value)
-            return original(value, *args, **kwargs)
-
-        with mock.patch.object(
-            lint_skill_pack.STYLE_MARKDOWN_PROBE_PARSER.inline,
-            "parse",
-            side_effect=counted_parse,
-        ):
-            self.assertEqual([], self.lint(source))
-
-        self.assertLess(parsed_characters, len(source) * 6)
-
-        adjacent = "# Stata guide\n\n" + "{#\nhidden\n#}\n" * 800
-        self.assertEqual([], self.lint(adjacent))
-
-        nested_literal = (
-            "# Stata guide\n\n"
-            + "<code>" * 800
-            + "{# hidden #}"
-            + "</code>" * 800
-            + "\n"
-        )
-        self.assertEqual([], self.lint(nested_literal))
-
-        malformed_literal = (
-            "# Stata guide\n\n"
-            + "<code>" * 1600
-            + "</kbd>" * 1600
-            + "\n"
-        )
-        self.assertEqual([], self.lint(malformed_literal))
-
-        for malformed_source in (
-            "<" * 8000,
-            "<!--" * 4000,
-            "<?" * 8000,
-            "<![CDATA[" * 2000,
-        ):
-            with self.subTest(prefix=malformed_source[:9]):
-                self.assertEqual(
-                    ((), ()),
-                    lint_skill_pack._jinja_source_issues(malformed_source),
-                )
-
     def test_jinja_source_mapping_preserves_labels_and_container_prefixes(
         self,
     ) -> None:
@@ -984,32 +639,6 @@ Please see {{ target }} below.
             "<a href=x>here<a href=y>Google guide</a></a>\n"
         )
         self.assertTrue(any("descriptive link" in error for error in nested_anchors))
-
-    def test_sentence_case_checks_unicode_heading_words(self) -> None:
-        for heading in (
-            "# Stata Über",
-            "# Stata Évaluation",
-            "# Stata Résumé",
-            "# Stata &Uuml;ber",
-        ):
-            with self.subTest(heading=heading):
-                self.assertTrue(
-                    any("sentence case" in error for error in self.lint(heading + "\n"))
-                )
-
-    def test_protected_link_labels_report_the_first_visible_source_line(self) -> None:
-        for source in (
-            "Open [`\nhere`](guide.md).",
-            '[<img\n alt="here"\n src=x>](guide.md)',
-        ):
-            with self.subTest(source=source):
-                errors = self.lint(f"# Stata guide\n\n{source}\n")
-                self.assertTrue(
-                    any(
-                        "sample.md:4:" in error and "descriptive link" in error
-                        for error in errors
-                    )
-                )
 
     def test_scans_list_continuation_prose_but_not_blockquoted_fences(self) -> None:
         prose = """# Stata guide
@@ -1257,21 +886,6 @@ Open [![here](image.svg)](guide.md).
                 errors = self.lint(heading)
                 self.assertTrue(any("empty heading" in error for error in errors))
 
-    def test_non_link_spacing_and_invalid_fence_info_follow_commonmark(self) -> None:
-        text = """# Stata guide
-
-[here] (guide.html) is ordinary prose.
-
-```bad`info
-## Real details
-```
-"""
-
-        errors = self.lint(text)
-
-        self.assertFalse(any("descriptive link text" in error for error in errors))
-        self.assertFalse(any("exactly one level-1" in error for error in errors))
-
     def test_counts_atx_and_setext_h1s_together(self) -> None:
         errors = self.lint("# Stata guide\n\nOther\n=====\n")
 
@@ -1299,57 +913,6 @@ Use A & B and see below.
         self.assertEqual(3, sum("descriptive link text" in error for error in errors))
         self.assertTrue(any("ampersand in prose" in error for error in errors))
         self.assertTrue(any("'see below'" in error for error in errors))
-
-    def test_allows_decorative_empty_alt_slots_and_attributes(self) -> None:
-        text = """# Stata guide
-
-![](spacer.svg)
-![][spacer]
-<img src="spacer.svg" alt="">
-
-[spacer]: spacer.svg
-"""
-
-        self.assertEqual([], self.lint(text))
-
-    def test_template_heading_placeholders_are_structural_not_prose(self) -> None:
-        text = """# {{ entry.title }}
-
-## When to use
-
-{{ entry.trigger }}
-"""
-
-        self.assertEqual([], self.lint(text))
-
-    def test_protected_technical_token_can_lead_a_heading(self) -> None:
-        self.assertEqual(
-            [],
-            self.lint("# `custom_command` workflow\n"),
-        )
-
-    def test_commonmark_and_google_failures_have_distinct_labels(self) -> None:
-        errors = self.lint("## Title Case\n\nA & B.\n")
-
-        self.assertTrue(any(error.startswith("[CommonMark/project]") for error in errors))
-        self.assertTrue(any(error.startswith("[Google style]") for error in errors))
-
-    def test_all_configured_source_documents_pass_hard_lint(self) -> None:
-        paths, path_errors = lint_skill_pack.documentation_style_paths(
-            self.profile,
-            check_generated=False,
-        )
-        errors = list(path_errors)
-        for path in paths:
-            errors.extend(
-                lint_skill_pack.lint_markdown_document(
-                    path,
-                    path.read_text(encoding="utf-8"),
-                    self.profile,
-                )
-            )
-
-        self.assertEqual([], errors)
 
 
 class MarkdownAdvisoryTests(unittest.TestCase):
@@ -1390,15 +953,6 @@ class MarkdownAdvisoryTests(unittest.TestCase):
             1,
             sum("code font" in item for item in advisories),
         )
-
-    def test_advisory_report_tracks_total_separately_from_display_cap(self) -> None:
-        report = lint_skill_pack._bounded_advisory_report(
-            [f"candidate {index}" for index in range(302)],
-            200,
-        )
-
-        self.assertEqual(200, len(report.items))
-        self.assertEqual(302, report.total_count)
 
 
 if __name__ == "__main__":

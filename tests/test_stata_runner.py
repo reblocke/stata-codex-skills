@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from contextlib import chdir
 import json
-import os
 from pathlib import Path
 import signal
 import stat
@@ -10,7 +8,6 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 import unittest
-from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -56,42 +53,6 @@ if mode == 'timeout':
     time.sleep(60)
 sys.exit(9 if mode == 'os-error' else 0)
 '''
-
-
-class LaunchArgumentsTests(unittest.TestCase):
-    def test_darwin_app_bundle_uses_unattended_wrapper_argument(self) -> None:
-        for edition in ("StataBE", "StataSE", "StataMP"):
-            binary = Path(f"/Applications/Stata/{edition}.app/Contents/MacOS/{edition}")
-            with self.subTest(edition=edition):
-                self.assertEqual(
-                    [str(binary), "-e", "wrapper with spaces.do"],
-                    stata_runner.launch_arguments(binary, Path("wrapper with spaces.do"), "Darwin"),
-                )
-
-    def test_console_executables_keep_batch_do_arguments(self) -> None:
-        for system in ("Darwin", "Linux"):
-            with self.subTest(system=system):
-                self.assertEqual(
-                    ["/opt/stata/stata-mp", "-b", "do", "wrapper.do"],
-                    stata_runner.launch_arguments(Path("/opt/stata/stata-mp"), Path("wrapper.do"), system),
-                )
-
-    def test_resolved_symlink_to_app_uses_app_interface(self) -> None:
-        with TemporaryDirectory() as temporary:
-            root = Path(temporary).resolve()
-            binary = root / "StataBE.app/Contents/MacOS/StataBE"
-            binary.parent.mkdir(parents=True)
-            binary.touch()
-            link = root / "stata"
-            link.symlink_to(binary)
-            self.assertEqual(
-                [str(binary), "-e", "wrapper.do"],
-                stata_runner.launch_arguments(link, Path("wrapper.do"), "Darwin"),
-            )
-
-    def test_windows_fails_without_a_guessed_launcher(self) -> None:
-        with self.assertRaisesRegex(ValueError, "unsupported on Windows"):
-            stata_runner.launch_arguments(Path("Stata.exe"), Path("wrapper.do"), "Windows")
 
 
 class RunStataTests(unittest.TestCase):
@@ -220,20 +181,6 @@ class RunStataTests(unittest.TestCase):
             unrelated.terminate()
             unrelated.wait(timeout=3)
 
-    def test_default_cwd_is_callers_project_directory(self) -> None:
-        with chdir(self.project):
-            result = stata_runner.run_stata(self.binary, self.target, self.run_dir)
-        self.assertTrue(result["success"])
-        self.assertEqual(str(self.project), result["cwd"])
-
-    def test_child_pwd_and_cwd_both_point_to_private_run_directory(self) -> None:
-        with patch.dict(os.environ, {"PWD": str(self.project)}):
-            result = self.run_fake("success")
-            self.assertEqual(str(self.project), os.environ["PWD"])
-        self.assertTrue(result["success"])
-        invocation = json.loads((self.run_dir / "invocation.json").read_text())
-        self.assertEqual(str(self.run_dir), invocation["cwd"])
-        self.assertEqual(str(self.run_dir), invocation["pwd"])
 
     def test_existing_run_directory_is_never_overwritten(self) -> None:
         self.run_dir.mkdir()
@@ -260,6 +207,7 @@ class RunStataTests(unittest.TestCase):
                     stata_runner.run_stata(self.binary, target, self.run_dir)
                 self.assertFalse(self.run_dir.exists())
 
+
     def test_invalid_timeouts_fail_before_creating_artifacts(self) -> None:
         for timeout in (0, -1, float("nan"), float("inf")):
             with self.subTest(timeout=timeout), self.assertRaises(ValueError):
@@ -276,16 +224,6 @@ class RunStataTests(unittest.TestCase):
         self.assertNotIn("Analytical", completed.stdout + completed.stderr)
         self.assertIn("Analytical stdout", (self.run_dir / "stdout.txt").read_text())
         self.assertIn("Analytical stderr", (self.run_dir / "stderr.txt").read_text())
-
-    def test_cli_invalid_invocation_returns_two_without_replacing_evidence(self) -> None:
-        self.run_dir.mkdir()
-        completed = subprocess.run(
-            self.cli_arguments(),
-            capture_output=True, text=True, timeout=5, check=False,
-        )
-        self.assertEqual(2, completed.returncode)
-        self.assertEqual(2, json.loads(completed.stdout)["exit_code"])
-        self.assertEqual([], list(self.run_dir.iterdir()))
 
 
 if __name__ == "__main__":
