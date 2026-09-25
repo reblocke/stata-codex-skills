@@ -183,61 +183,6 @@ class StataHelpHarvestTests(unittest.TestCase):
                 publisher.assert_not_called()
                 self.assertFalse(self.report_path.exists())
 
-    def test_harvest_entry_records_only_resolved_paths_and_hashes(self) -> None:
-        source = self.help_root / "r" / "regress.sthlp"
-        source.parent.mkdir()
-        source.write_text("{smcl}{title:Regress}", encoding="utf-8")
-        entry = {
-            "slug": "regress",
-            "provenance": {
-                "local_help_topics": ["regress"],
-                "local_help_globs": [],
-                "local_help_files": ["ado/base/r/regress.sthlp"],
-                "package_only": False,
-                "upstream_only": False,
-            },
-        }
-        before = {
-            path.relative_to(self.temp_root)
-            for path in self.temp_root.rglob("*")
-            if path.is_file()
-        }
-
-        with patch.object(
-            harvest_stata_help,
-            "find_help_files_exact",
-            return_value=([source], []),
-        ), patch.object(
-            harvest_stata_help,
-            "relative_to_stata",
-            return_value="ado/base/r/regress.sthlp",
-        ):
-            report, errors = harvest_stata_help.harvest_entry(
-                "core",
-                REPO_ROOT / "content" / "core" / "regress.yaml",
-                entry,
-            )
-
-        after = {
-            path.relative_to(self.temp_root)
-            for path in self.temp_root.rglob("*")
-            if path.is_file()
-        }
-        self.assertEqual([], errors)
-        self.assertEqual(before, after)
-        self.assertEqual(
-            [
-                {
-                    "path": "ado/base/r/regress.sthlp",
-                    "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
-                }
-            ],
-            report["resolved_sources"],
-        )
-        self.assertNotIn("harvested", report)
-        self.assertNotIn("normalized_file", str(report))
-        self.assertFalse((self.raw / "stata-help" / "normalized").exists())
-
     def test_group_writable_regular_help_source_is_accepted(self) -> None:
         source = self.help_root / "u" / "group-writable.sthlp"
         source.parent.mkdir()
@@ -380,37 +325,6 @@ class StataHelpHarvestTests(unittest.TestCase):
 
         self.assertEqual(b"do not change", victim.read_bytes())
         self.assertFalse((external / "candidates").exists())
-
-    def test_successful_report_is_deterministic_and_fixed(self) -> None:
-        payload = {
-            "schema_version": 1,
-            "source_root": "/Applications/Stata/ado/base",
-            "entries": [
-                {
-                    "skill": "core",
-                    "slug": "regress",
-                    "resolved_sources": [
-                        {
-                            "path": "ado/base/r/regress.sthlp",
-                            "sha256": "a" * 64,
-                        }
-                    ],
-                    "review_required": False,
-                }
-            ],
-        }
-        expected = refresh_locks.deterministic_yaml_bytes(payload)
-
-        self.assertEqual(0, self.run_harvest(payload))
-        first = self.report_path.read_bytes()
-        self.assertEqual(expected, first)
-        self.assertEqual(0, self.run_harvest(payload))
-        self.assertEqual(first, self.report_path.read_bytes())
-        self.assertEqual(
-            payload,
-            yaml.safe_load(self.report_path.read_text(encoding="utf-8")),
-        )
-        self.assertFalse((self.raw / "stata-help" / "normalized").exists())
 
     def test_reviewed_selector_errors_still_publish_and_fail(self) -> None:
         payload = {

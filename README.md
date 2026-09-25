@@ -27,7 +27,7 @@ Canonical content is split across 38 core, 19 package, and 6 plugin references.
 
 - `uv` 0.11.11, pinned in `pyproject.toml` and CI
 - Python 3.11.x with the pinned Unicode behavior
-- POSIX process-group semantics (macOS or Linux) for isolated unit tests
+- POSIX process-group semantics (macOS or Linux) for process containment tests
 - Git
 
 The offline build does not require Stata or network access after the frozen
@@ -69,7 +69,8 @@ Restart Codex after the first installation on a machine.
 `make build` validates source paths and content, renders the complete
 three-skill tree beside `build/generated/`, validates the staged tree, and
 replaces the prior tree transactionally. `make check` adds generated-drift
-lint, unit tests, deterministic double rendering, and secret/artifact scanning.
+lint, failure and integration tests, deterministic double rendering, and
+secret/artifact scanning.
 Both commands are deterministic and independent of Stata and package or
 upstream networks. `make all` is a compatibility alias for `make check`.
 The offline gate also applies a dated profile of the
@@ -79,7 +80,7 @@ Stata syntax, and established interfaces take precedence over general writing
 guidance. Objective CommonMark/project structure checks and Google-style checks
 fail the gate; judgment-based candidates remain advisory and are available with
 `make style-report`.
-Unit-test modules use four isolated workers by default; set `TEST_JOBS=1` for
+Offline test modules use four isolated workers by default; set `TEST_JOBS=1` for
 serial diagnosis or adjust the per-module `TEST_TIMEOUT` when needed. The
 module phase has a configurable eight-minute global deadline
 (`TEST_GLOBAL_TIMEOUT=480`). CI allows 15 minutes for dependency setup, build,
@@ -102,6 +103,14 @@ Validation evidence is deliberately separated:
   `Hello World` output, and the run-specific completion marker. It remains
   separate from the default gate because native-plugin failures can hang or
   crash Stata.
+
+Prefer the complete build and licensed execution gates for feature validation.
+Retain isolated tests for concrete failures those gates do not induce, such as
+interrupted publication, concurrent file replacement, invalid completion
+evidence, and corrupt inputs. Follow the testing policy in `AGENTS.md` before
+adding tests. The generated tree and its deterministic digest are the offline
+artifacts; the licensed gate also writes `build/validation-receipt.json`, which
+binds the reviewed source to that tree and records the completed suites.
 
 GitHub Actions installs the frozen environment and runs `make check` on Ubuntu
 and macOS. CI has no Stata license, so licensed integration and plugin runtime
@@ -257,7 +266,7 @@ locks/      reviewed upstream, Stata-help, plugin-SDK, and package locks
 manifests/  provenance records; never publication authority
 templates/  deterministic skill templates
 scripts/    render, lint, validation, refresh, and publication tools
-tests/      unit tests, Stata smokes, and structured routing fixtures
+tests/      failure and integration tests, Stata fixtures, and routing cases
 raw/        ignored upstream/help/lock review candidates
 build/      ignored generated skill tree and validation receipt
 ```

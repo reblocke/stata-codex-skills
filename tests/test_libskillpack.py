@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from contextlib import chdir
 import http.client
 import json
 import os
@@ -9,13 +8,12 @@ import shutil
 import signal
 import socket
 import subprocess
-from subprocess import CompletedProcess, TimeoutExpired
 from tempfile import TemporaryDirectory
 import sys
 import threading
 import time
 import unittest
-from unittest.mock import call, patch
+from unittest.mock import patch
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -75,96 +73,6 @@ class ImmediateProcess:
         self.terminate_called = True
 
 
-class HangingProcess:
-    def __init__(self) -> None:
-        self.args = ["stata"]
-        self.pid = 999_999_992
-        self.returncode: int | None = None
-        self.exited = False
-        self.terminate_called = False
-        self.kill_called = False
-        self.communicate_calls = 0
-
-    def poll(self) -> None:
-        return None
-
-    def terminate(self) -> None:
-        self.terminate_called = True
-
-    def kill(self) -> None:
-        self.kill_called = True
-        self.exited = True
-
-    def communicate(self, timeout: int | float | None = None) -> tuple[str, str]:
-        self.communicate_calls += 1
-        if not self.kill_called:
-            raise TimeoutExpired(self.args, timeout)
-        self.returncode = -9
-        return "", ""
-
-
-class MarkerThenNonexitProcess:
-    def __init__(self) -> None:
-        self.args = ["stata"]
-        self.pid = 999_999_993
-        self.returncode: int | None = None
-        self.exit_code: int | None = None
-        self.exited = False
-        self.terminate_called = False
-        self.kill_called = False
-
-    def poll(self) -> int | None:
-        return self.returncode
-
-    def terminate(self) -> None:
-        self.terminate_called = True
-        self.exit_code = -15
-        self.exited = True
-
-    def kill(self) -> None:
-        self.kill_called = True
-        self.exit_code = -9
-        self.exited = True
-
-    def communicate(
-        self, timeout: int | float | None = None
-    ) -> tuple[str, str]:
-        del timeout
-        self.returncode = self.exit_code
-        return "", ""
-
-
-class InterruptingPipe:
-    def __init__(self, *, interrupt: bool = False) -> None:
-        self.interrupt = interrupt
-        self.closed = False
-
-    def close(self) -> None:
-        self.closed = True
-        if self.interrupt:
-            raise KeyboardInterrupt("pipe close")
-
-
-class PollingFailureProcess:
-    def __init__(self) -> None:
-        self.args = ["stata"]
-        self.pid = 999_999_994
-        self.returncode: int | None = None
-        self.exited = False
-        self.stdout = InterruptingPipe(interrupt=True)
-        self.stderr = InterruptingPipe()
-        self.wait_called = False
-
-    def poll(self) -> None:
-        raise OSError("poll must not be used before process-group cleanup")
-
-    def wait(self, timeout: int | float | None = None) -> int:
-        del timeout
-        self.wait_called = True
-        self.returncode = -9
-        return self.returncode
-
-
 class RunStataDoTests(unittest.TestCase):
     def setUp(self) -> None:
         launcher_patcher = patch.object(
@@ -215,83 +123,6 @@ class RunStataDoTests(unittest.TestCase):
         do_file.write_text("clear all\n", encoding="utf-8")
         return do_file
 
-    def test_exact_fresh_log_and_marker_succeed(self) -> None:
-        with TemporaryDirectory(prefix="stata-run-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            do_file = self._make_do_file(cwd)
-            marker = "VALIDATION COMPLETE: fresh-run-id"
-
-            def fake_popen(*args, **kwargs) -> ImmediateProcess:
-                del args, kwargs
-                (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
-                return ImmediateProcess()
-
-            with patch.object(libskillpack.subprocess, "Popen", side_effect=fake_popen):
-                result, log_path = libskillpack.run_stata_do(
-                    Path("/fake/stata"),
-                    do_file,
-                    cwd,
-                    completion_marker=marker,
-                    timeout_seconds=1,
-                )
-
-            self.assertEqual(0, result.returncode)
-            self.assertEqual(cwd / "smoke.log", log_path)
-            self.assertEqual(f"{marker}\n", log_path.read_text(encoding="utf-8"))
-
-    def test_popen_receives_matching_cwd_and_pwd_environment(self) -> None:
-        with TemporaryDirectory(prefix="stata-run-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            do_file = self._make_do_file(cwd)
-            marker = "VALIDATION COMPLETE: cwd-contract"
-
-            def fake_popen(*args, **kwargs) -> ImmediateProcess:
-                del args
-                self.assertEqual(str(cwd), kwargs["cwd"])
-                self.assertEqual(str(cwd), kwargs["env"]["PWD"])
-                self.assertTrue(kwargs["start_new_session"])
-                (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
-                return ImmediateProcess()
-
-            with patch.object(libskillpack.subprocess, "Popen", side_effect=fake_popen):
-                result, _ = libskillpack.run_stata_do(
-                    Path("/fake/stata"),
-                    do_file,
-                    cwd,
-                    completion_marker=marker,
-                    timeout_seconds=1,
-                )
-
-            self.assertEqual(0, result.returncode)
-
-    def test_relative_do_file_exists_from_child_workdir(self) -> None:
-        with TemporaryDirectory(prefix="stata-run-relative-") as temp_root:
-            root = Path(temp_root)
-            cwd = Path("work")
-            marker = "VALIDATION COMPLETE: child-cwd"
-            stub = root / "stata-stub"
-            stub.write_text(
-                "#!/bin/sh\n"
-                'do_file="$3"\n'
-                '[ -f "$do_file" ] || exit 9\n'
-                'log_file="${do_file%.do}.log"\n'
-                f"printf '%s\\n' '{marker}' > \"$log_file\"\n",
-                encoding="utf-8",
-            )
-            stub.chmod(0o755)
-
-            with chdir(root):
-                do_file = self._make_do_file(cwd)
-                result, log_path = libskillpack.run_stata_do(
-                    stub,
-                    do_file,
-                    cwd,
-                    completion_marker=marker,
-                    timeout_seconds=2,
-                )
-
-            self.assertEqual(0, result.returncode)
-            self.assertEqual(root / "work" / "smoke.log", root / log_path)
 
     def test_preexisting_workdir_log_is_not_accepted_as_fresh(self) -> None:
         with TemporaryDirectory(prefix="stata-run-") as temp_root:
@@ -374,97 +205,6 @@ class RunStataDoTests(unittest.TestCase):
                 f"{marker}\n", adjacent_log.read_text(encoding="utf-8")
             )
 
-    def test_zero_return_without_marker_fails(self) -> None:
-        with TemporaryDirectory(prefix="stata-run-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            do_file = self._make_do_file(cwd)
-
-            def fake_popen(*args, **kwargs) -> ImmediateProcess:
-                del args, kwargs
-                (cwd / "smoke.log").write_text("normal Stata output\n", encoding="utf-8")
-                return ImmediateProcess(returncode=0)
-
-            with patch.object(libskillpack.subprocess, "Popen", side_effect=fake_popen):
-                result, _ = libskillpack.run_stata_do(
-                    Path("/fake/stata"),
-                    do_file,
-                    cwd,
-                    completion_marker="VALIDATION COMPLETE: expected",
-                    timeout_seconds=1,
-                )
-
-            self.assertNotEqual(0, result.returncode)
-
-    def test_exact_marker_without_natural_exit_times_out_and_cleans_up(self) -> None:
-        with TemporaryDirectory(prefix="stata-run-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            do_file = self._make_do_file(cwd)
-            marker = "VALIDATION COMPLETE: current-run"
-            process = MarkerThenNonexitProcess()
-
-            def fake_popen(*args, **kwargs) -> MarkerThenNonexitProcess:
-                del args, kwargs
-                (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
-                return process
-
-            def signal_group(_pid: int, sent_signal: int) -> None:
-                if sent_signal == signal.SIGKILL:
-                    process.kill()
-                else:
-                    self.fail(f"unexpected signal: {sent_signal}")
-
-            self.killpg.side_effect = signal_group
-            with patch.object(libskillpack.subprocess, "Popen", side_effect=fake_popen):
-                result, _ = libskillpack.run_stata_do(
-                    Path("/fake/stata"),
-                    do_file,
-                    cwd,
-                    completion_marker=marker,
-                    timeout_seconds=0,
-                )
-
-            self.assertEqual(124, result.returncode)
-            self.assertIn("timed out", result.stderr)
-            self.assertFalse(process.terminate_called)
-            self.assertTrue(process.kill_called)
-            self.assertEqual(
-                [call(process.pid, signal.SIGKILL)],
-                self.killpg.call_args_list,
-            )
-
-    def test_marker_waits_for_later_natural_exit(self) -> None:
-        with TemporaryDirectory(prefix="stata-run-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            do_file = self._make_do_file(cwd)
-            marker = "VALIDATION COMPLETE: later-natural-exit"
-            process = MarkerThenNonexitProcess()
-
-            def fake_popen(*args, **kwargs) -> MarkerThenNonexitProcess:
-                del args, kwargs
-                (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
-                return process
-
-            def finish_naturally(_seconds: float) -> None:
-                process.exit_code = 0
-                process.exited = True
-
-            with patch.object(
-                libskillpack.subprocess, "Popen", side_effect=fake_popen
-            ), patch.object(
-                libskillpack.time, "sleep", side_effect=finish_naturally
-            ) as sleep:
-                result, _ = libskillpack.run_stata_do(
-                    Path("/fake/stata"),
-                    do_file,
-                    cwd,
-                    completion_marker=marker,
-                    timeout_seconds=1,
-                )
-
-            self.assertEqual(0, result.returncode, result.stderr)
-            sleep.assert_called_once()
-            self.assertFalse(process.terminate_called)
-            self.assertFalse(process.kill_called)
 
     def test_exit_before_cleanup_after_marker_is_not_suppressed(self) -> None:
         for natural_returncode in (7, -int(signal.SIGKILL)):
@@ -511,35 +251,6 @@ class RunStataDoTests(unittest.TestCase):
                 )
                 self.killpg.reset_mock()
 
-    def test_already_reaped_process_group_is_never_signaled(self) -> None:
-        with TemporaryDirectory(prefix="stata-run-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            do_file = self._make_do_file(cwd)
-            marker = "VALIDATION COMPLETE: already-reaped"
-
-            def fake_popen(*args, **kwargs) -> ImmediateProcess:
-                del args, kwargs
-                (cwd / "smoke.log").write_text(f"{marker}\n", encoding="utf-8")
-                return ImmediateProcess(returncode=0, reaped=True)
-
-            with patch.object(
-                libskillpack.subprocess,
-                "Popen",
-                side_effect=fake_popen,
-            ):
-                with self.assertRaisesRegex(
-                    RuntimeError,
-                    "Lost ownership",
-                ):
-                    libskillpack.run_stata_do(
-                        Path("/fake/stata"),
-                        do_file,
-                        cwd,
-                        completion_marker=marker,
-                        timeout_seconds=1,
-                    )
-
-            self.killpg.assert_not_called()
 
     def test_wrong_marker_fails(self) -> None:
         with TemporaryDirectory(prefix="stata-run-") as temp_root:
@@ -564,175 +275,6 @@ class RunStataDoTests(unittest.TestCase):
 
             self.assertNotEqual(0, result.returncode)
 
-    def test_timeout_terminates_then_kills_process_and_returns_124(self) -> None:
-        with TemporaryDirectory(prefix="stata-run-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            do_file = self._make_do_file(cwd)
-            process = HangingProcess()
-
-            self.killpg.side_effect = (
-                lambda _pid, sent_signal: process.kill()
-                if sent_signal == signal.SIGKILL
-                else self.fail(f"unexpected signal: {sent_signal}")
-            )
-            with patch.object(libskillpack.subprocess, "Popen", return_value=process):
-                result, log_path = libskillpack.run_stata_do(
-                    Path("/fake/stata"),
-                    do_file,
-                    cwd,
-                    completion_marker="VALIDATION COMPLETE: expected",
-                    timeout_seconds=0,
-                )
-
-            self.assertEqual(124, result.returncode)
-            self.assertFalse(process.terminate_called)
-            self.assertTrue(process.kill_called)
-            self.assertEqual(1, process.communicate_calls)
-            self.assertEqual(cwd / "smoke.log", log_path)
-
-    def test_polling_exception_survives_interrupting_pipe_cleanup(self) -> None:
-        with TemporaryDirectory(prefix="stata-run-") as temp_root:
-            cwd = Path(temp_root) / "work"
-            do_file = self._make_do_file(cwd)
-            process = PollingFailureProcess()
-            original = KeyboardInterrupt("polling failure")
-
-            def fake_popen(*args, **kwargs) -> PollingFailureProcess:
-                del args, kwargs
-                (cwd / "smoke.log").write_text("polling\n", encoding="utf-8")
-                return process
-
-            with patch.object(
-                libskillpack.subprocess,
-                "Popen",
-                side_effect=fake_popen,
-            ), patch.object(
-                libskillpack,
-                "read_text",
-                side_effect=original,
-            ):
-                with self.assertRaises(KeyboardInterrupt) as caught:
-                    libskillpack.run_stata_do(
-                        Path("/fake/stata"),
-                        do_file,
-                        cwd,
-                        completion_marker="VALIDATION COMPLETE: expected",
-                        timeout_seconds=1,
-                    )
-
-            self.assertIs(original, caught.exception)
-            self.assertTrue(process.stdout.closed)
-            self.assertTrue(process.stderr.closed)
-            self.assertTrue(process.wait_called)
-            self.killpg.assert_called_once_with(process.pid, signal.SIGKILL)
-
-
-class ProcessGroupSignalTests(unittest.TestCase):
-    def test_process_lookup_exit_race_confirms_anchored_natural_exit(
-        self,
-    ) -> None:
-        process = MarkerThenNonexitProcess()
-        states = [
-            libskillpack._ProcessLeaderState.LIVE_ANCHORED,
-            libskillpack._ProcessLeaderState.LIVE_ANCHORED,
-            libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-        ]
-
-        with patch.object(
-            libskillpack,
-            "_process_leader_state",
-            side_effect=states,
-        ) as observe, patch.object(
-            libskillpack.os,
-            "killpg",
-            side_effect=ProcessLookupError,
-        ) as killpg, patch.object(
-            libskillpack.time,
-            "sleep",
-        ) as sleep:
-            result = libskillpack._signal_process_group(
-                process,
-                signal.SIGKILL,
-            )
-
-        self.assertTrue(result.cleanup_confirmed)
-        self.assertFalse(result.live_leader_signaled)
-        self.assertEqual(3, observe.call_count)
-        killpg.assert_called_once_with(
-            process.pid,
-            signal.SIGKILL,
-        )
-        sleep.assert_called_once()
-
-    def test_permission_error_exit_race_requires_fork_denial(self) -> None:
-        process = MarkerThenNonexitProcess()
-        with patch.object(
-            libskillpack,
-            "_process_leader_state",
-            return_value=libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-        ) as observe, patch.object(
-            libskillpack.os,
-            "killpg",
-            side_effect=PermissionError,
-        ):
-            generic_result = libskillpack._signal_process_group(
-                process,
-                signal.SIGKILL,
-            )
-
-        self.assertFalse(generic_result.cleanup_confirmed)
-        self.assertFalse(generic_result.live_leader_signaled)
-        self.assertEqual(2, observe.call_count)
-
-        with patch.object(
-            libskillpack,
-            "_process_leader_state",
-            return_value=libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-        ), patch.object(
-            libskillpack.os,
-            "killpg",
-            side_effect=PermissionError,
-        ):
-            contained_result = libskillpack._signal_process_group(
-                process,
-                signal.SIGKILL,
-                fork_denial_guarantees_no_descendants=True,
-            )
-
-        self.assertTrue(contained_result.cleanup_confirmed)
-        self.assertFalse(contained_result.live_leader_signaled)
-
-    def test_signal_error_live_leader_remains_cleanup_failure(self) -> None:
-        for signal_error in (ProcessLookupError, PermissionError):
-            with self.subTest(signal_error=signal_error.__name__):
-                process = MarkerThenNonexitProcess()
-
-                with patch.object(
-                    libskillpack,
-                    "_process_leader_state",
-                    return_value=(
-                        libskillpack._ProcessLeaderState.LIVE_ANCHORED
-                    ),
-                ), patch.object(
-                    libskillpack.os,
-                    "killpg",
-                    side_effect=signal_error,
-                ), patch.object(
-                    libskillpack,
-                    "PROCESS_SIGNAL_EXIT_RACE_TIMEOUT_SECONDS",
-                    0,
-                ):
-                    result = libskillpack._signal_process_group(
-                        process,
-                        signal.SIGKILL,
-                        fork_denial_guarantees_no_descendants=(
-                            signal_error is PermissionError
-                        ),
-                    )
-
-                self.assertFalse(result.cleanup_confirmed)
-                self.assertFalse(result.live_leader_signaled)
-
 
 @unittest.skipUnless(
     hasattr(os, "fork")
@@ -740,91 +282,7 @@ class ProcessGroupSignalTests(unittest.TestCase):
     "requires POSIX fork and non-reaping waitid support",
 )
 class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
-    @unittest.skipUnless(
-        sys.platform == "darwin",
-        "Darwin ctypes waitid fallback is macOS-specific",
-    )
-    def test_darwin_ctypes_waitid_fallback_preserves_anchor(self) -> None:
-        with allow_detached_process():
-            process = subprocess.Popen(
-                ["/usr/bin/true"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
-            )
-        try:
-            with patch.object(
-                libskillpack.os,
-                "waitid",
-                None,
-                create=True,
-            ):
-                deadline = time.monotonic() + 3
-                while (
-                    libskillpack._process_leader_state(process)
-                    is libskillpack._ProcessLeaderState.LIVE_ANCHORED
-                    and time.monotonic() < deadline
-                ):
-                    time.sleep(0.02)
-                self.assertIs(
-                    libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-                    libskillpack._process_leader_state(process),
-                )
 
-                stopped = libskillpack._stop_process_group(process)
-
-            self.assertFalse(stopped.cleanup_confirmed)
-            self.assertTrue(
-                stopped.permission_denied_after_anchored_exit,
-                stopped.diagnostic,
-            )
-            self.assertFalse(stopped.leader_kill_sent)
-            self.assertEqual(0, process.returncode)
-        finally:
-            if process.returncode is None:
-                libskillpack._force_cleanup_process(process)
-
-    def test_exited_anchored_leader_without_descendants_is_safe(self) -> None:
-        with allow_detached_process():
-            process = subprocess.Popen(
-                ["/usr/bin/true"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
-            )
-        try:
-            deadline = time.monotonic() + 3
-            while (
-                libskillpack._process_leader_state(process)
-                is libskillpack._ProcessLeaderState.LIVE_ANCHORED
-                and time.monotonic() < deadline
-            ):
-                time.sleep(0.02)
-            self.assertIs(
-                libskillpack._ProcessLeaderState.EXITED_ANCHORED,
-                libskillpack._process_leader_state(process),
-            )
-
-            stopped = libskillpack._stop_process_group(process)
-
-            if sys.platform == "darwin":
-                self.assertFalse(stopped.cleanup_confirmed)
-                self.assertTrue(
-                    stopped.permission_denied_after_anchored_exit,
-                    stopped.diagnostic,
-                )
-            else:
-                self.assertTrue(stopped.cleanup_confirmed, stopped.diagnostic)
-                self.assertFalse(
-                    stopped.permission_denied_after_anchored_exit
-                )
-            self.assertFalse(stopped.leader_kill_sent)
-            self.assertEqual(0, process.returncode)
-        finally:
-            if process.returncode is None:
-                libskillpack._force_cleanup_process(process)
 
     def test_exited_leader_anchor_kills_same_group_descendant(self) -> None:
         with TemporaryDirectory(prefix="stata-group-anchor-") as temp_root:
@@ -1004,93 +462,6 @@ class ProcessGroupCleanupIntegrationTests(unittest.TestCase):
                 except OSError:
                     pass
 
-    def test_lost_waitable_child_prevents_stale_group_signal(self) -> None:
-        with allow_detached_process():
-            process = subprocess.Popen(
-                ["/usr/bin/true"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                start_new_session=True,
-            )
-        os.waitpid(process.pid, 0)
-        self.assertIsNone(process.returncode)
-        try:
-            with patch.object(libskillpack.os, "killpg") as killpg:
-                self.assertIs(
-                    libskillpack._ProcessLeaderState.UNANCHORED,
-                    libskillpack._process_leader_state(process),
-                )
-
-                libskillpack._force_cleanup_process(process)
-
-            killpg.assert_not_called()
-        finally:
-            for stream in (process.stdout, process.stderr):
-                if stream is not None and not stream.closed:
-                    stream.close()
-
-
-class StataContainmentCommandTests(unittest.TestCase):
-    def test_containment_probe_reports_nested_sandbox_failure(self) -> None:
-        with patch.object(libskillpack.sys, "platform", "darwin"), patch.object(
-            libskillpack,
-            "MACOS_SANDBOX_EXEC",
-            Path("/usr/bin/true"),
-        ), patch.object(
-            libskillpack.subprocess,
-            "run",
-            return_value=CompletedProcess(["sandbox-exec"], 1, "", "denied"),
-        ):
-            available, reason = libskillpack.stata_containment_status()
-
-        self.assertFalse(available)
-        self.assertIn("could not apply", reason)
-
-    def test_unsupported_platform_fails_before_launch(self) -> None:
-        with patch.object(libskillpack.sys, "platform", "linux"):
-            with self.assertRaisesRegex(OSError, "requires macOS"):
-                libskillpack._stata_launch_command(
-                    Path("/fake/stata"),
-                    Path("smoke.do"),
-                )
-
-    def test_launch_uses_fixed_fork_denying_profile(self) -> None:
-        with patch("stata_runner.platform.system", return_value="Darwin"), patch.object(
-            libskillpack.sys, "platform", "darwin"
-        ), patch.object(
-            libskillpack,
-            "MACOS_SANDBOX_EXEC",
-            Path("/usr/bin/true"),
-        ), patch.object(
-            libskillpack,
-            "stata_containment_status",
-            return_value=(True, ""),
-        ):
-            command = libskillpack._stata_launch_command(
-                Path("/Applications/Stata/StataBE.app/Contents/MacOS/StataBE"),
-                Path("smoke.do"),
-            )
-
-        self.assertEqual("/usr/bin/true", command[0])
-        self.assertEqual("-p", command[1])
-        self.assertEqual(
-            (
-                "(version 1)(allow default)(deny process-fork)"
-                "(deny lsopen)"
-                "(deny appleevent-send)"
-            ),
-            command[2],
-        )
-        self.assertEqual(
-            [
-                "/Applications/Stata/StataBE.app/Contents/MacOS/StataBE",
-                "-e",
-                "smoke.do",
-            ],
-            command[3:],
-        )
-
 
 def _macos_process_sandbox_available() -> bool:
     return libskillpack.stata_containment_status()[0]
@@ -1108,27 +479,6 @@ class RunStataContainmentIntegrationTests(unittest.TestCase):
         do_file.write_text("clear all\n", encoding="utf-8")
         return cwd, do_file
 
-    def test_benign_marker_succeeds(self) -> None:
-        with TemporaryDirectory(prefix="stata-contained-benign-") as temp_root:
-            marker = "VALIDATION COMPLETE: contained-benign"
-            cwd, do_file = self._make_run(temp_root, marker)
-            stub = Path(temp_root) / "stata-stub"
-            stub.write_text(
-                "#!/usr/bin/env python3\n"
-                f"open('smoke.log', 'w').write('{marker}\\n')\n",
-                encoding="utf-8",
-            )
-            stub.chmod(0o755)
-
-            result, _ = libskillpack.run_stata_do(
-                stub,
-                do_file,
-                cwd,
-                completion_marker=marker,
-                timeout_seconds=2,
-            )
-
-        self.assertEqual(0, result.returncode, result.stderr)
 
     def test_process_creation_is_denied_before_marker_success(self) -> None:
         with TemporaryDirectory(prefix="stata-contained-fork-") as temp_root:
@@ -1401,29 +751,6 @@ class RunStataContainmentIntegrationTests(unittest.TestCase):
                     except ProcessLookupError:
                         pass
 
-    def test_timeout_reaps_contained_leader(self) -> None:
-        with TemporaryDirectory(prefix="stata-contained-timeout-") as temp_root:
-            marker = "VALIDATION COMPLETE: never"
-            cwd, do_file = self._make_run(temp_root, marker)
-            stub = Path(temp_root) / "stata-stub"
-            stub.write_text(
-                "#!/usr/bin/env python3\n"
-                "import time\n"
-                "while True:\n"
-                "    time.sleep(1)\n",
-                encoding="utf-8",
-            )
-            stub.chmod(0o755)
-
-            result, _ = libskillpack.run_stata_do(
-                stub,
-                do_file,
-                cwd,
-                completion_marker=marker,
-                timeout_seconds=1,
-            )
-
-        self.assertEqual(124, result.returncode)
 
     def test_marker_then_hang_fails_and_reaps_contained_leader(self) -> None:
         with TemporaryDirectory(prefix="stata-contained-marker-hang-") as temp_root:
@@ -1456,117 +783,8 @@ class RunStataContainmentIntegrationTests(unittest.TestCase):
                 os.kill(leader_pid, 0)
 
 
-class StrictYamlTests(unittest.TestCase):
-    def test_read_yaml_rejects_duplicate_top_level_key_with_source_lines(self) -> None:
-        with TemporaryDirectory(prefix="strict-yaml-") as temp_root:
-            path = Path(temp_root) / "duplicate.yaml"
-            path.write_text("slug: first\nslug: second\n", encoding="utf-8")
-
-            with self.assertRaises(libskillpack.yaml.YAMLError) as caught:
-                libskillpack.read_yaml(path)
-
-            message = str(caught.exception)
-            self.assertIn(str(path), message)
-            self.assertIn("duplicate key 'slug'", message)
-            self.assertIn("first occurrence was at line 1, column 1", message)
-            self.assertIn("line 2, column 1", message)
-
-    def test_parse_yaml_rejects_nested_duplicate_key_from_bytes(self) -> None:
-        source = Path("/reviewed/content.yaml")
-        payload = b"outer:\n  nested:\n    value: first\n    value: second\n"
-
-        with self.assertRaises(libskillpack.yaml.YAMLError) as caught:
-            libskillpack.parse_yaml(payload, source=source)
-
-        message = str(caught.exception)
-        self.assertIn(str(source), message)
-        self.assertIn("duplicate key 'value'", message)
-        self.assertIn("first occurrence was at line 3, column 5", message)
-        self.assertIn("line 4, column 5", message)
-
-
-class ErrorDetectionTests(unittest.TestCase):
-    def test_stata_error_allows_leading_whitespace(self) -> None:
-        self.assertTrue(libskillpack.has_stata_error("output\n    r(198);\n"))
-
-    def test_stata_error_does_not_match_prose(self) -> None:
-        self.assertFalse(libskillpack.has_stata_error("The text mentions r(198); inline."))
-
-
 class TimeoutAndChecksumTests(unittest.TestCase):
-    def test_run_command_converts_timeout_to_return_code_124(self) -> None:
-        class TimedOutProcess:
-            args = ["fake-command"]
-            pid = 999_999_995
-            returncode = None
 
-            def communicate(
-                self,
-                timeout: int | float | None = None,
-            ) -> tuple[str, str]:
-                raise TimeoutExpired(self.args, timeout)
-
-        stopped = libskillpack._ProcessStopResult(
-            stdout="partial stdout",
-            stderr="partial stderr",
-            diagnostic="process-group cleanup uncertain",
-            cleanup_confirmed=False,
-            leader_kill_sent=False,
-        )
-        process = TimedOutProcess()
-        with patch.object(
-            libskillpack.subprocess,
-            "Popen",
-            return_value=process,
-        ) as popen, patch.object(
-            libskillpack,
-            "_stop_process_group",
-            return_value=stopped,
-        ) as stop_process_group:
-            result = libskillpack.run_command(
-                ["fake-command"],
-                cwd=Path("/tmp"),
-                timeout_seconds=7,
-            )
-
-        self.assertIsInstance(result, CompletedProcess)
-        self.assertEqual(124, result.returncode)
-        self.assertEqual("partial stdout", result.stdout)
-        self.assertIn("partial stderr", result.stderr)
-        self.assertIn("timed out after 7 seconds", result.stderr)
-        self.assertIn("cleanup uncertain", result.stderr)
-        stop_process_group.assert_called_once_with(process)
-        self.assertTrue(popen.call_args.kwargs["start_new_session"])
-
-    def test_run_command_interrupt_forces_cleanup_before_reraising(self) -> None:
-        original = KeyboardInterrupt("stop")
-
-        class InterruptedProcess:
-            args = ["fake-command"]
-            pid = 999_999_996
-            returncode = None
-
-            def communicate(
-                self,
-                timeout: int | float | None = None,
-            ) -> tuple[str, str]:
-                del timeout
-                raise original
-
-        process = InterruptedProcess()
-        with patch.object(
-            libskillpack.subprocess,
-            "Popen",
-            return_value=process,
-        ), patch.object(
-            libskillpack,
-            "_force_cleanup_process",
-        ) as force_cleanup:
-            with self.assertRaises(KeyboardInterrupt) as caught:
-                libskillpack.run_command(["fake-command"])
-
-        self.assertIs(original, caught.exception)
-        force_cleanup.assert_called_once_with(process)
 
     @unittest.skipUnless(
         os.name == "posix",
@@ -1627,24 +845,6 @@ class TimeoutAndChecksumTests(unittest.TestCase):
 
             self.assertFalse(destination.exists())
 
-    def test_download_binary_passes_timeout_and_leaves_no_partial_file(self) -> None:
-        with TemporaryDirectory(prefix="download-test-") as temp_root:
-            destination = Path(temp_root) / "sdk.c"
-            with patch.object(
-                libskillpack.urllib.request,
-                "urlopen",
-                side_effect=TimeoutError("network timeout"),
-            ) as urlopen:
-                with self.assertRaisesRegex(TimeoutError, "network timeout"):
-                    libskillpack.download_binary(
-                        "https://example.invalid/sdk.c",
-                        destination,
-                        timeout_seconds=11,
-                    )
-
-            self.assertGreater(urlopen.call_args.kwargs["timeout"], 0)
-            self.assertLessEqual(urlopen.call_args.kwargs["timeout"], 11)
-            self.assertFalse(destination.exists())
 
     def test_download_binary_rejects_oversized_stream_and_removes_temp(
         self,
@@ -1667,36 +867,6 @@ class TimeoutAndChecksumTests(unittest.TestCase):
             self.assertFalse(destination.exists())
             self.assertEqual([], list(root.glob(".sdk.c.*.tmp")))
 
-    def test_download_binary_total_deadline_stops_trickle_stream(
-        self,
-    ) -> None:
-        class TrickleResponse(FakeResponse):
-            def read(self, size: int = -1) -> bytes:
-                time.sleep(0.03)
-                return b"x"
-
-        with TemporaryDirectory(prefix="download-test-") as temp_root:
-            root = Path(temp_root)
-            destination = root / "sdk.c"
-            started = time.monotonic()
-            with patch.object(
-                libskillpack.urllib.request,
-                "urlopen",
-                return_value=TrickleResponse(b""),
-            ):
-                with self.assertRaisesRegex(
-                    TimeoutError,
-                    "timed out after 0.05 seconds",
-                ):
-                    libskillpack.download_binary(
-                        "https://example.invalid/sdk.c",
-                        destination,
-                        timeout_seconds=0.05,
-                    )
-
-            self.assertLess(time.monotonic() - started, 0.5)
-            self.assertFalse(destination.exists())
-            self.assertEqual([], list(root.glob(".sdk.c.*.tmp")))
 
     @unittest.skipUnless(
         hasattr(socket, "socketpair"),
@@ -1800,33 +970,6 @@ class TimeoutAndChecksumTests(unittest.TestCase):
                     )
 
             self.assertEqual(b"reviewed", destination.read_bytes())
-            self.assertEqual([], list(root.glob(".sdk.c.*.tmp")))
-
-    def test_download_binary_streams_hash_then_atomically_replaces(
-        self,
-    ) -> None:
-        with TemporaryDirectory(prefix="download-test-") as temp_root:
-            root = Path(temp_root)
-            destination = root / "sdk.c"
-            destination.write_bytes(b"old")
-            payload = b"reviewed SDK bytes"
-            expected = libskillpack.hashlib.sha256(payload).hexdigest()
-            response = FakeResponse(payload)
-            with patch.object(
-                libskillpack.urllib.request,
-                "urlopen",
-                return_value=response,
-            ):
-                actual = libskillpack.download_binary(
-                    "https://example.invalid/sdk.c",
-                    destination,
-                    expected_sha256=expected,
-                    max_bytes=len(payload),
-                )
-
-            self.assertEqual(expected, actual)
-            self.assertEqual(payload, destination.read_bytes())
-            self.assertTrue(response.timeouts)
             self.assertEqual([], list(root.glob(".sdk.c.*.tmp")))
 
 

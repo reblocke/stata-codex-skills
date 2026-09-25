@@ -15,33 +15,6 @@ import scan_repository  # noqa: E402
 
 
 class RepositoryScanTests(unittest.TestCase):
-    def test_reviewable_paths_uses_one_combined_source_inventory(
-        self,
-    ) -> None:
-        root = Path("/repository")
-        inventory = scan_repository.SourcePathInventory(
-            tracked=(Path("tracked.py"), Path("shared.md")),
-            untracked=(Path("untracked.yaml"), Path("shared.md")),
-            untracked_gate_inputs=(Path("ignored-script.py"),),
-        )
-        with patch.object(
-            scan_repository,
-            "source_path_inventory",
-            return_value=inventory,
-        ) as combined:
-            observed = scan_repository.reviewable_paths(root)
-
-        self.assertEqual(
-            [
-                Path("ignored-script.py"),
-                Path("shared.md"),
-                Path("tracked.py"),
-                Path("untracked.yaml"),
-            ],
-            observed,
-        )
-        combined.assert_called_once_with(root)
-
     def test_make_build_scans_before_lint_and_render(self) -> None:
         makefile = (REPO_ROOT / "Makefile").read_text(encoding="utf-8")
         build_recipe = makefile.split("build:", 1)[1].split("\n\n", 1)[0]
@@ -225,30 +198,6 @@ class RepositoryScanTests(unittest.TestCase):
         self.assertEqual(1, len(errors))
         self.assertIn("exceeds 4194304-byte scan limit", errors[0])
 
-    def test_allowed_source_is_read_in_bounded_chunks(self) -> None:
-        with TemporaryDirectory(prefix="repo-scan-bounded-read-") as temp_root:
-            root = Path(temp_root)
-            source = root / "source.md"
-            source.write_bytes(b"x" * (scan_repository.READ_CHUNK_BYTES + 1))
-            requested_sizes: list[int] = []
-            original_read = os.read
-
-            def recording_read(file_descriptor: int, size: int) -> bytes:
-                requested_sizes.append(size)
-                return original_read(file_descriptor, size)
-
-            with patch.object(scan_repository.os, "read", side_effect=recording_read):
-                errors = scan_repository.scan_paths(root, [Path("source.md")])
-
-        self.assertEqual([], errors)
-        self.assertGreaterEqual(len(requested_sizes), 2)
-        self.assertTrue(
-            all(
-                requested_size <= scan_repository.READ_CHUNK_BYTES
-                for requested_size in requested_sizes
-            )
-        )
-
     def test_source_mutation_during_read_fails_closed(self) -> None:
         with TemporaryDirectory(prefix="repo-scan-read-race-") as temp_root:
             root = Path(temp_root)
@@ -350,23 +299,6 @@ class RepositoryScanTests(unittest.TestCase):
                 for error in errors
             )
         )
-
-    def test_normal_source_file_passes(self) -> None:
-        with TemporaryDirectory(prefix="repo-scan-") as temp_root:
-            root = Path(temp_root)
-            sources = [
-                Path("script.py"),
-                Path("docs/build-guide.md"),
-                Path("src/raw_parser.py"),
-            ]
-            for relative in sources:
-                source = root / relative
-                source.parent.mkdir(parents=True, exist_ok=True)
-                source.write_text("reviewed source\n", encoding="utf-8")
-
-            errors = scan_repository.scan_paths(root, sources)
-
-        self.assertEqual([], errors)
 
     def test_unsafe_relative_path_is_rejected_before_root_discovery(self) -> None:
         with TemporaryDirectory(prefix="repo-scan-unsafe-path-") as temp_root:

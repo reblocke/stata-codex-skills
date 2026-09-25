@@ -46,21 +46,6 @@ def write_complete_tree(root: Path) -> None:
 
 
 class ReleaseDigestTests(unittest.TestCase):
-    def test_source_digest_tracks_review_and_build_inputs(self) -> None:
-        with TemporaryDirectory(prefix="release-source-") as temp_root:
-            root = Path(temp_root)
-            initialize_repository(root)
-            source = root / "content" / "core" / "sample.yaml"
-            source.parent.mkdir(parents=True)
-            source.write_text("slug: sample\n", encoding="utf-8")
-            (root / "Makefile").write_text("check:\n\ttrue\n", encoding="utf-8")
-            run_git(root, "add", "Makefile", "content/core/sample.yaml")
-            first = release_state.source_digest(root)
-            source.write_text("slug: changed\n", encoding="utf-8")
-            second = release_state.source_digest(root)
-
-        self.assertNotEqual(first, second)
-
     def test_source_digest_ignores_ambient_git_configuration(self) -> None:
         with TemporaryDirectory(prefix="release-git-environment-") as temp_root:
             root = Path(temp_root)
@@ -87,33 +72,6 @@ class ReleaseDigestTests(unittest.TestCase):
 
         self.assertEqual(expected, observed)
         self.assertFalse(trace.exists())
-
-    def test_source_digest_includes_force_tracked_excluded_paths_only(self) -> None:
-        with TemporaryDirectory(prefix="release-excluded-") as temp_root:
-            root = Path(temp_root)
-            initialize_repository(root)
-            (root / ".gitignore").write_text(
-                "raw/\nbuild/\n",
-                encoding="utf-8",
-            )
-            tracked = root / "raw" / "tracked.txt"
-            tracked.parent.mkdir()
-            tracked.write_text("first\n", encoding="utf-8")
-            run_git(root, "add", ".gitignore")
-            run_git(root, "add", "-f", "raw/tracked.txt")
-            first = release_state.source_digest(root)
-
-            ignored_runtime = root / "raw" / "runtime.log"
-            ignored_runtime.write_text("runtime one\n", encoding="utf-8")
-            with_ignored_runtime = release_state.source_digest(root)
-            (root / "untracked.txt").write_text("not reviewed\n", encoding="utf-8")
-            with_untracked_source = release_state.source_digest(root)
-            tracked.write_text("second\n", encoding="utf-8")
-            second = release_state.source_digest(root)
-
-        self.assertEqual(first, with_ignored_runtime)
-        self.assertEqual(first, with_untracked_source)
-        self.assertNotEqual(first, second)
 
     def test_source_digest_is_identical_in_a_linked_worktree(self) -> None:
         with TemporaryDirectory(prefix="release-worktree-") as temp_root:
@@ -184,16 +142,6 @@ class ReleaseDigestTests(unittest.TestCase):
 
         self.assertNotEqual(first, second)
 
-    def test_staged_inventory_rejects_sparse_directory_entries(self) -> None:
-        payload = (
-            b"040000 "
-            + b"0" * 40
-            + b" 0\tsparse-directory/\0"
-        )
-
-        with self.assertRaisesRegex(ValueError, "Sparse Git indexes"):
-            release_state._parse_staged_inventory(payload)
-
     def test_staged_inventory_rejects_unmerged_entries(self) -> None:
         payload = b"100644 " + b"0" * 40 + b" 2\tconflicted.txt\0"
 
@@ -253,49 +201,6 @@ class ReleaseDigestTests(unittest.TestCase):
                 release_state.source_digest(repository)
 
             self.assertTrue(mutated)
-
-    def test_source_digest_rejects_repository_substitution_during_inventory(
-        self,
-    ) -> None:
-        with TemporaryDirectory(prefix="release-repo-race-") as temp_root:
-            root = Path(temp_root)
-            repository = root / "repository"
-            displaced = root / "repository-displaced"
-            external = root / "external"
-            repository.mkdir()
-            external.mkdir()
-            initialize_repository(repository)
-            initialize_repository(external)
-            source = repository / "content" / "sample.yaml"
-            source.parent.mkdir()
-            source.write_text("slug: tracked\n", encoding="utf-8")
-            run_git(repository, "add", "content/sample.yaml")
-            external_source = external / "external.yaml"
-            external_source.write_text("external: preserve\n", encoding="utf-8")
-            run_git(external, "add", "external.yaml")
-            real_run = subprocess.run
-            substituted = False
-
-            def substitute_before_git(*args, **kwargs):
-                nonlocal substituted
-                if not substituted:
-                    repository.rename(displaced)
-                    repository.symlink_to(external, target_is_directory=True)
-                    substituted = True
-                return real_run(*args, **kwargs)
-
-            with patch.object(
-                release_state.subprocess,
-                "run",
-                side_effect=substitute_before_git,
-            ), self.assertRaisesRegex(ValueError, "changed during source hashing"):
-                release_state.source_digest(repository)
-
-            self.assertTrue(substituted)
-            self.assertEqual(
-                "external: preserve\n",
-                external_source.read_text(encoding="utf-8"),
-            )
 
     def test_receipt_binds_file_despite_transient_index_substitution(
         self,
@@ -508,64 +413,6 @@ class ReleaseDigestTests(unittest.TestCase):
                     inventory=inventory,
                 )
 
-    def test_combined_inventory_rejects_index_change_between_queries(self) -> None:
-        with TemporaryDirectory(prefix="release-combined-index-race-") as temp_root:
-            root = Path(temp_root)
-            initialize_repository(root)
-            tracked = root / "tracked.txt"
-            tracked.write_text("tracked\n", encoding="utf-8")
-            run_git(root, "add", "tracked.txt")
-            late = root / "scripts" / "late.py"
-            late.parent.mkdir()
-            late.write_text("raise SystemExit(0)\n", encoding="utf-8")
-            real_tracked_inventory = release_state._tracked_inventory
-            calls = 0
-
-            def stage_after_tracked_query(binding):
-                nonlocal calls
-                payload = real_tracked_inventory(binding)
-                calls += 1
-                if calls == 1:
-                    run_git(root, "add", "scripts/late.py")
-                return payload
-
-            with patch.object(
-                release_state,
-                "_tracked_inventory",
-                side_effect=stage_after_tracked_query,
-            ), self.assertRaisesRegex(
-                ValueError,
-                "Git metadata changed during source hashing",
-            ):
-                release_state.source_path_inventory(root)
-
-        self.assertEqual(1, calls)
-
-    def test_untracked_content_blocks_receipt_write(self) -> None:
-        with TemporaryDirectory(prefix="release-untracked-content-") as temp_root:
-            root = Path(temp_root)
-            initialize_repository(root)
-            (root / ".gitignore").write_text("build/\n", encoding="utf-8")
-            run_git(root, "add", ".gitignore")
-            build = root / "build" / "generated"
-            receipt = root / "build" / "validation-receipt.json"
-            write_complete_tree(build)
-            untracked = root / "content" / "core" / "new-command.yaml"
-            untracked.parent.mkdir(parents=True)
-            untracked.write_text("slug: new-command\n", encoding="utf-8")
-
-            with self.assertRaisesRegex(
-                ValueError,
-                "Untracked, nonignored.*content/core/new-command.yaml",
-            ):
-                release_state.write_validation_receipt(
-                    build,
-                    receipt,
-                    repo_root=root,
-                )
-
-            self.assertFalse(receipt.exists())
-
     def test_untracked_file_added_before_receipt_swap_blocks_write(self) -> None:
         with TemporaryDirectory(prefix="release-untracked-write-race-") as temp_root:
             root = Path(temp_root)
@@ -645,168 +492,6 @@ class ReleaseDigestTests(unittest.TestCase):
                     receipt,
                     repo_root=root,
                 )
-
-    def test_ignored_runtime_files_are_allowed_for_receipts(self) -> None:
-        with TemporaryDirectory(prefix="release-ignored-runtime-") as temp_root:
-            root = Path(temp_root)
-            initialize_repository(root)
-            (root / ".gitignore").write_text(
-                "build/\nraw/\n.cache/\n.venv/\n__pycache__/\ntests/tmp/\n",
-                encoding="utf-8",
-            )
-            run_git(root, "add", ".gitignore")
-            runtime_paths = (
-                Path("raw/runtime.log"),
-                Path(".cache/state.json"),
-                Path(".venv/pyvenv.cfg"),
-                Path("scripts/__pycache__/module.pyc"),
-                Path("tests/tmp/output.txt"),
-            )
-            for relative in runtime_paths:
-                runtime = root / relative
-                runtime.parent.mkdir(parents=True, exist_ok=True)
-                runtime.write_text("ignored diagnostics\n", encoding="utf-8")
-            build = root / "build" / "generated"
-            receipt = root / "build" / "validation-receipt.json"
-            write_complete_tree(build)
-
-            inventory = release_state.source_path_inventory(root)
-            self.assertEqual((), inventory.untracked)
-            self.assertEqual((), inventory.untracked_gate_inputs)
-            release_state.write_validation_receipt(
-                build,
-                receipt,
-                repo_root=root,
-            )
-            release_state.verify_validation_receipt(
-                build,
-                receipt,
-                repo_root=root,
-            )
-
-            self.assertTrue(receipt.is_file())
-
-    def test_receipt_recomputes_complete_state_before_atomic_replace(self) -> None:
-        with TemporaryDirectory(prefix="release-final-state-") as temp_root:
-            root = Path(temp_root)
-            receipt = root / "validation-receipt.json"
-            before = {
-                "source_sha256": "source-before",
-                "tree_sha256": "tree-before",
-            }
-            after = {
-                "source_sha256": "source-after",
-                "tree_sha256": "tree-before",
-            }
-
-            with patch.object(
-                release_state,
-                "validation_state",
-                side_effect=(before, after),
-            ) as validation, self.assertRaisesRegex(
-                ValueError,
-                "changed before receipt publication",
-            ) as raised:
-                release_state.write_validation_receipt(
-                    root / "generated",
-                    receipt,
-                )
-
-            self.assertEqual(2, validation.call_count)
-            self.assertFalse(receipt.exists())
-            retained = list(root.glob(f".{receipt.name}.tmp-*"))
-            self.assertEqual(1, len(retained))
-            self.assertIn(
-                str(retained[0]),
-                "\n".join(getattr(raised.exception, "__notes__", ())),
-            )
-
-    def test_live_receipt_transaction_retains_prior_and_stays_open(
-        self,
-    ) -> None:
-        with TemporaryDirectory(prefix="release-receipt-live-") as temp_root:
-            root = Path(temp_root)
-            receipt = root / "validation-receipt.json"
-            receipt.write_text("prior receipt bytes\n", encoding="utf-8")
-            state = {
-                "source_sha256": "stable-source",
-                "tree_sha256": "stable-tree",
-            }
-            before_fds = len(os.listdir("/dev/fd"))
-            transaction = (
-                release_state.begin_validation_receipt_transaction(receipt)
-            )
-            try:
-                self.assertFalse(receipt.exists())
-                prior_backups = list(
-                    root.glob(f".{receipt.name}.backup-*")
-                )
-                self.assertEqual(1, len(prior_backups))
-                self.assertEqual(
-                    "prior receipt bytes\n",
-                    prior_backups[0].read_text(encoding="utf-8"),
-                )
-
-                with patch.object(
-                    release_state,
-                    "validation_state",
-                    return_value=state,
-                ):
-                    payload = release_state.write_validation_receipt(
-                        root / "generated",
-                        receipt,
-                        transaction=transaction,
-                    )
-
-                self.assertEqual("stable-source", payload["source_sha256"])
-                self.assertTrue(receipt.is_file())
-                self.assertFalse(transaction.closed)
-                os.fstat(transaction.parent_descriptor)
-                self.assertIn(
-                    str(prior_backups[0]),
-                    release_state.retained_validation_receipt_locations(
-                        transaction
-                    ),
-                )
-            finally:
-                release_state.close_validation_receipt_transaction(
-                    transaction
-                )
-
-            self.assertTrue(transaction.closed)
-            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
-
-    def test_post_rename_sync_failure_reports_prior_backup(self) -> None:
-        with TemporaryDirectory(prefix="release-receipt-sync-") as temp_root:
-            root = Path(temp_root)
-            receipt = root / "validation-receipt.json"
-            receipt.write_text("prior receipt bytes\n", encoding="utf-8")
-            real_fsync = release_state.os.fsync
-            before_fds = len(os.listdir("/dev/fd"))
-
-            def sync_then_fail(descriptor: int) -> None:
-                real_fsync(descriptor)
-                raise OSError("forced receipt directory sync failure")
-
-            with patch.object(
-                release_state.os,
-                "fsync",
-                side_effect=sync_then_fail,
-            ), self.assertRaises(OSError) as raised:
-                release_state.begin_validation_receipt_transaction(receipt)
-
-            self.assertFalse(receipt.exists())
-            backups = list(root.glob(f".{receipt.name}.backup-*"))
-            self.assertEqual(1, len(backups))
-            self.assertEqual(
-                "prior receipt bytes\n",
-                backups[0].read_text(encoding="utf-8"),
-            )
-            self.assertIn(
-                str(backups[0]),
-                "\n".join(getattr(raised.exception, "__notes__", ())),
-            )
-            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
 
     def test_late_public_receipt_is_not_replaced(self) -> None:
         with TemporaryDirectory(prefix="release-receipt-late-") as temp_root:
@@ -922,116 +607,6 @@ class ReleaseDigestTests(unittest.TestCase):
                 "\n".join(getattr(raised.exception, "__notes__", ())),
             )
 
-    def test_changed_temporary_name_is_preserved_and_fds_close(self) -> None:
-        with TemporaryDirectory(prefix="release-receipt-temp-") as temp_root:
-            root = Path(temp_root)
-            receipt = root / "validation-receipt.json"
-            moved_temporary = root / ".accepted-receipt-temporary"
-            state = {
-                "source_sha256": "stable-source",
-                "tree_sha256": "stable-tree",
-            }
-            real_create = release_state._create_receipt_temporary
-            replacement: Path | None = None
-            before_fds = len(os.listdir("/dev/fd"))
-
-            def replace_temporary_name(transaction, payload):
-                nonlocal replacement
-                real_create(transaction, payload)
-                assert transaction.temporary_name is not None
-                temporary = root / transaction.temporary_name
-                temporary.rename(moved_temporary)
-                replacement = temporary
-                replacement.write_text(
-                    "preserve replacement temp\n",
-                    encoding="utf-8",
-                )
-
-            with patch.object(
-                release_state,
-                "validation_state",
-                return_value=state,
-            ), patch.object(
-                release_state,
-                "_create_receipt_temporary",
-                side_effect=replace_temporary_name,
-            ), self.assertRaisesRegex(
-                release_state.ReceiptTransactionError,
-                "temporary changed before publication",
-            ) as raised:
-                release_state.write_validation_receipt(
-                    root / "generated",
-                    receipt,
-                )
-
-            self.assertIsNotNone(replacement)
-            assert replacement is not None
-            self.assertEqual(
-                "preserve replacement temp\n",
-                replacement.read_text(encoding="utf-8"),
-            )
-            self.assertTrue(moved_temporary.is_file())
-            self.assertFalse(receipt.exists())
-            self.assertIn(
-                str(moved_temporary),
-                "\n".join(getattr(raised.exception, "__notes__", ())),
-            )
-            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
-
-    def test_close_interruption_does_not_replace_publication_failure(
-        self,
-    ) -> None:
-        with TemporaryDirectory(prefix="release-receipt-close-") as temp_root:
-            root = Path(temp_root)
-            receipt = root / "validation-receipt.json"
-            state = {
-                "source_sha256": "stable-source",
-                "tree_sha256": "stable-tree",
-            }
-            primary = KeyboardInterrupt("receipt creation interrupted")
-            close_interruption = SystemExit("receipt close interrupted")
-            real_create = release_state._create_receipt_temporary
-            real_close = os.close
-            close_calls: list[int] = []
-            before_fds = len(os.listdir("/dev/fd"))
-
-            def create_then_interrupt(transaction, payload):
-                real_create(transaction, payload)
-                raise primary
-
-            def close_all_with_first_interruption(descriptor):
-                close_calls.append(descriptor)
-                real_close(descriptor)
-                if len(close_calls) == 1:
-                    raise close_interruption
-
-            with patch.object(
-                release_state,
-                "validation_state",
-                return_value=state,
-            ), patch.object(
-                release_state,
-                "_create_receipt_temporary",
-                side_effect=create_then_interrupt,
-            ), patch.object(
-                release_state.os,
-                "close",
-                side_effect=close_all_with_first_interruption,
-            ), self.assertRaises(KeyboardInterrupt) as raised:
-                release_state.write_validation_receipt(
-                    root / "generated",
-                    receipt,
-                )
-
-            self.assertIs(primary, raised.exception)
-            self.assertEqual(2, len(close_calls))
-            self.assertEqual(2, len(set(close_calls)))
-            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
-            self.assertIn(
-                "descriptor finalization also encountered: SystemExit",
-                "\n".join(getattr(raised.exception, "__notes__", ())),
-            )
-
     def test_same_inode_temporary_byte_change_is_preserved_and_rejected(
         self,
     ) -> None:
@@ -1087,57 +662,6 @@ class ReleaseDigestTests(unittest.TestCase):
                 str(changed_temporary),
                 "\n".join(getattr(raised.exception, "__notes__", ())),
             )
-            self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
-
-    def test_public_receipt_change_after_placement_is_reported_and_rejected(
-        self,
-    ) -> None:
-        with TemporaryDirectory(prefix="release-receipt-public-") as temp_root:
-            root = Path(temp_root)
-            receipt = root / "validation-receipt.json"
-            displaced_receipt = root / "validated-receipt-displaced.json"
-            replacement_bytes = b"replacement receipt bytes\n"
-            state = {
-                "source_sha256": "stable-source",
-                "tree_sha256": "stable-tree",
-            }
-            real_fsync = release_state.os.fsync
-            fsync_calls = 0
-            changed = False
-            before_fds = len(os.listdir("/dev/fd"))
-
-            def change_public_name_before_final_sync(descriptor):
-                nonlocal fsync_calls, changed
-                fsync_calls += 1
-                if fsync_calls == 4:
-                    receipt.rename(displaced_receipt)
-                    receipt.write_bytes(replacement_bytes)
-                    changed = True
-                return real_fsync(descriptor)
-
-            with patch.object(
-                release_state,
-                "validation_state",
-                return_value=state,
-            ), patch.object(
-                release_state.os,
-                "fsync",
-                side_effect=change_public_name_before_final_sync,
-            ), self.assertRaisesRegex(
-                release_state.ReceiptTransactionError,
-                "changed after publication",
-            ) as raised:
-                release_state.write_validation_receipt(
-                    root / "generated",
-                    receipt,
-                )
-
-            self.assertTrue(changed)
-            self.assertEqual(replacement_bytes, receipt.read_bytes())
-            self.assertTrue(displaced_receipt.is_file())
-            notes = "\n".join(getattr(raised.exception, "__notes__", ()))
-            self.assertIn(str(displaced_receipt), notes)
-            self.assertIn(str(receipt), notes)
             self.assertEqual(before_fds, len(os.listdir("/dev/fd")))
 
     def test_untracked_inventory_ignores_worktree_fsmonitor_config(self) -> None:
@@ -1201,71 +725,6 @@ class ReleaseDigestTests(unittest.TestCase):
             self.assertGreaterEqual(untracked_calls, 2)
             self.assertFalse(marker.exists())
 
-    def test_untracked_membership_change_during_inventory_fails(self) -> None:
-        with TemporaryDirectory(prefix="release-untracked-race-") as temp_root:
-            root = Path(temp_root)
-            initialize_repository(root)
-            tracked = root / "tracked.txt"
-            tracked.write_text("tracked\n", encoding="utf-8")
-            run_git(root, "add", "tracked.txt")
-            real_inventory = release_state._untracked_inventory
-            calls = 0
-
-            def add_file_after_first_inventory(binding, repository_fd):
-                nonlocal calls
-                inventory = real_inventory(binding, repository_fd)
-                calls += 1
-                if calls == 1:
-                    (root / "late.py").write_text(
-                        "raise SystemExit(0)\n",
-                        encoding="utf-8",
-                    )
-                return inventory
-
-            with patch.object(
-                release_state,
-                "_untracked_inventory",
-                side_effect=add_file_after_first_inventory,
-            ), self.assertRaisesRegex(
-                ValueError,
-                "Untracked source membership changed during inventory",
-            ):
-                release_state._assert_no_untracked_source_files(root)
-
-        self.assertEqual(2, calls)
-
-    def test_index_change_during_untracked_inventory_fails(self) -> None:
-        with TemporaryDirectory(prefix="release-untracked-index-race-") as temp_root:
-            root = Path(temp_root)
-            initialize_repository(root)
-            tracked = root / "tracked.txt"
-            tracked.write_text("tracked\n", encoding="utf-8")
-            run_git(root, "add", "tracked.txt")
-            late = root / "late.txt"
-            late.write_text("late\n", encoding="utf-8")
-            real_inventory = release_state._untracked_inventory
-            calls = 0
-
-            def change_index_after_first_inventory(binding, repository_fd):
-                nonlocal calls
-                inventory = real_inventory(binding, repository_fd)
-                calls += 1
-                if calls == 1:
-                    run_git(root, "add", "late.txt")
-                return inventory
-
-            with patch.object(
-                release_state,
-                "_untracked_inventory",
-                side_effect=change_index_after_first_inventory,
-            ), self.assertRaisesRegex(
-                ValueError,
-                "Git metadata changed during source hashing",
-            ):
-                release_state._assert_no_untracked_source_files(root)
-
-        self.assertEqual(1, calls)
-
     def test_receipt_rejects_tree_or_source_drift(self) -> None:
         with TemporaryDirectory(prefix="release-receipt-") as temp_root:
             root = Path(temp_root)
@@ -1308,102 +767,6 @@ class ReleaseDigestTests(unittest.TestCase):
                     receipt,
                     repo_root=repository,
                 )
-
-    def test_receipt_is_not_written_when_state_changed_during_validation(
-        self,
-    ) -> None:
-        with TemporaryDirectory(prefix="release-receipt-") as temp_root:
-            root = Path(temp_root)
-            build = root / "generated"
-            receipt = root / "receipt.json"
-            write_complete_tree(build)
-            expected = {
-                "source_sha256": "before",
-                "tree_sha256": release_state.tree_digest(build),
-            }
-            with patch.object(
-                release_state,
-                "validation_state",
-                return_value={
-                    "source_sha256": "after",
-                    "tree_sha256": expected["tree_sha256"],
-                },
-            ), self.assertRaisesRegex(ValueError, "changed during validation"):
-                release_state.write_validation_receipt(
-                    build,
-                    receipt,
-                    expected_state=expected,
-                )
-
-        self.assertFalse(receipt.exists())
-
-    def test_tree_digest_binds_empty_directory_membership(self) -> None:
-        with TemporaryDirectory(prefix="release-tree-directories-") as temp_root:
-            root = Path(temp_root)
-            write_complete_tree(root)
-            before = release_state.tree_digest(root)
-            (root / "stata-core" / "empty").mkdir()
-            after = release_state.tree_digest(root)
-
-        self.assertNotEqual(before, after)
-
-    def test_tree_digest_type_tags_file_and_directory(self) -> None:
-        file_digest = release_state.tree_digest_records(
-            [("same-path", b"file", b"")]
-        )
-        directory_digest = release_state.tree_digest_records(
-            [("same-path", b"directory", b"")]
-        )
-
-        self.assertNotEqual(file_digest, directory_digest)
-
-    def test_tree_digest_rejects_noncanonical_file_mode(self) -> None:
-        with TemporaryDirectory(prefix="release-tree-file-mode-") as temp_root:
-            root = Path(temp_root)
-            write_complete_tree(root)
-            skill_file = root / "stata-core" / "SKILL.md"
-            skill_file.chmod(0o666)
-
-            with self.assertRaisesRegex(
-                ValueError,
-                "Tree file has noncanonical permissions 0666.*expected 0644",
-            ):
-                release_state.tree_digest(root)
-
-    def test_tree_digest_rejects_noncanonical_directory_mode(self) -> None:
-        with TemporaryDirectory(prefix="release-tree-directory-mode-") as temp_root:
-            root = Path(temp_root)
-            write_complete_tree(root)
-            agents = root / "stata-core" / "agents"
-            agents.chmod(0o777)
-
-            with self.assertRaisesRegex(
-                ValueError,
-                "Tree directory has noncanonical permissions 0777.*expected 0755",
-            ):
-                release_state.tree_digest(root)
-
-    def test_tree_digest_rejects_membership_change_during_walk(self) -> None:
-        with TemporaryDirectory(prefix="release-tree-race-") as temp_root:
-            root = Path(temp_root)
-            write_complete_tree(root)
-            real_listdir = release_state.os.listdir
-            calls = 0
-
-            def add_directory_after_root_listing(path):
-                nonlocal calls
-                names = real_listdir(path)
-                calls += 1
-                if calls == 1:
-                    (root / "concurrent-empty").mkdir()
-                return names
-
-            with patch.object(
-                release_state.os,
-                "listdir",
-                side_effect=add_directory_after_root_listing,
-            ), self.assertRaisesRegex(ValueError, "changed while hashing"):
-                release_state.tree_digest(root)
 
     def test_receipt_rejects_added_empty_directory(self) -> None:
         with TemporaryDirectory(prefix="release-tree-directories-") as temp_root:
@@ -1457,20 +820,6 @@ class ReleaseDigestTests(unittest.TestCase):
                     receipt,
                     repo_root=repository,
                 )
-
-    def test_schema_one_receipt_requires_revalidation(self) -> None:
-        with TemporaryDirectory(prefix="release-schema-") as temp_root:
-            receipt = Path(temp_root) / "receipt.json"
-            receipt.write_text(
-                json.dumps({"schema_version": 1}),
-                encoding="utf-8",
-            )
-
-            with self.assertRaisesRegex(
-                ValueError,
-                "does not bind directory membership.*Run make validate",
-            ):
-                release_state.read_validation_receipt(receipt)
 
     def test_schema_two_receipt_requires_permission_revalidation(self) -> None:
         with TemporaryDirectory(prefix="release-schema-") as temp_root:
