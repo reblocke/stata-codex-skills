@@ -99,6 +99,9 @@ class PublishedLoopTests(unittest.TestCase):
                         self.assertEqual(example["code"], code)
 
     def test_restoring_inline_loop_is_detected(self) -> None:
+        path = REPO_ROOT / "content/core/programming-basics.yaml"
+        entry = yaml.safe_load(path.read_text())
+        skill = load_skill_config()["skills"]["core"]
         for line in (
             "foreach x in 1 2 { display `x' }",
             "forvalues x = 1/2 { display `x' }",
@@ -106,6 +109,10 @@ class PublishedLoopTests(unittest.TestCase):
             self.assertIsNotNone(
                 lint_skill_pack.INLINE_STATA_LOOP_RE.search(line)
             )
+            mutated = deepcopy(entry)
+            mutated["examples"][0]["code"] = line
+            errors = lint_skill_pack.lint_entry("core", path, mutated, skill)
+            self.assertTrue(any("inline foreach/forvalues" in error for error in errors))
 
     def test_example_schema_rejects_duplicate_unresolved_and_conflicting_authority(self) -> None:
         path = REPO_ROOT / "content/core/programming-basics.yaml"

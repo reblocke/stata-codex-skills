@@ -4022,8 +4022,11 @@ def lint_entry(
                     errors.append(f"{label} has an invalid language")
                 if example.get("kind") not in EXAMPLE_KINDS:
                     errors.append(f"{label} has an invalid kind")
-                if not is_nonempty_string(example.get("code")):
+                code = example.get("code")
+                if not is_nonempty_string(code):
                     errors.append(f"{label} requires a canonical code body")
+                elif example.get("language") == "stata" and INLINE_STATA_LOOP_RE.search(code):
+                    errors.append(f"{label} has an inline foreach/forvalues body")
                 prerequisites = example.get("prerequisites")
                 if not isinstance(prerequisites, list) or any(
                     not is_nonempty_string(item) for item in prerequisites
