@@ -44,6 +44,12 @@ skills:
       - stata
     rules:
       - Follow existing code and explicit tool choices; prefer built-in commands when they meet an otherwise unspecified need.
+      - >-
+        For clean-session reruns or behavior-preserving refactors, open
+        [workflow best practices](references/workflow-best-practices.md). For
+        leading-zero or long string identifiers, open [variables and
+        operators](references/variables-operators.md) before join code; for
+        named multi-model results, open [advanced programming](references/advanced-programming.md).
       - For terminal or scheduled runs, follow [unattended execution](references/unattended-execution.md) and verify natural exit plus fresh Stata return-code evidence.
       - Preserve raw data and write cleaned or derived outputs separately.
       - Validate merge results, missing-value handling, and stored results before chaining commands.

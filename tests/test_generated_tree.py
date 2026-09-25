@@ -130,6 +130,16 @@ class GeneratedTreeTests(unittest.TestCase):
                     self.assertIn(f"**{mode.replace('_', ' ')}**: {rule}", root)
             self.assertIn("do not install packages, execute data", root)
 
+    def test_core_root_has_direct_routes_for_cross_category_tasks(self) -> None:
+        root = (self.output_root / "stata-core/SKILL.md").read_text()
+        for route in (
+            "references/workflow-best-practices.md",
+            "references/variables-operators.md",
+            "references/advanced-programming.md",
+        ):
+            with self.subTest(route=route):
+                self.assertIn(f"]({route})", root)
+
     def test_library_is_quiet_and_cli_prints_one_summary(self) -> None:
         self.assertEqual("", self.library_output)
         self.assertEqual(self.output_root.resolve(), self.rendered_root)

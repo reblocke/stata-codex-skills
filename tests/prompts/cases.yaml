@@ -1122,3 +1122,30 @@ cases:
   expected_refs: [stata-core/references/bootstrap-simulation.md]
   forbidden_routes: [stata-packages/packages/xtabond2.md]
   boundary: true
+- id: shortcut-clean-session
+  action: route
+  prompt: >-
+    Check whether a seeded do-file produces the same values in two fresh Stata
+    sessions, retaining separate process status and result evidence.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/workflow-best-practices.md]
+  forbidden_routes: []
+  boundary: false
+- id: shortcut-string-id-join
+  action: route
+  prompt: >-
+    My source keys have leading zeros and 18 significant digits. Preserve
+    their original representation before writing the join.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/variables-operators.md]
+  forbidden_routes: []
+  boundary: false
+- id: shortcut-named-model-results
+  action: route
+  prompt: >-
+    Collect the same named coefficient and observation count from several
+    stored estimates without losing each model's identity.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/advanced-programming.md]
+  forbidden_routes: []
+  boundary: false
