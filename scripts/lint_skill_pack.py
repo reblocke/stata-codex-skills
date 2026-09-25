@@ -88,6 +88,12 @@ NONEMPTY_LIST_FIELDS = {
     "workflows",
 }
 VALIDATION_MODES = {"stata", "compilation", "manual-review"}
+EXAMPLE_KINDS = {"runnable", "fragment", "illustrative"}
+EXAMPLE_LANGUAGES = {"stata", "mata", "c", "cpp", "sh", "text"}
+EXAMPLE_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
+INLINE_STATA_LOOP_RE = re.compile(
+    r"(?m)^[ \t]*(?:foreach|forvalues)\b[^\r\n]*\{[ \t]*\S"
+)
 STYLE_WORD_RE = re.compile(r"[^\W\d_][\w+.-]*", re.UNICODE)
 DEFAULT_STYLE_ALLOWED_CAPITALIZED_WORDS = {
     "C",
@@ -3612,6 +3618,21 @@ def lint_config(
         errors.append(
             "config/skills.yaml: source_resolution must make provenance selectors authoritative"
         )
+    common_contract = config.get("common_contract")
+    if (
+        not isinstance(common_contract, list)
+        or not 2 <= len(common_contract) <= 5
+        or any(not is_nonempty_string(rule) for rule in common_contract)
+        or len(common_contract) != len(set(common_contract))
+    ):
+        errors.append("config/skills.yaml: common_contract must contain 2 to 5 distinct safeguards")
+    workflow_modes = config.get("workflow_modes")
+    if (
+        not isinstance(workflow_modes, dict)
+        or set(workflow_modes) != {"explain", "edit", "execute", "scientific_analysis"}
+        or any(not is_nonempty_string(value) for value in workflow_modes.values())
+    ):
+        errors.append("config/skills.yaml: workflow_modes must define four nonempty task modes")
     skills = config.get("skills")
     if not isinstance(skills, dict) or not skills:
         return [*errors, "config/skills.yaml: skills must be a nonempty mapping"]
@@ -3910,10 +3931,20 @@ def lint_entry(
         value = entry.get(field)
         if not isinstance(value, list) or any(not is_nonempty_string(item) for item in value):
             errors.append(f"{source_label}: {field} must be a string list")
-        elif field in NONEMPTY_LIST_FIELDS and not value:
+        elif field in NONEMPTY_LIST_FIELDS and not value and not (
+            field == "syntax_patterns" and entry.get("examples")
+        ):
             errors.append(f"{source_label}: {field} must not be empty")
         elif len(value) != len(set(value)):
             errors.append(f"{source_label}: {field} contains duplicates")
+    route_cues = entry.get("route_cues", [])
+    if (
+        not isinstance(route_cues, list)
+        or len(route_cues) > 4
+        or len(route_cues) != len(set(route_cues))
+        or any(cue not in entry.get("commands", []) for cue in route_cues)
+    ):
+        errors.append(f"{source_label}: route_cues must be up to four reviewed commands")
     routing_terms = entry.get("routing_terms", [])
     if isinstance(routing_terms, list):
         normalized_pairs = [
@@ -3958,8 +3989,168 @@ def lint_entry(
     smoke_test = entry.get("smoke_test")
     if smoke_test is not None and not is_nonempty_string(smoke_test):
         errors.append(f"{source_label}: smoke_test must be null or a nonempty string")
-    if mode == "stata" and not is_nonempty_string(smoke_test):
+    if mode == "stata" and not is_nonempty_string(smoke_test) and not entry.get("examples"):
         errors.append(f"{source_label}: stata validation requires smoke_test")
+    examples = entry.get("examples")
+    pattern_kinds = entry.get("pattern_kinds")
+    pattern_languages = entry.get("pattern_languages")
+    if examples is not None:
+        if pattern_kinds is not None or pattern_languages is not None:
+            errors.append(f"{source_label}: migrated examples cannot have legacy pattern labels")
+        if not isinstance(examples, list) or not examples:
+            errors.append(f"{source_label}: examples must be a nonempty list")
+        elif entry.get("syntax_patterns") or smoke_test:
+            errors.append(
+                f"{source_label}: examples conflict with legacy syntax_patterns or smoke_test"
+            )
+        else:
+            runnable_count = 0
+            local_example_ids: set[str] = set()
+            local_test_ids: set[str] = set()
+            for index, example in enumerate(examples, start=1):
+                label = f"{source_label}: example {index}"
+                if not isinstance(example, dict):
+                    errors.append(f"{label} must be a mapping")
+                    continue
+                if not EXAMPLE_ID_RE.fullmatch(str(example.get("id", ""))):
+                    errors.append(f"{label} has an invalid id")
+                elif example["id"] in local_example_ids:
+                    errors.append(f"{label} has a duplicate id")
+                else:
+                    local_example_ids.add(example["id"])
+                if example.get("language") not in EXAMPLE_LANGUAGES:
+                    errors.append(f"{label} has an invalid language")
+                if example.get("kind") not in EXAMPLE_KINDS:
+                    errors.append(f"{label} has an invalid kind")
+                code = example.get("code")
+                if not is_nonempty_string(code):
+                    errors.append(f"{label} requires a canonical code body")
+                elif example.get("language") == "stata" and INLINE_STATA_LOOP_RE.search(code):
+                    errors.append(f"{label} has an inline foreach/forvalues body")
+                prerequisites = example.get("prerequisites")
+                if not isinstance(prerequisites, list) or any(
+                    not is_nonempty_string(item) for item in prerequisites
+                ):
+                    errors.append(f"{label} prerequisites must be a string list")
+                minimum = example.get("min_version")
+                if not isinstance(minimum, int) or isinstance(minimum, bool) or minimum < 18:
+                    errors.append(f"{label} min_version must be an integer of at least 18")
+                if example.get("kind") == "runnable":
+                    runnable_count += 1
+                    if example.get("language") != "stata":
+                        errors.append(f"{label} runnable language requires a validator")
+                    if not EXAMPLE_ID_RE.fullmatch(str(example.get("test_id", ""))):
+                        errors.append(f"{label} requires a stable test_id")
+                    elif example["test_id"] in local_test_ids:
+                        errors.append(f"{label} has a duplicate test_id")
+                    else:
+                        local_test_ids.add(example["test_id"])
+                    if not isinstance(example.get("expected_rc"), int) or isinstance(
+                        example.get("expected_rc"), bool
+                    ) or example["expected_rc"] < 0:
+                        errors.append(f"{label} expected_rc must be a nonnegative integer")
+                    fixture = example.get("fixture")
+                    if fixture != f"tests/stata/examples/{example.get('test_id')}.yaml":
+                        errors.append(f"{label} fixture must match its test_id")
+                    else:
+                        fixture_path = REPO_ROOT / fixture
+                        if not fixture_path.is_file() or fixture_path.is_symlink():
+                            errors.append(f"{label} fixture is missing or not a regular file")
+                        else:
+                            try:
+                                payload = read_yaml(fixture_path)
+                            except Exception as error:
+                                errors.append(f"{label} fixture cannot be read: {error}")
+                                continue
+                            if not isinstance(payload, dict) or payload.get("schema_version") != 1 or payload.get("id") != example.get("test_id"):
+                                errors.append(f"{label} has an invalid fixture header")
+                            elif not is_nonempty_string(payload.get("setup")) or not is_nonempty_string(payload.get("assertions")):
+                                errors.append(f"{label} fixture needs setup and assertions")
+                            elif example["code"].strip() in (
+                                payload["setup"] + payload["assertions"]
+                            ):
+                                errors.append(f"{label} fixture duplicates the canonical code body")
+                elif any(example.get(field) is not None for field in ("test_id", "fixture", "expected_rc")):
+                    errors.append(f"{label} non-runnable block cannot claim execution")
+                if example.get("kind") == "fragment" and not prerequisites:
+                    errors.append(f"{label} fragment needs its required context")
+            if mode == "stata" and runnable_count == 0:
+                errors.append(f"{source_label}: stata examples require a runnable case")
+    else:
+        patterns = entry.get("syntax_patterns", [])
+        if not isinstance(pattern_kinds, list) or len(pattern_kinds) != len(patterns) or any(
+            kind not in {"fragment", "illustrative"} for kind in pattern_kinds
+        ):
+            errors.append(f"{source_label}: pattern_kinds must classify every legacy block")
+        if not isinstance(pattern_languages, list) or len(pattern_languages) != len(patterns) or any(
+            language not in EXAMPLE_LANGUAGES for language in pattern_languages
+        ):
+            errors.append(f"{source_label}: pattern_languages must label every legacy block")
+    recipes = entry.get("recipes")
+    if recipes is not None:
+        if skill_key != "packages" or not isinstance(recipes, list) or not recipes:
+            errors.append(f"{source_label}: recipes require a nonempty package list")
+        else:
+            observed_slugs: set[str] = set()
+            observed_examples: set[str] = set()
+            observed_installs: list[str] = []
+            known_examples = {
+                item.get("id") for item in examples or [] if isinstance(item, dict)
+            }
+            for index, recipe in enumerate(recipes, start=1):
+                label = f"{source_label}: recipe {index}"
+                if not isinstance(recipe, dict):
+                    errors.append(f"{label} must be a mapping")
+                    continue
+                slug = recipe.get("slug")
+                if not is_safe_slug(slug) or slug in observed_slugs:
+                    errors.append(f"{label} has an invalid or duplicate slug")
+                else:
+                    observed_slugs.add(slug)
+                if not is_nonempty_string(recipe.get("title")):
+                    errors.append(f"{label} requires a title")
+                for field in ("aliases", "example_ids", "preflight_commands", "install_commands", "dependencies"):
+                    values = recipe.get(field)
+                    if not isinstance(values, list) or not values or any(
+                        not is_nonempty_string(value) for value in values
+                    ) or len(values) != len(set(values)):
+                        errors.append(f"{label} {field} must be a nonempty unique string list")
+                for command in recipe.get("preflight_commands", []) if isinstance(recipe.get("preflight_commands"), list) else []:
+                    if not isinstance(command, str) or not READ_ONLY_PREFLIGHT_RE.match(uncaptured_command(command)):
+                        errors.append(f"{label} preflight must be read-only")
+                for example_id in recipe.get("example_ids", []) if isinstance(recipe.get("example_ids"), list) else []:
+                    if example_id not in known_examples or example_id in observed_examples:
+                        errors.append(f"{label} has unresolved or duplicate example {example_id!r}")
+                    observed_examples.add(example_id)
+                observed_installs.extend(
+                    recipe.get("install_commands", [])
+                    if isinstance(recipe.get("install_commands"), list) else []
+                )
+                if not is_nonempty_string(recipe.get("validation_note")):
+                    errors.append(f"{label} requires a validation note")
+            if observed_examples != known_examples:
+                errors.append(f"{source_label}: recipes must account for every example")
+            if sorted(observed_installs) != sorted(entry.get("install_commands", [])):
+                errors.append(f"{source_label}: recipe installs must match reviewed lock commands")
+            lock_path = PACKAGE_LOCK_ROOT / f"{entry.get('slug')}.yaml"
+            if lock_path.is_file():
+                lock_payload = read_yaml(lock_path)
+                descriptors = {
+                    Path(item.get("descriptor", "")).stem
+                    for item in lock_payload.get("distributions", [])
+                    if isinstance(item, dict)
+                }
+                if observed_slugs != descriptors:
+                    errors.append(f"{source_label}: recipes must match locked distributions")
+    clean_repetitions = entry.get("clean_repetitions", 1)
+    if clean_repetitions not in (1, 2) or isinstance(clean_repetitions, bool):
+        errors.append(f"{source_label}: clean_repetitions must be 1 or 2")
+    elif clean_repetitions == 2 and not entry.get("examples") and (
+        not isinstance(smoke_test, str) or 'display "CODEX_RESULT:' not in smoke_test
+    ):
+        errors.append(
+            f"{source_label}: repeated clean sessions require a CODEX_RESULT display"
+        )
     if mode == "manual-review" and smoke_test:
         errors.append(f"{source_label}: manual-review entries must not claim an executable smoke_test")
     if mode == "compilation":
@@ -3992,6 +4183,15 @@ def lint_entry(
                 errors.append(
                     f"{source_label}: {field} contains generic content {value!r}"
                 )
+    if skill_key == "core":
+        for field in ("syntax_patterns", "smoke_test"):
+            value = entry.get(field)
+            blocks = value if isinstance(value, list) else [value]
+            for block in blocks:
+                if isinstance(block, str) and INLINE_STATA_LOOP_RE.search(block):
+                    errors.append(
+                        f"{source_label}: {field} has an inline foreach/forvalues body"
+                    )
     validation_case = str(entry.get("validation_case", ""))
     if (
         any(
@@ -4747,6 +4947,8 @@ def lint_repo(check_generated: bool = True) -> list[str]:
     route_paths: set[str] = set()
     route_triggers: dict[str, str] = {}
     repeated_text: Counter[str] = Counter()
+    example_ids: dict[str, Path] = {}
+    test_ids: dict[str, Path] = {}
     for skill_key, path, entry in entries:
         skill = config["skills"][skill_key]
         errors.extend(
@@ -4760,6 +4962,19 @@ def lint_repo(check_generated: bool = True) -> list[str]:
         )
         if not isinstance(entry, dict):
             continue
+        for example in entry.get("examples", []) if isinstance(entry.get("examples"), list) else []:
+            if not isinstance(example, dict):
+                continue
+            for field, observed in (("id", example_ids), ("test_id", test_ids)):
+                value = example.get(field)
+                if not is_nonempty_string(value):
+                    continue
+                if value in observed:
+                    errors.append(
+                        f"{path}: duplicate example {field} {value!r} also used by {observed[value]}"
+                    )
+                else:
+                    observed[value] = path
         slug = entry.get("slug")
         if isinstance(slug, str):
             if slug in slugs:
@@ -4768,6 +4983,11 @@ def lint_repo(check_generated: bool = True) -> list[str]:
                 slugs[slug] = skill_key
             route_path = f"{skill['name']}/{skill['route_dir']}/{slug}.md"
             route_paths.add(route_path)
+            for recipe in entry.get("recipes", []) if isinstance(entry.get("recipes"), list) else []:
+                if isinstance(recipe, dict) and is_safe_slug(recipe.get("slug")):
+                    route_paths.add(
+                        f"{skill['name']}/{skill['route_dir']}/{slug}-{recipe['slug']}.md"
+                    )
             if (
                 is_nonempty_string(entry.get("trigger"))
                 and copy_text_within_limits(entry["trigger"])

@@ -66,3 +66,5 @@ provenance:
   - plugins/stata/skills/stata/packages/synth.md
   package_only: true
   upstream_only: false
+pattern_kinds: [fragment, fragment]
+pattern_languages: [stata, stata]

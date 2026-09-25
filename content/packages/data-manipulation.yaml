@@ -32,6 +32,7 @@ commands:
 - distinct
 - missings
 - carryforward
+route_cues: [gcollapse, rangestat, distinct, carryforward]
 source_topics:
 - gtools
 - rangestat
@@ -39,16 +40,7 @@ source_topics:
 - distinct
 - missings
 - carryforward
-syntax_patterns:
-- gcollapse (mean) mean_y=outcome (count) n=outcome, by(groupvars)
-- gegen group_mean = mean(outcome), by(groupvars)
-- greshape long stub, i(idvars) j(timevar)
-- rangestat (mean) moving_y=outcome, interval(timevar -3 0) by(panel_id)
-- gquantiles quartile = outcome, nquantiles(4)
-- egen n_categories = nvals(category), by(groupvars)
-- distinct keyvars, joint
-- missings report outcome covariates
-- 'bysort panel_id (timevar): carryforward status, replace'
+syntax_patterns: []
 assumptions:
 - Group keys, sort order, missing-value rules, weights, and expected row counts are defined before substituting a faster community command.
 - Any accelerated command is expected to reproduce the chosen built-in Stata operation on a small fixture before it is trusted on full data.
@@ -60,7 +52,7 @@ workflows:
 - Preflight only the packages needed for the task with `which` and `ado describe`; obtain authorization before installing them.
 - Reproduce the transformation with a small fixture or built-in analogue, assert keys and row counts, then run the accelerated command.
 - Preserve source data, document grouping and window boundaries, and compare summaries/checksums before and after optimization.
-validation_case: Run `gcollapse` on `auto.dta` by `foreign` status, verify two output rows and nonmissing group means, and require an error-free log.
+validation_case: Run `gcollapse` on synthetic grouped values, verify both exact means and counts, unique group keys, and an error-free log; other utilities are not covered by this smoke.
 validation_mode: stata
 related_refs:
 - data-management
@@ -76,12 +68,114 @@ install_commands:
 - ssc install distinct
 - ssc install missings
 - ssc install carryforward
-smoke_test: |
-  sysuse auto, clear
-  gcollapse (mean) mean_price=price mean_mpg=mpg (count) n=price, by(foreign)
-  isid foreign
-  assert _N == 2
-  assert !missing(mean_price, mean_mpg, n)
+smoke_test: null
+examples:
+- id: package-gcollapse-means
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [The reviewed `gtools` installation in an isolated PLUS directory and synthetic numeric `group` and `outcome` variables.]
+  code: gcollapse (mean) mean_y=outcome (count) n=outcome, by(group)
+  test_id: package-gcollapse-means
+  fixture: tests/stata/examples/package-gcollapse-means.yaml
+  expected_rc: 0
+- id: package-gegen-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Installed `gtools` and defined `outcome` and `groupvars` variables.]
+  code: gegen group_mean = mean(outcome), by(groupvars)
+- id: package-greshape-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Installed `gtools`, unique `idvars`, and consistently suffixed `stub` variables.]
+  code: greshape long stub, i(idvars) j(timevar)
+- id: package-gquantiles-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Installed `gtools`, numeric outcome values, and a declared quantile/missingness policy.]
+  code: gquantiles quartile = outcome, nquantiles(4)
+- id: package-rangestat-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Installed `rangestat`; defined outcome, time, panel, and inclusive window endpoints.]
+  code: rangestat (mean) moving_y=outcome, interval(timevar -3 0) by(panel_id)
+- id: package-egenmore-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Installed `egenmore` and defined category and grouping variables.]
+  code: egen n_categories = nvals(category), by(groupvars)
+- id: package-distinct-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Installed `distinct` and defined key variables.]
+  code: distinct keyvars, joint
+- id: package-missings-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Installed `missings` and defined outcome and covariate variables.]
+  code: missings report outcome covariates
+- id: package-carryforward-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Installed `carryforward`; declared panel/time order and an explicit last-observation-carried-forward policy.]
+  code: 'bysort panel_id (timevar): carryforward status, replace'
+recipes:
+- slug: gtools
+  title: Grouped operations with gtools
+  aliases: [gtools, gcollapse, gegen, greshape, gisid, gquantiles]
+  example_ids: [package-gcollapse-means, package-gegen-fragment, package-greshape-fragment, package-gquantiles-fragment]
+  preflight_commands: [which gcollapse, which gegen, which greshape, which gisid, which gquantiles, ado describe gtools]
+  install_commands: [ssc install gtools]
+  dependencies: [The reviewed gtools distribution supplies its ado files, Mata library, and platform plugin binaries; confirm that the target Stata process loads its matching plugin.]
+  validation_note: Only the gcollapse grouped-mean example has a licensed execution fixture; other gtools commands require task-specific validation.
+- slug: rangestat
+  title: Rolling-window statistics with rangestat
+  aliases: [rangestat, rolling-window statistics]
+  example_ids: [package-rangestat-fragment]
+  preflight_commands: [which rangestat, ado describe rangestat]
+  install_commands: [ssc install rangestat]
+  dependencies: [The basic rolling-mean fragment uses the reviewed rangestat distribution, including rangestat_run.ado. Optional custom mm_quantile() statistics require moremata, which is outside this lock and needs separate review.]
+  validation_note: The default licensed gate verifies the reviewed installation, but does not execute this command on a numerical fixture.
+- slug: egenmore
+  title: Extended egen functions with egenmore
+  aliases: [egenmore, egen nvals]
+  example_ids: [package-egenmore-fragment]
+  preflight_commands: [which _gnvals, ado describe egenmore]
+  install_commands: [ssc install egenmore]
+  dependencies: [The shown nvals function is supplied by the reviewed egenmore distribution; no other utility on this landing page is needed for this fragment.]
+  validation_note: The default licensed gate verifies the reviewed installation, but does not execute nvals on a numerical fixture.
+- slug: distinct
+  title: Key counts with distinct
+  aliases: [distinct, joint distinct count]
+  example_ids: [package-distinct-fragment]
+  preflight_commands: [which distinct, ado describe distinct]
+  install_commands: [ssc install distinct]
+  dependencies: [The shown joint-key count uses the reviewed distinct distribution; no other utility on this landing page is needed for this fragment.]
+  validation_note: The default licensed gate verifies the reviewed installation, but does not assert a distinct-count fixture.
+- slug: missings
+  title: Missing-value reports with missings
+  aliases: [missings, missing-value report]
+  example_ids: [package-missings-fragment]
+  preflight_commands: [which missings, ado describe missings]
+  install_commands: [ssc install missings]
+  dependencies: [The shown report uses the reviewed missings distribution; no other utility on this landing page is needed for this fragment.]
+  validation_note: The default licensed gate verifies the reviewed installation, but does not assert a missingness-report fixture.
+- slug: carryforward
+  title: Ordered carry-forward values
+  aliases: [carryforward, last-observation-carried-forward]
+  example_ids: [package-carryforward-fragment]
+  preflight_commands: [which carryforward, ado describe carryforward]
+  install_commands: [ssc install carryforward]
+  dependencies: [The shown command uses the reviewed carryforward distribution and a declared within-panel order; no other utility on this landing page is needed for this fragment.]
+  validation_note: The default licensed gate verifies the reviewed installation, but does not assert a carry-forward fixture.
 provenance:
   reviewed: true
   local_help_topics:

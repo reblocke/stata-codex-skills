@@ -1,0 +1,12 @@
+# {{ entry.title }}
+
+Choose the utility needed for this task. Each recipe lists only its own
+preflight, installation guidance, example, and validation limit.
+
+{% for recipe in entry.recipes %}
+- [{{ recipe.title }}]({{ entry.slug }}-{{ recipe.slug }}.md): {{ recipe.aliases | join(", ") }}.
+{% endfor %}
+
+Keep grouping keys, row counts, sort order, missing-value rules, and weights
+explicit. Compare a small fixture with the intended built-in operation before
+using an accelerated command on the full data.

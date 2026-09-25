@@ -1,0 +1,56 @@
+# {{ recipe.title }}
+
+## When to use
+
+Use this recipe for {{ recipe.aliases | join(", ") }}.
+
+## Read-only preflight
+
+```stata
+{% for command in recipe.preflight_commands %}
+{{ command }}
+{% endfor %}
+```
+
+## Optional isolated installation
+
+Installing changes the Stata environment and requires user authorization.
+Use an isolated validation directory, never the normal `PLUS` or `PERSONAL` path.
+
+```stata
+{% for command in recipe.install_commands %}
+{{ command }}
+{% endfor %}
+```
+
+## Dependencies and prerequisites
+
+{% for item in recipe.dependencies %}
+- {{ item }}
+{% endfor %}
+
+## Examples
+{% for example in recipe.examples %}
+
+### Example {{ loop.index }}
+
+- ID: `{{ example.id }}`.
+- Kind: `{{ example.kind }}`; language: `{{ example.language }}`; minimum Stata version: {{ example.min_version }}.
+- Prerequisites: {{ example.prerequisites | join("; ") }}.
+{% if example.kind == "runnable" %}
+- Licensed fixture: `{{ example.test_id }}`; expected return code: `{{ example.expected_rc }}`.
+{% else %}
+- This fragment is not independently executed by the licensed gate.
+{% endif %}
+
+```{{ example.language }}
+{{ example.code }}
+```
+{% endfor %}
+
+## Validation limit
+
+{{ recipe.validation_note }}
+
+Check keys, row counts, values, and missingness against a task-specific
+fixture before applying the utility to research data.

@@ -56,7 +56,7 @@ class GeneratedTreeTests(unittest.TestCase):
             for skill_key, _, entry in cls.entries
         }
 
-    def test_complete_tree_has_exactly_the_expected_95_files(self) -> None:
+    def test_complete_tree_has_exactly_the_expected_104_files(self) -> None:
         canonical = self.canonical_paths()
         root_files = {
             f"{skill['folder']}/{relative}"
@@ -81,7 +81,16 @@ class GeneratedTreeTests(unittest.TestCase):
             for skill in self.config["skills"].values()
             for index, _ in enumerate(skill["section_order"], start=1)
         }
-        expected = root_files | set(canonical) | aliases | indexes
+        alias_indexes = {
+            f"{skill['folder']}/routing/aliases.md"
+            for skill in self.config["skills"].values()
+        }
+        recipes = {
+            f"{self.config['skills'][skill_key]['folder']}/{self.config['skills'][skill_key]['route_dir']}/{entry['slug']}-{recipe['slug']}.md"
+            for skill_key, _, entry in self.entries
+            for recipe in entry.get("recipes", [])
+        }
+        expected = root_files | set(canonical) | aliases | indexes | alias_indexes | recipes
         actual = {
             path.relative_to(self.output_root).as_posix()
             for path in self.output_root.rglob("*")
@@ -94,7 +103,7 @@ class GeneratedTreeTests(unittest.TestCase):
             aliases,
         )
         self.assertEqual(16, len(indexes))
-        self.assertEqual(95, len(expected))
+        self.assertEqual(104, len(expected))
         self.assertEqual(expected, actual)
 
     def test_each_skill_bundles_the_standalone_runner_without_source_drift(self) -> None:
@@ -112,6 +121,24 @@ class GeneratedTreeTests(unittest.TestCase):
                 )
                 self.assertEqual(0, result.returncode, result.stderr)
                 self.assertIn("--run-dir", result.stdout)
+
+    def test_every_root_renders_reviewed_task_modes(self) -> None:
+        for skill in self.config["skills"].values():
+            root = (self.output_root / skill["folder"] / "SKILL.md").read_text()
+            for mode, rule in self.config["workflow_modes"].items():
+                with self.subTest(skill=skill["folder"], mode=mode):
+                    self.assertIn(f"**{mode.replace('_', ' ')}**: {rule}", root)
+            self.assertIn("do not install packages, execute data", root)
+
+    def test_core_root_has_direct_routes_for_cross_category_tasks(self) -> None:
+        root = (self.output_root / "stata-core/SKILL.md").read_text()
+        for route in (
+            "references/workflow-best-practices.md",
+            "references/variables-operators.md",
+            "references/advanced-programming.md",
+        ):
+            with self.subTest(route=route):
+                self.assertIn(f"]({route})", root)
 
     def test_library_is_quiet_and_cli_prints_one_summary(self) -> None:
         self.assertEqual("", self.library_output)
@@ -152,6 +179,21 @@ class GeneratedTreeTests(unittest.TestCase):
                     text,
                 )
                 self.assertNotIn("\n## Provenance\n", text)
+
+                if entry.get("recipes"):
+                    for recipe in entry["recipes"]:
+                        recipe_path = f"{entry['slug']}-{recipe['slug']}.md"
+                        self.assertIn(f"]({recipe_path})", text)
+                        recipe_text = (self.output_root / Path(relative).parent / recipe_path).read_text(encoding="utf-8")
+                        self.assertIn(recipe["validation_note"], recipe_text)
+                        for command in recipe["preflight_commands"] + recipe["install_commands"]:
+                            self.assertIn(command, recipe_text)
+                        for other in entry["recipes"]:
+                            if other is recipe:
+                                continue
+                            for command in other["install_commands"]:
+                                self.assertNotIn(command, recipe_text)
+                    continue
 
                 self.assertIn(entry["trigger"], text)
                 self.assertIn(
@@ -220,6 +262,9 @@ class GeneratedTreeTests(unittest.TestCase):
                     encoding="utf-8"
                 )
                 normalized = " ".join(text.split())
+                if entry.get("recipes"):
+                    self.assertNotIn("ssc install", text)
+                    continue
                 if entry.get("preflight_commands"):
                     self.assertIn(preflight_heading, text)
                     self.assertIn(
@@ -247,10 +292,15 @@ class GeneratedTreeTests(unittest.TestCase):
                 else:
                     self.assertNotIn(install_heading, text)
 
-    def test_category_routes_preserve_terms_commands_and_aliases(self) -> None:
+    def test_compact_categories_and_alias_lookup_preserve_routes(self) -> None:
         for skill_key, skill in self.config["skills"].items():
             folder = self.output_root / skill["folder"]
             root_text = (folder / "SKILL.md").read_text(encoding="utf-8")
+            lookup = (folder / "routing/aliases.md").read_text(encoding="utf-8")
+            self.assertIn("(routing/aliases.md)", root_text)
+            self.assertIn("open its technical reference directly", root_text)
+            for rule in self.config["common_contract"]:
+                self.assertIn(rule, root_text)
             entries = [
                 entry for key, _, entry in self.entries if key == skill_key
             ]
@@ -265,11 +315,20 @@ class GeneratedTreeTests(unittest.TestCase):
                     for entry in section["entries"]:
                         route = f"{skill['route_dir']}/{entry['slug']}.md"
                         self.assertIn(f"(../{route})", index_text)
-                        self.assertIn(entry["trigger"], index_text)
+                        self.assertIn(entry["title"], index_text)
+                        self.assertNotIn(entry["trigger"], index_text)
                         self.assertNotIn(entry["trigger"], root_text)
+                        cues = entry.get("route_cues") or entry["commands"][:3]
+                        for cue in cues:
+                            self.assertIn(cue, index_text)
                         for field in ("aliases", "commands", "routing_terms"):
                             for value in entry[field]:
-                                self.assertIn(value.casefold(), index_text.casefold())
+                                self.assertIn(
+                                    f"`{value.casefold()}`",
+                                    lookup.casefold(),
+                                    f"missing lookup term {value!r} for {route}",
+                                )
+                        self.assertIn(f"(../{route})", lookup)
                     section_routes = {
                         f"{skill_key}/{entry['slug']}"
                         for entry in section["entries"]

@@ -1,0 +1,15 @@
+schema_version: 1
+id: core-simulation-ledger
+setup: |-
+  clear
+  version 18
+assertions: |-
+  assert scalar(attempted) == 5
+  assert scalar(successful) == 4
+  assert scalar(failed) == 1
+  assert _N == 5
+  isid scenario_id replication_id
+  assert missing(estimate) & failure_reason == "nonconvergence" if replication_id == 4
+  assert !missing(estimate) & failure_reason == "" if converged
+  assert scalar(mc_mean) > 0 & scalar(mc_mean) < 1
+  assert scalar(mc_se) > 0

@@ -6,6 +6,17 @@ source_resolution:
   resolved_files_field: provenance.local_help_files
   source_topics_role: Reader-facing topic labels only; never used for filesystem matching.
 
+common_contract:
+  - Identify observation grain, keys, units, identifier representation, and missingness policy before changing data.
+  - Preserve source data, account for rows after joins or filters, and verify declared output fields and returned results.
+  - Check Stata errors and data side effects; when execution is requested, require fresh evidence and natural process exit.
+
+workflow_modes:
+  explain: Answer the requested concept from the supplied context; do not install packages, execute data, or expand into a full methods review.
+  edit: Declare the current interface and behavior, make the smallest requested patch, and verify permitted data changes without redesigning the scientific question.
+  execute: Use the existing runner, check fresh Stata status and assertions, and retain private logs only for diagnosis.
+  scientific_analysis: State the estimand, population, assumptions, and uncertainty before changing a consequential method choice.
+
 skills:
   core:
     name: stata-core
@@ -33,6 +44,12 @@ skills:
       - stata
     rules:
       - Follow existing code and explicit tool choices; prefer built-in commands when they meet an otherwise unspecified need.
+      - >-
+        For clean-session reruns or behavior-preserving refactors, open
+        [workflow best practices](references/workflow-best-practices.md). For
+        leading-zero or long string identifiers, open [variables and
+        operators](references/variables-operators.md) before join code; for
+        named multi-model results, open [advanced programming](references/advanced-programming.md).
       - For terminal or scheduled runs, follow [unattended execution](references/unattended-execution.md) and verify natural exit plus fresh Stata return-code evidence.
       - Preserve raw data and write cleaned or derived outputs separately.
       - Validate merge results, missing-value handling, and stored results before chaining commands.

@@ -452,6 +452,60 @@ cases:
   - stata-packages/packages/data-manipulation.md
   forbidden_routes: []
   boundary: false
+- id: packages-gtools-recipe
+  action: route
+  prompt: >-
+    I need a faster gcollapse grouped mean with gegen group totals; verify
+    the grouped result against a small built-in collapse fixture.
+  expected_skill: stata-packages
+  expected_refs: [stata-packages/packages/data-manipulation-gtools.md]
+  forbidden_routes: []
+  boundary: false
+- id: packages-rangestat-recipe
+  action: route
+  prompt: >-
+    Compute a rolling mean with rangestat using an explicitly inclusive
+    time window within each panel.
+  expected_skill: stata-packages
+  expected_refs: [stata-packages/packages/data-manipulation-rangestat.md]
+  forbidden_routes: []
+  boundary: false
+- id: packages-egenmore-recipe
+  action: route
+  prompt: >-
+    Count unique category values within groups using egenmore nvals, after
+    checking that the requested extension is installed.
+  expected_skill: stata-packages
+  expected_refs: [stata-packages/packages/data-manipulation-egenmore.md]
+  forbidden_routes: []
+  boundary: false
+- id: packages-distinct-recipe
+  action: route
+  prompt: >-
+    Count the distinct joint combinations of patient-free synthetic keys
+    with the community distinct command.
+  expected_skill: stata-packages
+  expected_refs: [stata-packages/packages/data-manipulation-distinct.md]
+  forbidden_routes: []
+  boundary: false
+- id: packages-missings-recipe
+  action: route
+  prompt: >-
+    Produce a missings report for specified synthetic variables while
+    preserving the original dataset.
+  expected_skill: stata-packages
+  expected_refs: [stata-packages/packages/data-manipulation-missings.md]
+  forbidden_routes: []
+  boundary: false
+- id: packages-carryforward-recipe
+  action: route
+  prompt: >-
+    Carry forward a prior status with carryforward only after declaring
+    panel order and the missing-value policy.
+  expected_skill: stata-packages
+  expected_refs: [stata-packages/packages/data-manipulation-carryforward.md]
+  forbidden_routes: []
+  boundary: false
 - id: packages-did
   action: route
   prompt: >-
@@ -958,3 +1012,140 @@ cases:
   forbidden_routes:
   - stata-c-plugins/references/performance_patterns.md
   boundary: true
+- id: workflow-data-contract-positive
+  action: route
+  prompt: >-
+    Build a person-visit cohort from synthetic files. Specify the row grain,
+    string IDs, duplicate-visit tie rule, 0-inclusive/30-exclusive window,
+    and counts for every excluded row.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/data-management.md]
+  forbidden_routes: []
+  boundary: false
+- id: workflow-data-contract-negative
+  action: route
+  prompt: >-
+    Explain why a long ID with leading zeros should remain a string in Stata.
+    There is no merge or cohort construction to perform.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/variables-operators.md]
+  forbidden_routes: [stata-core/references/data-management.md]
+  boundary: true
+- id: workflow-data-contract-boundary
+  action: route
+  prompt: >-
+    Audit merge cardinality and row dispositions in an existing cohort script;
+    do not substitute a faster community aggregation utility.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/data-management.md]
+  forbidden_routes: [stata-packages/packages/data-manipulation-gtools.md]
+  boundary: true
+- id: workflow-safe-refactor-positive
+  action: route
+  prompt: >-
+    Review a slow do-file and make a minimal patch while preserving its inputs,
+    output columns, row counts, and previously declared estimand.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/workflow-best-practices.md]
+  forbidden_routes: []
+  boundary: false
+- id: workflow-safe-refactor-negative
+  action: route
+  prompt: >-
+    Explain what set seed does in an example. I am asking for an explanation,
+    not a code edit, rerun, or project refactor.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/mathematical-functions.md]
+  forbidden_routes: [stata-core/references/workflow-best-practices.md]
+  boundary: true
+- id: workflow-safe-refactor-boundary
+  action: route
+  prompt: >-
+    Optimize an existing cohort do-file, but first document its row and output
+    contracts. Keep the analytic population and estimand fixed.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/workflow-best-practices.md, stata-core/references/data-management.md]
+  forbidden_routes: [stata-packages/packages/data-manipulation-gtools.md]
+  boundary: true
+- id: workflow-results-positive
+  action: route
+  prompt: >-
+    Write reusable code that records named x coefficients and sample sizes
+    from two regressions, with each result tied to its model ID.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/advanced-programming.md]
+  forbidden_routes: []
+  boundary: false
+- id: workflow-results-negative
+  action: route
+  prompt: >-
+    Explain how one fitted linear regression defines its estimation sample.
+    I do not need a multi-model results collector.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/linear-regression.md]
+  forbidden_routes: [stata-core/references/advanced-programming.md]
+  boundary: true
+- id: workflow-results-boundary
+  action: route
+  prompt: >-
+    Capture r(mean) immediately after summarize inside an rclass program,
+    before any command can overwrite it; do not format a publication table.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/advanced-programming.md]
+  forbidden_routes: [stata-core/references/tables-reporting.md]
+  boundary: true
+- id: workflow-simulation-positive
+  action: route
+  prompt: >-
+    Design a seeded Monte Carlo study with scenario and replication IDs,
+    a failure ledger, explicit denominator, and Monte Carlo uncertainty.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/bootstrap-simulation.md]
+  forbidden_routes: []
+  boundary: false
+- id: workflow-simulation-negative
+  action: route
+  prompt: >-
+    Interpret the sample mean and standard deviation from one synthetic
+    summarize output. No resampling or simulation is requested.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/descriptive-statistics.md]
+  forbidden_routes: [stata-core/references/bootstrap-simulation.md]
+  boundary: true
+- id: workflow-simulation-boundary
+  action: route
+  prompt: >-
+    Simulate a known synthetic data-generating process to inspect bias.
+    Keep the supplied statistic and independent replication unit; do not
+    replace it with a new panel estimator.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/bootstrap-simulation.md]
+  forbidden_routes: [stata-packages/packages/xtabond2.md]
+  boundary: true
+- id: shortcut-clean-session
+  action: route
+  prompt: >-
+    Check whether a seeded do-file produces the same values in two fresh Stata
+    sessions, retaining separate process status and result evidence.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/workflow-best-practices.md]
+  forbidden_routes: []
+  boundary: false
+- id: shortcut-string-id-join
+  action: route
+  prompt: >-
+    My source keys have leading zeros and 18 significant digits. Preserve
+    their original representation before writing the join.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/variables-operators.md]
+  forbidden_routes: []
+  boundary: false
+- id: shortcut-named-model-results
+  action: route
+  prompt: >-
+    Collect the same named coefficient and observation count from several
+    stored estimates without losing each model's identity.
+  expected_skill: stata-core
+  expected_refs: [stata-core/references/advanced-programming.md]
+  forbidden_routes: []
+  boundary: false

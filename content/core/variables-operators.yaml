@@ -15,6 +15,7 @@ commands:
 - inlist()
 - inrange()
 - if
+route_cues: [missing(), generate, recast, inrange()]
 aliases: [variable type, missing value, generate variable, replace variable, logical operator, factor variable]
 routing_terms:
 - generate expression
@@ -30,41 +31,74 @@ source_topics:
 - missing
 - if
 - functions
-syntax_patterns:
-- generate byte eligible = age >= 18 & !missing(age)
-- replace category = 1 if inlist(code, "A", "B")
-- generate double ratio = numerator / denominator if denominator != 0 & !missing(denominator)
+syntax_patterns: []
 assumptions:
 - Each variable's storage type, coding scheme, unit, and missing-value representation are understood.
 - Boolean classifications define how missing and out-of-domain values should be handled.
 gotchas:
 - Numeric missing values sort above every real number, so `age > 65` also selects missing age unless guarded.
 - A single equals sign (`=`) assigns a value; double equals (`==`) tests equality inside expressions and qualifiers.
-- "`float` storage can lose decimal precision; use `double` for identifiers or calculations requiring exact precision."
+- Preserve identifiers as their original strings when leading zeros or long digits matter; converting a rounded numeric ID to `double` cannot recover lost digits.
 - Logical expressions involving strings and numeric missing values follow different missing-value conventions.
 workflows:
 - Inspect storage types and missingness, `generate` into a new variable, `tabulate` the result with `missing`, then `replace` only verified cases.
 - Use explicit parentheses in expressions that mix `&` and `|`, and `assert` impossible states after classification.
 validation_case: >-
-  Construct real and missing values, classify them with guarded comparisons, and assert that missing observations
-  are not inadvertently treated as high values.
+  Test ordinary and extended numeric missing values under separately named unknown-preserving and missing-as-false policies;
+  retain long string identifiers with leading zeros exactly.
 validation_mode: stata
 related_refs:
 - data-management
 - mathematical-functions
 install_commands: []
-smoke_test: |-
-  clear
-  input double x
-  5
-  12
-  .
-  end
-  generate byte high = x > 10 & !missing(x)
-  assert high == 0 in 1
-  assert high == 1 in 2
-  assert high == 0 in 3
-  assert missing(x[3])
+smoke_test: null
+examples:
+- id: core-adult-unknown
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [A numeric `age` variable; missing ages represent unmeasured eligibility.]
+  code: |-
+    generate byte adult_unknown_preserved = .
+    replace adult_unknown_preserved = age >= 18 if !missing(age)
+  test_id: core-adult-unknown
+  fixture: tests/stata/examples/core-adult-unknown.yaml
+  expected_rc: 0
+- id: core-adult-missing-false
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [A numeric `age` variable; the explicit policy is to code unmeasured age as false.]
+  code: generate byte adult_missing_as_false = age >= 18 & !missing(age)
+  test_id: core-adult-missing-false
+  fixture: tests/stata/examples/core-adult-missing-false.yaml
+  expected_rc: 0
+- id: core-string-identifiers
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [Original identifier strings have not already been converted to rounded numeric values.]
+  code: |-
+    clear
+    input str18 person_id
+    "000012345678901234"
+    "123456789012345678"
+    end
+  test_id: core-string-identifiers
+  fixture: tests/stata/examples/core-string-identifiers.yaml
+  expected_rc: 0
+- id: core-category-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [An existing string `code` and initialized numeric `category` variable with a declared missing-value policy.]
+  code: replace category = 1 if inlist(code, "A", "B")
+- id: core-ratio-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Existing numeric `numerator` and `denominator` variables and a stated zero-denominator policy.]
+  code: generate double ratio = numerator / denominator if denominator != 0 & !missing(denominator)
 provenance:
   local_help_topics: [generate, missing, if, functions]
   local_help_globs: []

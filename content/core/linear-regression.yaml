@@ -16,12 +16,7 @@ routing_terms:
 - factor-variable interaction in OLS
 - marginal effects after linear regression
 source_topics: [regress, ivregress, margins, predict]
-syntax_patterns:
-- regress outcome c.exposure##i.group covariates, vce(robust)
-- regress outcome exposure covariates, vce(cluster cluster_id)
-- ivregress 2sls outcome covariates (exposure = instrument), vce(robust)
-- margins group, at(exposure=(0 1 2))
-- predict double fitted, xb
+syntax_patterns: []
 assumptions:
 - The conditional mean is correctly specified for the target contrast and observations are independent at the variance unit.
 - For IV regression, instruments are relevant and affect the outcome only through the endogenous exposure under the stated model.
@@ -34,19 +29,49 @@ workflows:
 - Define outcome, exposure, covariates, functional form, and variance estimator before fitting; then inspect residual and influence diagnostics.
 - For IV models, document the causal instrument argument, inspect first-stage strength, and compare with the non-IV specification.
 validation_case: >-
-  Fit OLS with a factor variable and robust standard errors, calculate adjusted predictions, generate fitted values,
-  and verify that estimation and prediction samples agree.
+  Fit OLS on synthetic data with deliberate exclusions, then distinguish estimation, prediction, and evaluation samples,
+  including an out-of-sample prediction and a missing-covariate row.
 validation_mode: stata
 related_refs: [regression-diagnostics, descriptive-statistics, limited-dependent-variables]
 install_commands: []
-smoke_test: |-
-  clear all
-  sysuse auto, clear
-  regress price c.mpg##i.foreign weight, vce(robust)
-  assert e(N) == 74
-  margins foreign
-  predict double fitted, xb
-  assert !missing(fitted)
+smoke_test: null
+examples:
+- id: core-prediction-samples
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [Numeric `x` and `y`; the synthetic fixture includes missing outcomes and a missing predictor.]
+  code: |-
+    regress y x, vce(robust)
+    generate byte estimation_sample = e(sample)
+    margins, at(x=(1 2))
+    predict double fitted, xb
+    generate byte prediction_sample = !missing(fitted)
+    generate byte evaluation_sample = estimation_sample & !missing(y)
+  test_id: core-prediction-samples
+  fixture: tests/stata/examples/core-prediction-samples.yaml
+  expected_rc: 0
+- id: core-empty-regression-error
+  language: stata
+  kind: runnable
+  min_version: 18
+  prerequisites: [The `id > 99` qualifier deliberately selects no observations.]
+  code: regress y x if id > 99
+  test_id: core-empty-regression-error
+  fixture: tests/stata/examples/core-empty-regression-error.yaml
+  expected_rc: 2000
+- id: core-iv-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Declared outcome, covariates, exposure, and instrument with a justified exclusion restriction.]
+  code: ivregress 2sls outcome covariates (exposure = instrument), vce(robust)
+- id: core-cluster-fragment
+  language: stata
+  kind: fragment
+  min_version: 18
+  prerequisites: [Declared outcome, exposure, covariates, and a `cluster_id` matching the dependence unit.]
+  code: regress outcome exposure covariates, vce(cluster cluster_id)
 provenance:
   local_help_topics: [regress, ivregress, margins, predict]
   local_help_globs: []

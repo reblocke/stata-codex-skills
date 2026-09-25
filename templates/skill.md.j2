@@ -12,6 +12,18 @@ description: "{{ skill.description }}"
 {% for rule in skill.rules %}
 - {{ rule }}
 {% endfor %}
+
+## Shared data and error contract
+
+{% for rule in common_contract %}
+- {{ rule }}
+{% endfor %}
+
+## Task mode
+
+{% for mode, rule in workflow_modes.items() %}
+- **{{ mode | replace('_', ' ') }}**: {{ rule }}
+{% endfor %}
 {% if skill.critical_gotchas %}
 
 ## Critical gotchas
@@ -23,19 +35,19 @@ description: "{{ skill.description }}"
 
 ## Choose the relevant reference
 
-Use the existing code, explicit command or package choice, and requested outcome
-to select a category. Open only its routing reference, then the needed technical
-reference. Category indexes preserve detailed terms, commands, and aliases;
-paths in those indexes are relative to this skill's root.
+If the command or reference path is known, open its technical reference directly
+after applying the rules above. For an unfamiliar task, choose a category below,
+then open only its needed reference. Use [command and alias lookup](routing/aliases.md)
+when an alias or command does not identify a reference immediately.
 
 {% for section in sections %}
 - [{{ section.name }}]({{ section.route_path }}): {{ section.guidance }}
 {% endfor %}
 
-For overlapping methods, use the available context first. Clarify only an
-unresolved choice that changes scientific meaning, compatibility, dependencies,
-or scope. A generic topic name alone does not require a question. Detailed
-boundaries appear beside the affected routes in each category index.
+For overlapping methods, follow established code and the requested estimator.
+If the choice remains consequential and unresolved, read the affected category's
+method boundary before choosing or asking. A generic topic alone does not
+require a question.
 
 {% if route_aliases %}
 ### Compatibility aliases

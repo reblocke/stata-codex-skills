@@ -1,0 +1,11 @@
+schema_version: 1
+id: core-bootstrap-mean
+setup: |-
+  clear
+  set obs 10
+  generate double outcome = _n
+assertions: |-
+  assert e(N_reps) == 10
+  assert _N == 10
+  assert outcome[1] == 1 & outcome[10] == 10
+  assert abs(_b[mean] - 5.5) < 1e-10

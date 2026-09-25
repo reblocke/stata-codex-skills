@@ -1,0 +1,13 @@
+schema_version: 1
+id: core-merge-disposition
+setup: clear
+assertions: |-
+  assert _N == 5
+  count if _merge == 1
+  assert r(N) == 1
+  count if _merge == 2
+  assert r(N) == 1
+  count if _merge == 3
+  assert r(N) == 3
+  assert id == 4 if _merge == 1
+  assert group == 4 if _merge == 2

@@ -1,0 +1,12 @@
+schema_version: 1
+id: core-empty-regression-error
+setup: |-
+  clear
+  input byte id double x double y
+  1 1 5
+  2 2 8
+  end
+assertions: |-
+  assert _N == 2
+  assert id[1] == 1 & id[2] == 2
+  assert y[1] == 5 & y[2] == 8

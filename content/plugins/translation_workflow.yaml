@@ -68,3 +68,5 @@ provenance:
   - plugins/stata-c-plugins/skills/stata-c-plugins/references/translation_workflow.md
   package_only: false
   upstream_only: false
+pattern_kinds: [fragment, fragment, fragment, fragment]
+pattern_languages: [text, text, cpp, stata]

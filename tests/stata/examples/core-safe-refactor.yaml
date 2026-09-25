@@ -1,0 +1,24 @@
+schema_version: 1
+id: core-safe-refactor
+setup: |-
+  clear
+  input str3 person_id double value
+  "001" 10
+  "001" 20
+  "002" 8
+  "002" 12
+  end
+assertions: |-
+  assert _N == 4
+  assert inlist(person_id, "001", "002")
+  assert total == 30 if person_id == "001"
+  assert total == 20 if person_id == "002"
+  count if person_id == "001" & value == 10
+  assert r(N) == 1
+  count if person_id == "002" & value == 12
+  assert r(N) == 1
+  confirm variable person_id
+  confirm variable value
+  confirm variable total
+  quietly summarize total
+  display "CODEX_RESULT: N=" _N " mean=" %21.17g r(mean)

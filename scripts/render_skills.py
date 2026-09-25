@@ -140,6 +140,9 @@ RENDER_TEMPLATE_NAMES = (
     "reference.md.j2",
     "skill.md.j2",
     "routing.md.j2",
+    "aliases.md.j2",
+    "utility-landing.md.j2",
+    "utility-recipe.md.j2",
     "alias.md.j2",
     "provenance.md.j2",
     "openai.yaml.j2",
@@ -2096,6 +2099,35 @@ def routing_sections(skill: dict, entries: list[dict]) -> list[dict]:
     return sections
 
 
+def alias_lookup(entries: list[dict]) -> list[dict]:
+    """Keep full reviewed route vocabulary outside compact category tables."""
+
+    by_term: dict[str, dict] = {}
+    for entry in entries:
+        for recipe in entry.get("recipes", []):
+            route = {
+                "title": recipe["title"],
+                "path": f"{entry['route_path'].removesuffix('.md')}-{recipe['slug']}.md",
+            }
+            for term in recipe["aliases"]:
+                key = term.casefold()
+                item = by_term.setdefault(key, {"term": term, "routes": []})
+                if route not in item["routes"]:
+                    item["routes"].append(route)
+        for term in [*entry["aliases"], *entry["routing_terms"], *entry["commands"]]:
+            key = term.casefold()
+            item = by_term.setdefault(key, {"term": term, "routes": []})
+            if entry.get("recipes") and any(
+                key == alias.casefold()
+                for recipe in entry["recipes"] for alias in recipe["aliases"]
+            ):
+                continue
+            route = {"title": entry["title"], "path": entry["route_path"]}
+            if route not in item["routes"]:
+                item["routes"].append(route)
+    return [by_term[key] for key in sorted(by_term)]
+
+
 def prepare_catalog(
     config: dict,
     content_entries: tuple[RenderContentEntry, ...],
@@ -2132,6 +2164,8 @@ def prepare_catalog(
             entry.setdefault("preflight_commands", [])
             entry.setdefault("install_commands", [])
             entry.setdefault("smoke_test", None)
+            entry.setdefault("examples", [])
+            entry.setdefault("route_cues", [])
             entry["route_path"] = canonical_route(skill, slug)
             entry["skill_name"] = skill["name"]
             by_slug[slug] = (skill_key, entry)
@@ -2424,6 +2458,9 @@ def _render_tree(
     reference_template = env.get_template("reference.md.j2")
     skill_template = env.get_template("skill.md.j2")
     routing_template = env.get_template("routing.md.j2")
+    aliases_template = env.get_template("aliases.md.j2")
+    utility_landing_template = env.get_template("utility-landing.md.j2")
+    utility_recipe_template = env.get_template("utility-recipe.md.j2")
     alias_template = env.get_template("alias.md.j2")
     provenance_template = env.get_template("provenance.md.j2")
     openai_template = env.get_template("openai.yaml.j2")
@@ -2454,6 +2491,22 @@ def _render_tree(
 
         entries = grouped[skill_key]
         for entry in entries:
+            if entry.get("recipes"):
+                for recipe in entry["recipes"]:
+                    recipe = {
+                        **recipe,
+                        "examples": [
+                            example for example in entry["examples"]
+                            if example["id"] in recipe["example_ids"]
+                        ],
+                    }
+                    _write_staged_text(
+                        parent, output_root, staged_identity, directory_identities,
+                        _safe_render_relative_path(
+                            route_dir, f"{entry['slug']}-{recipe['slug']}.md"
+                        ),
+                        normalized_markdown(utility_recipe_template.render(recipe=recipe)),
+                    )
             _write_staged_text(
                 parent,
                 output_root,
@@ -2463,7 +2516,10 @@ def _render_tree(
                     route_dir,
                     f"{entry['slug']}.md",
                 ),
-                normalized_markdown(reference_template.render(entry=entry)),
+                normalized_markdown(
+                    utility_landing_template.render(entry=entry)
+                    if entry.get("recipes") else reference_template.render(entry=entry)
+                ),
             )
 
         route_aliases = aliases_by_skill[skill_key]
@@ -2482,6 +2538,16 @@ def _render_tree(
             )
 
         section_payload = routing_sections(skill, entries)
+        _write_staged_text(
+            parent,
+            output_root,
+            staged_identity,
+            directory_identities,
+            _safe_render_relative_path(folder, "routing/aliases.md"),
+            normalized_markdown(
+                aliases_template.render(aliases=alias_lookup(entries))
+            ),
+        )
         for section in section_payload:
             section_routes = {
                 f"{skill_key}/{entry['slug']}" for entry in section["entries"]
@@ -2516,6 +2582,8 @@ def _render_tree(
                     skill=skill,
                     sections=section_payload,
                     route_aliases=route_aliases,
+                    common_contract=config["common_contract"],
+                    workflow_modes=config["workflow_modes"],
                 )
             ),
         )
@@ -2569,12 +2637,18 @@ def _expected_rendered_files(
             for entry in grouped[skill_key]
         )
         expected.extend(
+            folder / skill["route_dir"] / f"{entry['slug']}-{recipe['slug']}.md"
+            for entry in grouped[skill_key]
+            for recipe in entry.get("recipes", [])
+        )
+        expected.extend(
             folder / alias["from_route"] for alias in aliases_by_skill[skill_key]
         )
         expected.extend(
             folder / section["route_path"]
             for section in routing_sections(skill, grouped[skill_key])
         )
+        expected.append(folder / "routing" / "aliases.md")
     unique = set(expected)
     if len(unique) != len(expected):
         raise ValueError("render configuration maps multiple entries to one output path")

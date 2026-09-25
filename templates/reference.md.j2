@@ -40,17 +40,42 @@ Use only the commands that match the requested task:
 - `{{ command }}`
 {% endfor %}
 {% endif %}
-{% if entry.syntax_patterns %}
+{% if entry.examples %}
+
+## Examples
+{% for example in entry.examples %}
+
+### Example {{ loop.index }}
+
+- ID: `{{ example.id }}`.
+- Kind: `{{ example.kind }}`; language: `{{ example.language }}`; minimum Stata version: {{ example.min_version }}.
+- Prerequisites: {{ example.prerequisites | join("; ") if example.prerequisites else "none" }}.
+{% if example.kind == "runnable" %}
+- Validation: `{{ example.test_id }}`; expected Stata return code: `{{ example.expected_rc }}`.
+{% else %}
+- This block is not an independently executed example.
+{% endif %}
+
+```{{ example.language }}
+{{ example.code }}
+```
+{% endfor %}
+{% elif entry.syntax_patterns %}
 
 ## Syntax patterns
 
-Use these task-specific patterns as a starting point:
-
-```stata
+These patterns are not independently executed examples. Check their stated
+context before using them:
 {% for line in entry.syntax_patterns %}
+
+### Pattern {{ loop.index }}
+
+- Kind: `{{ entry.pattern_kinds[loop.index0] }}`; language: `{{ entry.pattern_languages[loop.index0] }}`.
+
+```{{ entry.pattern_languages[loop.index0] }}
 {{ line }}
-{% endfor %}
 ```
+{% endfor %}
 {% endif %}
 
 ## Common gotchas

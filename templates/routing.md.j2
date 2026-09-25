@@ -1,12 +1,12 @@
 # {{ section.name }} routing
 
-{{ section.guidance }} Load only the technical references needed for the task.
+{{ section.guidance }} Open only the technical references needed for the task.
 Paths below are relative to the `{{ skill.name }}` skill root.
 
-| Route | Curated terms | Supported aliases and commands | Task intent |
-|---|---|---|---|
+| Task intent | Command cues | Reference |
+|---|---|---|
 {% for entry in section.entries %}
-| [{{ entry.title }}](../{{ entry.route_path }}) (`{{ entry.route_path }}`) | {{ entry.routing_terms | join(", ") }} | {{ (entry.aliases + entry.commands) | unique | join(", ") }} | {{ entry.trigger }} |
+| {{ entry.title }} | {{ (entry.route_cues if entry.route_cues else entry.commands[:3]) | join(", ") }} | [{{ entry.route_path }}](../{{ entry.route_path }}) |
 {% endfor %}
 {% if routing_boundaries %}
 
