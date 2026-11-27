@@ -62,7 +62,7 @@ gotchas:
 - "`adopath` precedence can load a different copy than expected. Check `which` and `ado describe` in the same session that runs the analysis."
 workflows:
 - Inspect with `which`, `ado describe`, `adopath`, and `sysdir` before proposing any change.
-- Ask for authorization, then prefer a project-specific `PLUS` directory and a pinned or lock-verifiable source; never default to `replace`.
+- Use the authorization already given for the requested package and destination. If either is outside the request, clarify before changing the environment. Prefer a project-specific `PLUS` directory and a pinned or lock-verifiable source; never default to `replace`.
 - After installation, reopen a clean session, verify `which` and `ado describe`, run a package-specific smoke test, and record source/version metadata.
 validation_case: In batch mode without network or mutation, display `sysdir` and `adopath`, locate the built-in `regress` command with `which`, and require an error-free log.
 validation_mode: stata
