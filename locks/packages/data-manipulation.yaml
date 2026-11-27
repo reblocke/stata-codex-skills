@@ -154,10 +154,10 @@ distributions:
     d/distinct.hlp: d049f1d883e65787e6772d25b799f7552c2a38d575b372030b41af08e92b6ecd
 - source: http://fmwww.bc.edu/repec/bocode/m
   descriptor: missings.pkg
-  distribution_date: '20170511'
+  distribution_date: '20261018'
   files:
-    m/missings.ado: cad8f9bf4413e7155424aaf2cb742675d82ea69b2190ca9dd3d80f733b042618
-    m/missings.sthlp: 4cd50910b8e9b193c23949ce28ad961207dc19bd0055e1716cabb3f627dd0a72
+    m/missings.ado: 20ff5c1d42ff8bf2ee3f567a63340e9394c440af4ea164aea77dc4e9684b9417
+    m/missings.sthlp: fc1949b0915ed65464c374fb1a29319e7f64e9603def83143735fddace3f0fc0
 - source: http://fmwww.bc.edu/repec/bocode/c
   descriptor: carryforward.pkg
   distribution_date: '20160212'

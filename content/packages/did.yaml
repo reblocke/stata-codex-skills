@@ -44,6 +44,7 @@ assumptions:
 - Units have a valid panel identifier, consistently spaced time variable, and correctly encoded first-treatment period.
 - The chosen never-treated or not-yet-treated comparison group is substantively credible for the target group-time effects.
 gotchas:
+- "With `csdid` 2.x, `time()` must start at 1 or higher. Shift time and treated cohort codes by the same amount when recoding, and keep `gvar()` at zero for never-treated units."
 - "`gvar()` must encode the first treatment period consistently, with never-treated units represented exactly as the installed command expects; validate it before estimation."
 - Staggered-adoption estimators differ in control group, aggregation, anticipation, and weighting. The commands are not interchangeable wrappers around the same estimand.
 - Event-time coefficients require an explicit reference period, support at each horizon, and clustering aligned with treatment assignment.
@@ -72,9 +73,9 @@ smoke_test: |
   set seed 271828
   set obs 120
   generate id = ceil(_n / 6)
-  generate time = mod(_n - 1, 6)
-  generate gvar = cond(id <= 7, 2, cond(id <= 14, 4, 0))
-  generate outcome = id / 20 + time / 10 + 1.5 * (gvar > 0 & time >= gvar) + rnormal()
+  generate time = 1 + mod(_n - 1, 6)
+  generate gvar = cond(id <= 7, 3, cond(id <= 14, 5, 0))
+  generate outcome = id / 20 + (time - 1) / 10 + 1.5 * (gvar > 0 & time >= gvar) + rnormal()
   isid id time
   csdid outcome, ivar(id) time(time) gvar(gvar) notyet
   assert colsof(e(b)) > 0
